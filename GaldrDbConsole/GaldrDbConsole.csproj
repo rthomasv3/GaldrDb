@@ -1,0 +1,13 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <PublishAot>true</PublishAot>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\GaldrDbEngine\GaldrDbEngine.csproj" />
+    </ItemGroup>
+
+</Project>
