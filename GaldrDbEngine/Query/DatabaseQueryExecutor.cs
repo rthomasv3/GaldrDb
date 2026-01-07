@@ -48,21 +48,21 @@ public sealed class DatabaseQueryExecutor<T> : IQueryExecutor<T>
     private List<T> ExecuteFullScan(QueryBuilder<T> query)
     {
         List<T> allDocuments = _db.GetAllDocuments(_typeInfo);
+        List<T> filtered = FilterDocuments(allDocuments, query.Filters);
+        List<T> sorted = ApplyOrdering(filtered, query.OrderByClauses);
+        List<T> results = ApplySkipAndLimit(sorted, query.SkipValue, query.LimitValue);
 
+        return results;
+    }
+
+    private List<T> FilterDocuments(List<T> documents, IReadOnlyList<IFieldFilter> filters)
+    {
         List<T> results = new List<T>();
-        int skipped = 0;
-        int skipCount = query.SkipValue ?? 0;
-        int? limitCount = query.LimitValue;
 
-        foreach (T document in allDocuments)
+        foreach (T document in documents)
         {
-            if (limitCount.HasValue && results.Count >= limitCount.Value)
-            {
-                break;
-            }
-
             bool passesAllFilters = true;
-            foreach (IFieldFilter filter in query.Filters)
+            foreach (IFieldFilter filter in filters)
             {
                 if (!filter.Evaluate(document))
                 {
@@ -73,15 +73,70 @@ public sealed class DatabaseQueryExecutor<T> : IQueryExecutor<T>
 
             if (passesAllFilters)
             {
-                if (skipped < skipCount)
+                results.Add(document);
+            }
+        }
+
+        return results;
+    }
+
+    private List<T> ApplyOrdering(List<T> documents, IReadOnlyList<OrderByClause<T>> orderByClauses)
+    {
+        if (orderByClauses.Count == 0)
+        {
+            return documents;
+        }
+
+        List<T> sorted = new List<T>(documents);
+        sorted.Sort((a, b) =>
+        {
+            int result = 0;
+
+            foreach (OrderByClause<T> clause in orderByClauses)
+            {
+                result = clause.Comparer(a, b);
+                if (result != 0)
                 {
-                    skipped++;
-                }
-                else
-                {
-                    results.Add(document);
+                    break;
                 }
             }
+
+            return result;
+        });
+
+        return sorted;
+    }
+
+    private List<T> ApplySkipAndLimit(List<T> documents, int? skip, int? limit)
+    {
+        int skipCount = skip ?? 0;
+        int startIndex = skipCount;
+
+        if (startIndex >= documents.Count)
+        {
+            return new List<T>();
+        }
+
+        int takeCount;
+        if (limit.HasValue)
+        {
+            takeCount = limit.Value;
+        }
+        else
+        {
+            takeCount = documents.Count - startIndex;
+        }
+
+        int endIndex = startIndex + takeCount;
+        if (endIndex > documents.Count)
+        {
+            endIndex = documents.Count;
+        }
+
+        List<T> results = new List<T>();
+        for (int i = startIndex; i < endIndex; i++)
+        {
+            results.Add(documents[i]);
         }
 
         return results;
@@ -90,45 +145,12 @@ public sealed class DatabaseQueryExecutor<T> : IQueryExecutor<T>
     private List<T> ExecuteIndexedQuery(QueryBuilder<T> query, CollectionEntry collection, IndexedFilterResult indexedFilter)
     {
         List<DocumentLocation> candidateLocations = GetCandidateLocations(indexedFilter, collection);
-
         List<T> candidates = _db.GetDocumentsByLocations(candidateLocations, _typeInfo);
-
         List<IFieldFilter> remainingFilters = GetRemainingFilters(query.Filters, indexedFilter.FilterIndex);
 
-        List<T> results = new List<T>();
-        int skipped = 0;
-        int skipCount = query.SkipValue ?? 0;
-        int? limitCount = query.LimitValue;
-
-        foreach (T document in candidates)
-        {
-            if (limitCount.HasValue && results.Count >= limitCount.Value)
-            {
-                break;
-            }
-
-            bool passesRemainingFilters = true;
-            foreach (IFieldFilter filter in remainingFilters)
-            {
-                if (!filter.Evaluate(document))
-                {
-                    passesRemainingFilters = false;
-                    break;
-                }
-            }
-
-            if (passesRemainingFilters)
-            {
-                if (skipped < skipCount)
-                {
-                    skipped++;
-                }
-                else
-                {
-                    results.Add(document);
-                }
-            }
-        }
+        List<T> filtered = FilterDocuments(candidates, remainingFilters);
+        List<T> sorted = ApplyOrdering(filtered, query.OrderByClauses);
+        List<T> results = ApplySkipAndLimit(sorted, query.SkipValue, query.LimitValue);
 
         return results;
     }

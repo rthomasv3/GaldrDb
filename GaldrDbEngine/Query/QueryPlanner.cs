@@ -27,6 +27,11 @@ public sealed class QueryPlanner
                 continue;
             }
 
+            if (!CanUseIndex(filter.Operation))
+            {
+                continue;
+            }
+
             IndexDefinition indexDef = _collection.FindIndex(filter.FieldName);
             if (indexDef == null)
             {
@@ -47,6 +52,31 @@ public sealed class QueryPlanner
             IndexDefinition indexDef = _collection.FindIndex(bestFilter.FieldName);
 
             result = new IndexedFilterResult(bestFilter, indexDef, bestFilterIndex);
+        }
+
+        return result;
+    }
+
+    private static bool CanUseIndex(FieldOp op)
+    {
+        bool result;
+
+        switch (op)
+        {
+            case FieldOp.Equals:
+            case FieldOp.In:
+            case FieldOp.StartsWith:
+            case FieldOp.Between:
+            case FieldOp.GreaterThan:
+            case FieldOp.GreaterThanOrEqual:
+            case FieldOp.LessThan:
+            case FieldOp.LessThanOrEqual:
+                result = true;
+                break;
+            default:
+                // EndsWith, Contains, NotEquals, NotIn cannot efficiently use an index
+                result = false;
+                break;
         }
 
         return result;

@@ -6,6 +6,7 @@ namespace GaldrDbEngine.Query;
 public sealed class QueryBuilder<T>
 {
     private readonly List<IFieldFilter> _filters;
+    private readonly List<OrderByClause<T>> _orderByClauses;
     private readonly IQueryExecutor<T> _executor;
     private int? _limit;
     private int? _skip;
@@ -14,6 +15,7 @@ public sealed class QueryBuilder<T>
     {
         _executor = executor;
         _filters = new List<IFieldFilter>();
+        _orderByClauses = new List<OrderByClause<T>>();
     }
 
     public QueryBuilder<T> Where<TField>(GaldrField<T, TField> field, FieldOp op, TField value)
@@ -35,6 +37,12 @@ public sealed class QueryBuilder<T>
         return this;
     }
 
+    public QueryBuilder<T> WhereNotIn<TField>(GaldrField<T, TField> field, params TField[] values)
+    {
+        _filters.Add(new NotInFilter<T, TField>(field, values));
+        return this;
+    }
+
     public QueryBuilder<T> Limit(int count)
     {
         _limit = count;
@@ -44,6 +52,60 @@ public sealed class QueryBuilder<T>
     public QueryBuilder<T> Skip(int count)
     {
         _skip = count;
+        return this;
+    }
+
+    public QueryBuilder<T> OrderBy<TField>(GaldrField<T, TField> field) where TField : IComparable<TField>
+    {
+        Comparison<T> comparer = (a, b) =>
+        {
+            TField valueA = field.Accessor(a);
+            TField valueB = field.Accessor(b);
+
+            if (valueA == null && valueB == null)
+            {
+                return 0;
+            }
+            if (valueA == null)
+            {
+                return -1;
+            }
+            if (valueB == null)
+            {
+                return 1;
+            }
+
+            return valueA.CompareTo(valueB);
+        };
+
+        _orderByClauses.Add(new OrderByClause<T>(field.FieldName, false, comparer));
+        return this;
+    }
+
+    public QueryBuilder<T> OrderByDescending<TField>(GaldrField<T, TField> field) where TField : IComparable<TField>
+    {
+        Comparison<T> comparer = (a, b) =>
+        {
+            TField valueA = field.Accessor(a);
+            TField valueB = field.Accessor(b);
+
+            if (valueA == null && valueB == null)
+            {
+                return 0;
+            }
+            if (valueA == null)
+            {
+                return 1;
+            }
+            if (valueB == null)
+            {
+                return -1;
+            }
+
+            return valueB.CompareTo(valueA);
+        };
+
+        _orderByClauses.Add(new OrderByClause<T>(field.FieldName, true, comparer));
         return this;
     }
 
@@ -92,5 +154,10 @@ public sealed class QueryBuilder<T>
     public int? SkipValue
     {
         get { return _skip; }
+    }
+
+    public IReadOnlyList<OrderByClause<T>> OrderByClauses
+    {
+        get { return _orderByClauses; }
     }
 }

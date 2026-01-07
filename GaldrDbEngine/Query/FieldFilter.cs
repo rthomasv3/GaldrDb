@@ -36,9 +36,26 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
 
     public FieldFilter(GaldrField<TDocument, TField> field, FieldOp op, TField value)
     {
+        ValidateOperation(field, op);
         _field = field;
         _op = op;
         _value = value;
+    }
+
+    private static void ValidateOperation(GaldrField<TDocument, TField> field, FieldOp op)
+    {
+        bool isStringField = field.FieldType == GaldrFieldType.String;
+        bool isStringOperation = op == FieldOp.StartsWith || op == FieldOp.EndsWith || op == FieldOp.Contains;
+
+        if (isStringOperation && !isStringField)
+        {
+            throw new ArgumentException($"Operation '{op}' is only supported for string fields, but field '{field.FieldName}' is of type '{field.FieldType}'.");
+        }
+
+        if (op == FieldOp.Between || op == FieldOp.In || op == FieldOp.NotIn)
+        {
+            throw new ArgumentException($"Operation '{op}' is not supported in Where(). Use WhereBetween(), WhereIn(), or WhereNotIn() instead.");
+        }
     }
 
     public bool Evaluate(object document)
