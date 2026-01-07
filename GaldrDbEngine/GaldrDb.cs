@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
-using GaldrDbCore.IO;
-using GaldrDbCore.Pages;
-using GaldrDbCore.Storage;
-using GaldrDbCore.Utilities;
+using GaldrDbEngine.IO;
+using GaldrDbEngine.Pages;
+using GaldrDbEngine.Query;
+using GaldrDbEngine.Storage;
+using GaldrDbEngine.Utilities;
 using GaldrJson;
 
 namespace GaldrDbEngine;
@@ -229,6 +231,131 @@ public class GaldrDb : IDisposable
         }
 
         return true;
+    }
+
+    #endregion
+
+    #region Type-Safe CRUD Operations
+
+    public void EnsureCollection<T>(GaldrTypeInfo<T> typeInfo)
+    {
+        string collectionName = typeInfo.CollectionName;
+        CollectionEntry existingCollection = _collectionsMetadata.FindCollection(collectionName);
+
+        if (existingCollection == null)
+        {
+            CreateCollection(collectionName);
+        }
+    }
+
+    public int Insert<T>(T document, GaldrTypeInfo<T> typeInfo)
+    {
+        string collectionName = typeInfo.CollectionName;
+
+        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist. Call EnsureCollection<T>() first.");
+        }
+
+        int currentId = typeInfo.IdGetter(document);
+        int assignedId;
+
+        if (currentId == 0)
+        {
+            assignedId = collection.NextId;
+            typeInfo.IdSetter(document, assignedId);
+        }
+        else
+        {
+            assignedId = currentId;
+        }
+
+        string json = _jsonSerializer.Serialize(document, _jsonOptions);
+        byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
+        DocumentLocation location = _documentStorage.WriteDocument(jsonBytes);
+
+        int order = CalculateBTreeOrder(_options.PageSize);
+        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
+        btree.Insert(assignedId, location);
+
+        int newRootPageId = btree.GetRootPageId();
+        if (newRootPageId != collection.RootPage)
+        {
+            collection.RootPage = newRootPageId;
+        }
+
+        collection.DocumentCount++;
+        if (assignedId >= collection.NextId)
+        {
+            collection.NextId = assignedId + 1;
+        }
+        _collectionsMetadata.UpdateCollection(collection);
+        _collectionsMetadata.WriteToDisk();
+
+        return assignedId;
+    }
+
+    public T GetById<T>(int id, GaldrTypeInfo<T> typeInfo)
+    {
+        string collectionName = typeInfo.CollectionName;
+        T result = GetDocument<T>(collectionName, id);
+        return result;
+    }
+
+    public bool Update<T>(T document, GaldrTypeInfo<T> typeInfo)
+    {
+        int id = typeInfo.IdGetter(document);
+
+        if (id == 0)
+        {
+            throw new InvalidOperationException("Cannot update a document with Id = 0. The document must have a valid Id.");
+        }
+
+        string collectionName = typeInfo.CollectionName;
+        bool result = UpdateDocument(collectionName, id, document);
+        return result;
+    }
+
+    public bool Delete<T>(int id, GaldrTypeInfo<T> typeInfo)
+    {
+        string collectionName = typeInfo.CollectionName;
+        bool result = DeleteDocument(collectionName, id);
+        return result;
+    }
+
+    public QueryBuilder<T> Query<T>(GaldrTypeInfo<T> typeInfo)
+    {
+        DatabaseQueryExecutor<T> executor = new DatabaseQueryExecutor<T>(this, typeInfo);
+        QueryBuilder<T> queryBuilder = new QueryBuilder<T>(executor);
+        return queryBuilder;
+    }
+
+    public List<T> GetAllDocuments<T>(GaldrTypeInfo<T> typeInfo)
+    {
+        string collectionName = typeInfo.CollectionName;
+        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+
+        if (collection == null)
+        {
+            return new List<T>();
+        }
+
+        List<T> results = new List<T>();
+        int order = CalculateBTreeOrder(_options.PageSize);
+        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
+
+        List<BTreeEntry> allEntries = btree.GetAllEntries();
+
+        foreach (BTreeEntry entry in allEntries)
+        {
+            byte[] jsonBytes = _documentStorage.ReadDocument(entry.Location.PageId, entry.Location.SlotIndex);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            T document = _jsonSerializer.Deserialize<T>(json, _jsonOptions);
+            results.Add(document);
+        }
+
+        return results;
     }
 
     #endregion

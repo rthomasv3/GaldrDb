@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
-using GaldrDbCore.IO;
-using GaldrDbCore.Pages;
-using GaldrDbCore.Utilities;
+using GaldrDbEngine.Pages;
+using GaldrDbEngine.IO;
+using GaldrDbEngine.Utilities;
 
-namespace GaldrDbCore.Storage;
+namespace GaldrDbEngine.Storage;
 
 public class CollectionsMetadata
 {

@@ -1,8 +1,8 @@
 using System;
 using System.Text;
-using GaldrDbCore.Utilities;
+using GaldrDbEngine.Utilities;
 
-namespace GaldrDbCore.Storage;
+namespace GaldrDbEngine.Storage;
 
 public class CollectionEntry
 {

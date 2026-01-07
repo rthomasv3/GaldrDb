@@ -1,9 +1,10 @@
 using System;
-using GaldrDbCore.IO;
-using GaldrDbCore.Pages;
-using GaldrDbCore.Utilities;
+using System.Collections.Generic;
+using GaldrDbEngine.IO;
+using GaldrDbEngine.Pages;
+using GaldrDbEngine.Utilities;
 
-namespace GaldrDbCore.Storage;
+namespace GaldrDbEngine.Storage;
 
 public class BTree
 {
@@ -68,6 +69,45 @@ public class BTree
     public bool Delete(int docId)
     {
         return DeleteFromNode(_rootPageId, docId);
+    }
+
+    public List<BTreeEntry> GetAllEntries()
+    {
+        List<BTreeEntry> entries = new List<BTreeEntry>();
+        CollectAllEntries(_rootPageId, entries);
+        return entries;
+    }
+
+    private void CollectAllEntries(int pageId, List<BTreeEntry> entries)
+    {
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        try
+        {
+            _pageIO.ReadPage(pageId, buffer);
+            BTreeNode node = BTreeNode.Deserialize(buffer, _pageSize, _order);
+
+            if (node.NodeType == BTreeNodeType.Leaf)
+            {
+                for (int i = 0; i < node.KeyCount; i++)
+                {
+                    entries.Add(new BTreeEntry(node.Keys[i], node.LeafValues[i]));
+                }
+            }
+            else
+            {
+                for (int i = 0; i <= node.KeyCount; i++)
+                {
+                    if (i < node.ChildPageIds.Count)
+                    {
+                        CollectAllEntries(node.ChildPageIds[i], entries);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            BufferPool.Return(buffer);
+        }
     }
 
     private bool DeleteFromNode(int pageId, int docId)

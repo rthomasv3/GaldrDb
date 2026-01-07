@@ -1,7 +1,7 @@
 using System;
 using System.Text;
 
-namespace GaldrDbCore.Utilities;
+namespace GaldrDbEngine.Utilities;
 
 public static class BinaryHelper
 {

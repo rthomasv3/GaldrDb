@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
-using GaldrDbCore.Utilities;
+using GaldrDbEngine.Utilities;
 
-namespace GaldrDbCore.Pages;
+namespace GaldrDbEngine.Pages;
 
 public class DocumentPage
 {

@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 
-namespace GaldrDbCore.IO;
+namespace GaldrDbEngine.IO;
 
 public class StandardPageIO : IPageIO
 {

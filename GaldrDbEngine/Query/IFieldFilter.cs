@@ -1,4 +1,4 @@
-namespace GaldrDbCore.Query;
+namespace GaldrDbEngine.Query;
 
 public interface IFieldFilter
 {

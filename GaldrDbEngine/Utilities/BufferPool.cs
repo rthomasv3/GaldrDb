@@ -1,7 +1,7 @@
 using System;
 using System.Buffers;
 
-namespace GaldrDbCore.Utilities;
+namespace GaldrDbEngine.Utilities;
 
 public static class BufferPool
 {

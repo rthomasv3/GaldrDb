@@ -1,7 +1,7 @@
 using System;
 using System.Text;
 
-namespace GaldrDbCore.Query;
+namespace GaldrDbEngine.Query;
 
 public static class IndexKeyEncoder
 {

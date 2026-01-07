@@ -1,6 +1,6 @@
 using System;
 
-namespace GaldrDbCore.IO;
+namespace GaldrDbEngine.IO;
 
 public interface IPageIO : IDisposable
 {

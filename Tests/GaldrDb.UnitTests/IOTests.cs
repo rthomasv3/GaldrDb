@@ -1,6 +1,6 @@
 using System;
 using System.IO;
-using GaldrDbCore.IO;
+using GaldrDbEngine.IO;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace GaldrDb.UnitTests;

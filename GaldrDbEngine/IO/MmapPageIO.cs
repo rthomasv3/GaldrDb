@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.IO.MemoryMappedFiles;
 
-namespace GaldrDbCore.IO;
+namespace GaldrDbEngine.IO;
 
 public class MmapPageIO : IPageIO
 {

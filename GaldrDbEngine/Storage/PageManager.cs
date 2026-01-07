@@ -1,10 +1,10 @@
 using System;
 using System.IO;
-using GaldrDbCore.IO;
-using GaldrDbCore.Pages;
-using GaldrDbCore.Utilities;
+using GaldrDbEngine.IO;
+using GaldrDbEngine.Pages;
+using GaldrDbEngine.Utilities;
 
-namespace GaldrDbCore.Storage;
+namespace GaldrDbEngine.Storage;
 
 public class PageManager
 {

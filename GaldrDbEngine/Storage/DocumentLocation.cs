@@ -1,4 +1,4 @@
-namespace GaldrDbCore.Storage;
+namespace GaldrDbEngine.Storage;
 
 public class DocumentLocation
 {

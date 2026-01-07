@@ -1,8 +1,8 @@
 using System.Collections.Generic;
-using GaldrDbCore.Storage;
-using GaldrDbCore.Utilities;
+using GaldrDbEngine.Storage;
+using GaldrDbEngine.Utilities;
 
-namespace GaldrDbCore.Pages;
+namespace GaldrDbEngine.Pages;
 
 public class BTreeNode
 {

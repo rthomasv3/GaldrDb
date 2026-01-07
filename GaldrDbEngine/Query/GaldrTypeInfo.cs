@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace GaldrDbCore.Query;
+namespace GaldrDbEngine.Query;
 
 public sealed class GaldrTypeInfo<T> : IGaldrTypeInfo
 {

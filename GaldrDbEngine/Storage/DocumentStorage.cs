@@ -1,9 +1,9 @@
 using System;
-using GaldrDbCore.IO;
-using GaldrDbCore.Pages;
-using GaldrDbCore.Utilities;
+using GaldrDbEngine.IO;
+using GaldrDbEngine.Pages;
+using GaldrDbEngine.Utilities;
 
-namespace GaldrDbCore.Storage;
+namespace GaldrDbEngine.Storage;
 
 public class DocumentStorage
 {

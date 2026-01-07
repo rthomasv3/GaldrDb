@@ -1,8 +1,8 @@
 using System;
 using System.IO;
-using GaldrDbCore.IO;
-using GaldrDbCore.Pages;
-using GaldrDbCore.Storage;
+using GaldrDbEngine.IO;
+using GaldrDbEngine.Pages;
+using GaldrDbEngine.Storage;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace GaldrDb.UnitTests;

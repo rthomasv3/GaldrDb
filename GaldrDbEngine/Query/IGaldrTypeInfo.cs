@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace GaldrDbCore.Query;
+namespace GaldrDbEngine.Query;
 
 public interface IGaldrTypeInfo
 {

@@ -156,9 +156,9 @@ namespace GaldrDbSourceGenerators
             string ns = symbol.ContainingNamespace?.ToDisplayString();
             if (string.IsNullOrEmpty(ns))
             {
-                return symbol.Name;
+                return "global::" + symbol.Name;
             }
-            return ns + "." + symbol.Name;
+            return "global::" + ns + "." + symbol.Name;
         }
 
         private static string GetFullyQualifiedTypeName(ITypeSymbol type)
@@ -357,9 +357,9 @@ namespace GaldrDbSourceGenerators
             sb.AppendLine();
             sb.AppendLine("using System;");
             sb.AppendLine("using System.Collections.Generic;");
-            sb.AppendLine("using GaldrDbCore.Query;");
+            sb.AppendLine("using GaldrDbEngine.Query;");
             sb.AppendLine();
-            sb.AppendLine("namespace GaldrDbCore.Generated");
+            sb.AppendLine("namespace GaldrDbEngine.Generated");
             sb.AppendLine("{");
 
             // Class declaration
@@ -468,9 +468,9 @@ namespace GaldrDbSourceGenerators
             sb.AppendLine();
             sb.AppendLine("using System;");
             sb.AppendLine("using System.Collections.Generic;");
-            sb.AppendLine("using GaldrDbCore.Query;");
+            sb.AppendLine("using GaldrDbEngine.Query;");
             sb.AppendLine();
-            sb.AppendLine("namespace GaldrDbCore.Generated");
+            sb.AppendLine("namespace GaldrDbEngine.Generated");
             sb.AppendLine("{");
             sb.AppendLine("    /// <summary>");
             sb.AppendLine("    /// Registry of all GaldrJsonSerializable types and their metadata.");

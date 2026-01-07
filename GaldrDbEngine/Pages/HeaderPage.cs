@@ -1,6 +1,6 @@
-using GaldrDbCore.Utilities;
+using GaldrDbEngine.Utilities;
 
-namespace GaldrDbCore.Pages;
+namespace GaldrDbEngine.Pages;
 
 public class HeaderPage
 {

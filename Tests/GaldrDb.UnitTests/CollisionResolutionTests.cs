@@ -6,8 +6,8 @@ using GaldrDb.UnitTests.TestModels.CompanyA.Models;
 using GaldrDb.UnitTests.TestModels.CompanyB.Models;
 using GaldrDb.UnitTests.TestModels.Customers;
 using GaldrDb.UnitTests.TestModels.Products;
-using GaldrDbCore.Generated;
-using GaldrDbCore.Query;
+using GaldrDbEngine.Generated;
+using GaldrDbEngine.Query;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace GaldrDb.UnitTests;

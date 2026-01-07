@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 using GaldrDb.UnitTests.TestModels;
-using GaldrDbCore.Generated;
-using GaldrDbCore.Query;
+using GaldrDbEngine.Generated;
+using GaldrDbEngine.Query;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace GaldrDb.UnitTests;

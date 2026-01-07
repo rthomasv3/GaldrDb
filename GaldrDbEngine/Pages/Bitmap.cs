@@ -1,8 +1,8 @@
 using System;
-using GaldrDbCore.IO;
-using GaldrDbCore.Utilities;
+using GaldrDbEngine.IO;
+using GaldrDbEngine.Utilities;
 
-namespace GaldrDbCore.Pages;
+namespace GaldrDbEngine.Pages;
 
 public class Bitmap
 {

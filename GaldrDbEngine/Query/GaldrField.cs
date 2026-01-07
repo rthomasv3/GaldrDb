@@ -1,6 +1,6 @@
 using System;
 
-namespace GaldrDbCore.Query;
+namespace GaldrDbEngine.Query;
 
 public sealed class GaldrField<TDocument, TField>
 {

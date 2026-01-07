@@ -1,5 +1,5 @@
 using System;
-using GaldrDbCore.Query;
+using GaldrDbEngine.Query;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace GaldrDb.UnitTests;

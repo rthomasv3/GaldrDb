@@ -1,24 +1,29 @@
 using System.Collections.Generic;
+using GaldrDbEngine.Storage;
 
 namespace GaldrDbEngine.Query;
 
-public sealed class InMemoryQueryExecutor<T> : IQueryExecutor<T>
+public sealed class DatabaseQueryExecutor<T> : IQueryExecutor<T>
 {
-    private readonly IEnumerable<T> _documents;
+    private readonly GaldrDb _db;
+    private readonly GaldrTypeInfo<T> _typeInfo;
 
-    public InMemoryQueryExecutor(IEnumerable<T> documents)
+    public DatabaseQueryExecutor(GaldrDb db, GaldrTypeInfo<T> typeInfo)
     {
-        _documents = documents;
+        _db = db;
+        _typeInfo = typeInfo;
     }
 
     public List<T> ExecuteQuery(QueryBuilder<T> query)
     {
+        List<T> allDocuments = _db.GetAllDocuments(_typeInfo);
+
         List<T> results = new List<T>();
         int skipped = 0;
         int skipCount = query.SkipValue ?? 0;
         int? limitCount = query.LimitValue;
 
-        foreach (T document in _documents)
+        foreach (T document in allDocuments)
         {
             if (limitCount.HasValue && results.Count >= limitCount.Value)
             {
@@ -51,9 +56,11 @@ public sealed class InMemoryQueryExecutor<T> : IQueryExecutor<T>
 
     public int ExecuteCount(QueryBuilder<T> query)
     {
+        List<T> allDocuments = _db.GetAllDocuments(_typeInfo);
+
         int count = 0;
 
-        foreach (T document in _documents)
+        foreach (T document in allDocuments)
         {
             bool passesAllFilters = true;
             foreach (IFieldFilter filter in query.Filters)

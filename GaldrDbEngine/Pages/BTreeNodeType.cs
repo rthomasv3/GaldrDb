@@ -1,4 +1,4 @@
-namespace GaldrDbCore.Pages;
+namespace GaldrDbEngine.Pages;
 
 public enum BTreeNodeType : byte
 {
