@@ -4,7 +4,7 @@ using GaldrDbCore.Utilities;
 
 namespace GaldrDbCore.Storage;
 
-public struct CollectionEntry
+public class CollectionEntry
 {
     public string Name { get; set; }
     public int RootPage { get; set; }

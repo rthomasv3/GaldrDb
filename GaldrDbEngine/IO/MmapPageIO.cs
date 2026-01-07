@@ -84,28 +84,29 @@ public class MmapPageIO : IPageIO
         return result;
     }
 
-    public byte[] ReadPage(int pageId)
+    public void ReadPage(int pageId, Span<byte> destination)
     {
-        byte[] buffer = new byte[_pageSize];
-        long offset = (long)pageId * _pageSize;
+        if (destination.Length < _pageSize)
+        {
+            throw new ArgumentException($"Destination length {destination.Length} is smaller than page size {_pageSize}");
+        }
 
+        long offset = (long)pageId * _pageSize;
         long currentFileSize = _fileStream.Length;
 
         if (offset + _pageSize > currentFileSize)
         {
-            byte[] result = buffer;
-
-            return result;
+            destination.Slice(0, _pageSize).Clear();
         }
-
-        _accessor.ReadArray(offset, buffer, 0, _pageSize);
-
-        byte[] finalResult = buffer;
-
-        return finalResult;
+        else
+        {
+            byte[] tempBuffer = new byte[_pageSize];
+            _accessor.ReadArray(offset, tempBuffer, 0, _pageSize);
+            tempBuffer.AsSpan().CopyTo(destination);
+        }
     }
 
-    public void WritePage(int pageId, byte[] data)
+    public void WritePage(int pageId, ReadOnlySpan<byte> data)
     {
         if (data.Length != _pageSize)
         {
@@ -136,7 +137,8 @@ public class MmapPageIO : IPageIO
             _accessor = _memoryMappedFile.CreateViewAccessor();
         }
 
-        _accessor.WriteArray(offset, data, 0, data.Length);
+        byte[] tempBuffer = data.ToArray();
+        _accessor.WriteArray(offset, tempBuffer, 0, tempBuffer.Length);
     }
 
     public void Flush()

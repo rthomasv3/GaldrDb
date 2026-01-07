@@ -42,7 +42,8 @@ public class IOTests
             pageIO.WritePage(0, testData);
             pageIO.Flush();
 
-            byte[] readData = pageIO.ReadPage(0);
+            byte[] readData = new byte[pageSize];
+            pageIO.ReadPage(0, readData);
 
             CollectionAssert.AreEqual(testData, readData);
         }
@@ -83,7 +84,8 @@ public class IOTests
                     expectedData[i] = (byte)((pageId * 100 + i) % 256);
                 }
 
-                byte[] readData = pageIO.ReadPage(pageId);
+                byte[] readData = new byte[pageSize];
+                pageIO.ReadPage(pageId, readData);
 
                 CollectionAssert.AreEqual(expectedData, readData);
             }
@@ -118,7 +120,8 @@ public class IOTests
             pageIO.WritePage(0, testData);
             pageIO.Flush();
 
-            byte[] readData = pageIO.ReadPage(0);
+            byte[] readData = new byte[pageSize];
+            pageIO.ReadPage(0, readData);
 
             CollectionAssert.AreEqual(testData, readData);
         }
@@ -166,7 +169,8 @@ public class IOTests
                     expectedData[i] = (byte)((pageId * 100 + i) % 256);
                 }
 
-                byte[] readData = pageIO.ReadPage(pageId);
+                byte[] readData = new byte[pageSize];
+                pageIO.ReadPage(pageId, readData);
 
                 CollectionAssert.AreEqual(expectedData, readData);
             }

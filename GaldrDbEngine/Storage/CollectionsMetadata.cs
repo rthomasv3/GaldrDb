@@ -89,9 +89,9 @@ public class CollectionsMetadata
         return entry;
     }
 
-    public CollectionEntry? FindCollection(string name)
+    public CollectionEntry FindCollection(string name)
     {
-        CollectionEntry? result = null;
+        CollectionEntry result = null;
 
         for (int i = 0; i < _collections.Count; i++)
         {

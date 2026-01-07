@@ -8,15 +8,15 @@ namespace GaldrDbCore.Storage;
 public class BTree
 {
     private readonly IPageIO _pageIO;
-    private readonly Bitmap _bitmap;
+    private readonly PageManager _pageManager;
     private readonly int _pageSize;
     private readonly int _order;
     private int _rootPageId;
 
-    public BTree(IPageIO pageIO, Bitmap bitmap, int rootPageId, int pageSize, int order)
+    public BTree(IPageIO pageIO, PageManager pageManager, int rootPageId, int pageSize, int order)
     {
         _pageIO = pageIO;
-        _bitmap = bitmap;
+        _pageManager = pageManager;
         _rootPageId = rootPageId;
         _pageSize = pageSize;
         _order = order;
@@ -37,7 +37,7 @@ public class BTree
 
             if (root.IsFull())
             {
-                int newRootPageId = AllocateNewNode();
+                int newRootPageId = _pageManager.AllocatePage();
                 BTreeNode newRoot = new BTreeNode(_pageSize, _order, BTreeNodeType.Internal);
                 newRoot.ChildPageIds.Add(_rootPageId);
 
@@ -68,7 +68,7 @@ public class BTree
     private DocumentLocation SearchNode(int pageId, int docId)
     {
         DocumentLocation result = null;
-        
+
         byte[] buffer = BufferPool.Rent(_pageSize);
         try
         {
@@ -90,11 +90,6 @@ public class BTree
             }
             else
             {
-                if (i < node.KeyCount && node.Keys[i] == docId)
-                {
-                    i++;
-                }
-
                 result = SearchNode(node.ChildPageIds[i], docId);
             }
         }
@@ -188,10 +183,11 @@ public class BTree
             _pageIO.ReadPage(parentPageId, parentBuffer);
             BTreeNode parent = BTreeNode.Deserialize(parentBuffer, _pageSize, _order);
 
-            int newChildPageId = AllocateNewNode();
+            int newChildPageId = _pageManager.AllocatePage();
             BTreeNode newChild = new BTreeNode(_pageSize, _order, fullChild.NodeType);
 
             int mid = (_order - 1) / 2;
+            int keyToPromote = fullChild.Keys[mid];
 
             for (int j = mid + 1; j < fullChild.KeyCount; j++)
             {
@@ -214,22 +210,35 @@ public class BTree
                 newChild.ChildPageIds.Add(fullChild.ChildPageIds[fullChild.KeyCount]);
             }
 
+            int originalKeyCount = fullChild.KeyCount;
             fullChild.KeyCount = (ushort)(mid + 1);
-            fullChild.Keys.RemoveRange(mid + 1, fullChild.Keys.Count - mid - 1);
+            int keysToRemove = originalKeyCount - (mid + 1);
+
+            if (keysToRemove > 0)
+            {
+                fullChild.Keys.RemoveRange(mid + 1, keysToRemove);
+            }
 
             if (fullChild.NodeType == BTreeNodeType.Leaf)
             {
-                fullChild.LeafValues.RemoveRange(mid + 1, fullChild.LeafValues.Count - mid - 1);
+                if (keysToRemove > 0)
+                {
+                    fullChild.LeafValues.RemoveRange(mid + 1, keysToRemove);
+                }
                 newChild.NextLeaf = fullChild.NextLeaf;
                 fullChild.NextLeaf = newChildPageId;
             }
             else
             {
-                fullChild.ChildPageIds.RemoveRange(mid + 1, fullChild.ChildPageIds.Count - mid - 1);
+                int childPointersToRemove = fullChild.ChildPageIds.Count - (mid + 2);
+                if (childPointersToRemove > 0)
+                {
+                    fullChild.ChildPageIds.RemoveRange(mid + 2, childPointersToRemove);
+                }
             }
 
             parent.ChildPageIds.Insert(index + 1, newChildPageId);
-            parent.Keys.Insert(index, fullChild.Keys[mid]);
+            parent.Keys.Insert(index, keyToPromote);
             parent.KeyCount++;
 
             byte[] fullChildBytes = fullChild.Serialize();
@@ -246,20 +255,5 @@ public class BTree
             BufferPool.Return(childBuffer);
             BufferPool.Return(parentBuffer);
         }
-    }
-
-    private int AllocateNewNode()
-    {
-        int pageId = _bitmap.FindFreePage();
-
-        if (pageId == -1)
-        {
-            throw new InvalidOperationException("No free pages available for B+ tree node");
-        }
-
-        _bitmap.AllocatePage(pageId);
-        _bitmap.WriteToDisk();
-
-        return pageId;
     }
 }

@@ -24,9 +24,13 @@ public class StandardPageIO : IPageIO
         _fileStream = new FileStream(_filePath, fileMode, FileAccess.ReadWrite, FileShare.Read);
     }
 
-    public byte[] ReadPage(int pageId)
+    public void ReadPage(int pageId, Span<byte> destination)
     {
-        byte[] buffer = new byte[_pageSize];
+        if (destination.Length < _pageSize)
+        {
+            throw new ArgumentException($"Destination length {destination.Length} is smaller than page size {_pageSize}");
+        }
+
         long offset = (long)pageId * _pageSize;
 
         _fileStream.Seek(offset, SeekOrigin.Begin);
@@ -35,7 +39,7 @@ public class StandardPageIO : IPageIO
 
         while (totalBytesRead < _pageSize)
         {
-            int bytesRead = _fileStream.Read(buffer, totalBytesRead, _pageSize - totalBytesRead);
+            int bytesRead = _fileStream.Read(destination.Slice(totalBytesRead, _pageSize - totalBytesRead));
 
             if (bytesRead == 0)
             {
@@ -44,13 +48,9 @@ public class StandardPageIO : IPageIO
 
             totalBytesRead += bytesRead;
         }
-
-        byte[] result = buffer;
-
-        return result;
     }
 
-    public void WritePage(int pageId, byte[] data)
+    public void WritePage(int pageId, ReadOnlySpan<byte> data)
     {
         if (data.Length != _pageSize)
         {
@@ -60,7 +60,7 @@ public class StandardPageIO : IPageIO
         long offset = (long)pageId * _pageSize;
 
         _fileStream.Seek(offset, SeekOrigin.Begin);
-        _fileStream.Write(data, 0, data.Length);
+        _fileStream.Write(data);
     }
 
     public void Flush()

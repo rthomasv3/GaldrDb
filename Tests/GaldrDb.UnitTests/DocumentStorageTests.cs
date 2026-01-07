@@ -29,32 +29,16 @@ public class DocumentStorageTests
         }
     }
 
-    private DocumentStorage CreateDocumentStorage(string dbPath, int pageSize, out IPageIO pageIO, int totalPages = 50)
+    private DocumentStorage CreateDocumentStorage(string dbPath, int pageSize, out IPageIO pageIO, out PageManager pageManager)
     {
         pageIO = new StandardPageIO(dbPath, pageSize, true);
 
-        Bitmap bitmap = new Bitmap(pageIO, 1, 1, totalPages);
-        bitmap.AllocatePage(0);
-        bitmap.AllocatePage(1);
-        bitmap.AllocatePage(2);
-        bitmap.AllocatePage(3);
-        bitmap.WriteToDisk();
-
-        FreeSpaceMap fsm = new FreeSpaceMap(pageIO, 2, 1, totalPages);
-        fsm.WriteToDisk();
-
-        byte[] headerPage = new byte[pageSize];
-        pageIO.WritePage(0, headerPage);
-
-        for (int i = 4; i < totalPages; i++)
-        {
-            byte[] emptyPage = new byte[pageSize];
-            pageIO.WritePage(i, emptyPage);
-        }
+        pageManager = new PageManager(pageIO, pageSize);
+        pageManager.Initialize();
 
         pageIO.Flush();
 
-        DocumentStorage storage = new DocumentStorage(pageIO, bitmap, fsm, pageSize);
+        DocumentStorage storage = new DocumentStorage(pageIO, pageManager, pageSize);
         DocumentStorage result = storage;
 
         return result;
@@ -66,11 +50,12 @@ public class DocumentStorageTests
         string dbPath = Path.Combine(_testDirectory, "test.db");
         int pageSize = 8192;
         IPageIO pageIO = null;
+        PageManager pageManager = null;
 
         string testData = "Hello, GaldrDb! This is a test document.";
         byte[] documentBytes = Encoding.UTF8.GetBytes(testData);
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
         DocumentLocation location = storage.WriteDocument(documentBytes);
 
         bool result = location.PageId >= 4 && location.SlotIndex == 0;
@@ -86,11 +71,12 @@ public class DocumentStorageTests
         string dbPath = Path.Combine(_testDirectory, "test.db");
         int pageSize = 8192;
         IPageIO pageIO = null;
+        PageManager pageManager = null;
 
         string testData = "Hello, GaldrDb! This is a test document.";
         byte[] documentBytes = Encoding.UTF8.GetBytes(testData);
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
         DocumentLocation location = storage.WriteDocument(documentBytes);
 
         byte[] readBytes = storage.ReadDocument(location.PageId, location.SlotIndex);
@@ -108,6 +94,7 @@ public class DocumentStorageTests
         string dbPath = Path.Combine(_testDirectory, "test.db");
         int pageSize = 8192;
         IPageIO pageIO = null;
+        PageManager pageManager = null;
 
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < 2000; i++)
@@ -118,7 +105,7 @@ public class DocumentStorageTests
         string testData = sb.ToString();
         byte[] documentBytes = Encoding.UTF8.GetBytes(testData);
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
         DocumentLocation location = storage.WriteDocument(documentBytes);
 
         byte[] readBytes = storage.ReadDocument(location.PageId, location.SlotIndex);
@@ -136,8 +123,9 @@ public class DocumentStorageTests
         string dbPath = Path.Combine(_testDirectory, "test.db");
         int pageSize = 8192;
         IPageIO pageIO = null;
+        PageManager pageManager = null;
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
 
         string doc1 = "First document";
         string doc2 = "Second document";
@@ -165,11 +153,12 @@ public class DocumentStorageTests
         string dbPath = Path.Combine(_testDirectory, "test.db");
         int pageSize = 8192;
         IPageIO pageIO = null;
+        PageManager pageManager = null;
 
         string testData = "Document to be deleted.";
         byte[] documentBytes = Encoding.UTF8.GetBytes(testData);
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
         DocumentLocation location = storage.WriteDocument(documentBytes);
 
         storage.DeleteDocument(location.PageId, location.SlotIndex);
@@ -191,8 +180,9 @@ public class DocumentStorageTests
         string dbPath = Path.Combine(_testDirectory, "test.db");
         int pageSize = 8192;
         IPageIO pageIO = null;
+        PageManager pageManager = null;
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
 
         string doc1 = "First document to be deleted";
         DocumentLocation loc1 = storage.WriteDocument(Encoding.UTF8.GetBytes(doc1));
@@ -217,11 +207,12 @@ public class DocumentStorageTests
         string dbPath = Path.Combine(_testDirectory, "test.db");
         int pageSize = 8192;
         IPageIO pageIO = null;
+        PageManager pageManager = null;
 
         string smallData = "Small";
         byte[] smallBytes = Encoding.UTF8.GetBytes(smallData);
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
         DocumentLocation location = storage.WriteDocument(smallBytes);
 
         pageIO.Dispose();
@@ -236,6 +227,7 @@ public class DocumentStorageTests
         string dbPath = Path.Combine(_testDirectory, "test.db");
         int pageSize = 8192;
         IPageIO pageIO = null;
+        PageManager pageManager = null;
 
         byte[] largeDocument = new byte[20 * 1024];
         for (int i = 0; i < largeDocument.Length; i++)
@@ -243,7 +235,7 @@ public class DocumentStorageTests
             largeDocument[i] = (byte)(i % 256);
         }
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
         DocumentLocation location = storage.WriteDocument(largeDocument);
 
         byte[] readDocument = storage.ReadDocument(location.PageId, location.SlotIndex);
@@ -268,8 +260,9 @@ public class DocumentStorageTests
         string dbPath = Path.Combine(_testDirectory, "test.db");
         int pageSize = 8192;
         IPageIO pageIO = null;
+        PageManager pageManager = null;
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
 
         ArgumentOutOfRangeException exception = Assert.Throws<ArgumentOutOfRangeException>(() =>
         {
@@ -293,17 +286,16 @@ public class DocumentStorageTests
         DocumentLocation location = null;
 
         IPageIO pageIO1 = null;
-        DocumentStorage storage1 = CreateDocumentStorage(dbPath, pageSize, out pageIO1);
+        PageManager pageManager1 = null;
+        DocumentStorage storage1 = CreateDocumentStorage(dbPath, pageSize, out pageIO1, out pageManager1);
         location = storage1.WriteDocument(documentBytes);
         pageIO1.Flush();
         pageIO1.Dispose();
 
         IPageIO pageIO2 = new StandardPageIO(dbPath, pageSize, false);
-        Bitmap bitmap2 = new Bitmap(pageIO2, 1, 1, 50);
-        bitmap2.LoadFromDisk();
-        FreeSpaceMap fsm2 = new FreeSpaceMap(pageIO2, 2, 1, 50);
-        fsm2.LoadFromDisk();
-        DocumentStorage storage2 = new DocumentStorage(pageIO2, bitmap2, fsm2, pageSize);
+        PageManager pageManager2 = new PageManager(pageIO2, pageSize);
+        pageManager2.Load();
+        DocumentStorage storage2 = new DocumentStorage(pageIO2, pageManager2, pageSize);
 
         byte[] readBytes = storage2.ReadDocument(location.PageId, location.SlotIndex);
         string readData = Encoding.UTF8.GetString(readBytes);

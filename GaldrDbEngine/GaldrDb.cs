@@ -1,8 +1,11 @@
-﻿using System;
+using System;
 using System.IO;
+using System.Text;
 using GaldrDbCore.IO;
 using GaldrDbCore.Pages;
 using GaldrDbCore.Storage;
+using GaldrDbCore.Utilities;
+using GaldrJson;
 
 namespace GaldrDbEngine;
 
@@ -13,11 +16,12 @@ public class GaldrDb : IDisposable
     private readonly string _filePath;
     private readonly GaldrDbOptions _options;
     private readonly string _walPath;
+    private readonly IGaldrJsonSerializer _jsonSerializer;
+    private readonly GaldrJsonOptions _jsonOptions;
     private IPageIO _pageIO;
-    private HeaderPage _header;
-    private Bitmap _bitmap;
-    private FreeSpaceMap _fsm;
+    private PageManager _pageManager;
     private DocumentStorage _documentStorage;
+    private CollectionsMetadata _collectionsMetadata;
 
     #endregion
 
@@ -28,6 +32,14 @@ public class GaldrDb : IDisposable
         _filePath = filePath;
         _options = options ?? new GaldrDbOptions();
         _walPath = $"{Path.GetFileNameWithoutExtension(filePath)}.db-wal";
+        _jsonSerializer = new GaldrJsonSerializer();
+        _jsonOptions = new GaldrJsonOptions()
+        {
+            PropertyNameCaseInsensitive = false,
+            PropertyNamingPolicy = PropertyNamingPolicy.Exact,
+            WriteIndented = false,
+            DetectCycles = true,
+        };
     }
 
     #endregion
@@ -41,11 +53,31 @@ public class GaldrDb : IDisposable
         db.InitializeFile();
         return db;
     }
-    
+
     public static GaldrDb Open(string filePath, GaldrDbOptions options = null)
     {
-        var db = new GaldrDb(filePath, options);
+        if (options == null || options.PageSize == 0)
+        {
+            byte[] peekBuffer = new byte[12];
+            using (FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                fs.ReadExactly(peekBuffer, 0, 12);
+            }
+            int filePageSize = BinaryHelper.ReadInt32LE(peekBuffer, 8);
+
+            if (options == null)
+            {
+                options = new GaldrDbOptions { PageSize = filePageSize };
+            }
+            else
+            {
+                options.PageSize = filePageSize;
+            }
+        }
+
+        GaldrDb db = new GaldrDb(filePath, options);
         db.OpenAndValidateFile();
+
         return db;
     }
 
@@ -56,6 +88,82 @@ public class GaldrDb : IDisposable
             _pageIO.Close();
             _pageIO.Dispose();
         }
+    }
+
+    public void CreateCollection(string collectionName)
+    {
+        CollectionEntry existingCollection = _collectionsMetadata.FindCollection(collectionName);
+        if (existingCollection != null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' already exists");
+        }
+
+        int rootPageId = _pageManager.AllocatePage();
+
+        int order = CalculateBTreeOrder(_options.PageSize);
+        BTreeNode rootNode = new BTreeNode(_options.PageSize, order, BTreeNodeType.Leaf);
+        byte[] rootBytes = rootNode.Serialize();
+        _pageIO.WritePage(rootPageId, rootBytes);
+
+        _collectionsMetadata.AddCollection(collectionName, rootPageId);
+        _collectionsMetadata.WriteToDisk();
+
+        _pageManager.SetFreeSpaceLevel(rootPageId, FreeSpaceLevel.None);
+    }
+
+    public int InsertDocument<T>(string collectionName, T document)
+    {
+        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
+        }
+
+        string json = _jsonSerializer.Serialize(document, _jsonOptions);
+        byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
+        DocumentLocation location = _documentStorage.WriteDocument(jsonBytes);
+
+        int docId = collection.NextId;
+        int order = CalculateBTreeOrder(_options.PageSize);
+        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
+        btree.Insert(docId, location);
+
+        int newRootPageId = btree.GetRootPageId();
+        if (newRootPageId != collection.RootPage)
+        {
+            collection.RootPage = newRootPageId;
+        }
+
+        collection.DocumentCount++;
+        collection.NextId++;
+        _collectionsMetadata.UpdateCollection(collection);
+        _collectionsMetadata.WriteToDisk();
+
+        return docId;
+    }
+
+    public T GetDocument<T>(string collectionName, int docId)
+    {
+        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
+        }
+
+        int order = CalculateBTreeOrder(_options.PageSize);
+        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
+        DocumentLocation location = btree.Search(docId);
+
+        if (location == null)
+        {
+            return default(T);
+        }
+
+        byte[] jsonBytes = _documentStorage.ReadDocument(location.PageId, location.SlotIndex);
+        string json = Encoding.UTF8.GetString(jsonBytes);
+        T result = _jsonSerializer.Deserialize<T>(json, _jsonOptions);
+
+        return result;
     }
 
     #endregion
@@ -78,10 +186,6 @@ public class GaldrDb : IDisposable
         }
     }
 
-    /// <summary>
-    /// Create and write initial structure
-    /// </summary>
-    /// <exception cref="InvalidOperationException"></exception>
     private void InitializeFile()
     {
         if (File.Exists(_filePath))
@@ -91,53 +195,15 @@ public class GaldrDb : IDisposable
 
         SetupIO();
 
-        int pageSize = _options.PageSize;
-        int totalPages = 4;
-        int bitmapStartPage = 1;
-        int bitmapPageCount = 1;
-        int fsmStartPage = 2;
-        int fsmPageCount = 1;
-        int collectionsMetadataPage = 3;
+        _pageManager = new PageManager(_pageIO, _options.PageSize);
+        _pageManager.Initialize();
 
-        _header = new HeaderPage
-        {
-            MagicNumber = PageConstants.MAGIC_NUMBER,
-            Version = PageConstants.VERSION,
-            PageSize = pageSize,
-            TotalPageCount = totalPages,
-            BitmapStartPage = bitmapStartPage,
-            BitmapPageCount = bitmapPageCount,
-            FsmStartPage = fsmStartPage,
-            FsmPageCount = fsmPageCount,
-            CollectionsMetadataPage = collectionsMetadataPage,
-            MmapHint = (byte)(_options.UseMmap ? 1 : 0),
-            LastCommitFrame = 0,
-            WalChecksum = 0
-        };
+        _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataPage, _options.PageSize);
+        _collectionsMetadata.WriteToDisk();
 
-        byte[] headerBytes = _header.Serialize(pageSize);
-        _pageIO.WritePage(0, headerBytes);
+        _pageManager.Flush();
 
-        _bitmap = new Bitmap(_pageIO, bitmapStartPage, bitmapPageCount, totalPages);
-        _bitmap.AllocatePage(0);
-        _bitmap.AllocatePage(1);
-        _bitmap.AllocatePage(2);
-        _bitmap.AllocatePage(3);
-        _bitmap.WriteToDisk();
-
-        _fsm = new FreeSpaceMap(_pageIO, fsmStartPage, fsmPageCount, totalPages);
-        _fsm.SetFreeSpaceLevel(0, FreeSpaceLevel.None);
-        _fsm.SetFreeSpaceLevel(1, FreeSpaceLevel.None);
-        _fsm.SetFreeSpaceLevel(2, FreeSpaceLevel.None);
-        _fsm.SetFreeSpaceLevel(3, FreeSpaceLevel.None);
-        _fsm.WriteToDisk();
-
-        byte[] emptyCollectionsPage = new byte[pageSize];
-        _pageIO.WritePage(collectionsMetadataPage, emptyCollectionsPage);
-
-        _pageIO.Flush();
-
-        _documentStorage = new DocumentStorage(_pageIO, _bitmap, _fsm, pageSize);
+        _documentStorage = new DocumentStorage(_pageIO, _pageManager, _options.PageSize);
 
         if (_options.UseWal)
         {
@@ -145,10 +211,6 @@ public class GaldrDb : IDisposable
         }
     }
 
-    /// <summary>
-    /// Read, validate, recover WAL
-    /// </summary>
-    /// <exception cref="FileNotFoundException"></exception>
     private void OpenAndValidateFile()
     {
         if (!File.Exists(_filePath))
@@ -158,31 +220,18 @@ public class GaldrDb : IDisposable
 
         SetupIO();
 
-        byte[] headerBytes = _pageIO.ReadPage(0);
-        _header = HeaderPage.Deserialize(headerBytes);
+        _pageManager = new PageManager(_pageIO, _options.PageSize);
+        _pageManager.Load();
 
-        if (_header.MagicNumber != PageConstants.MAGIC_NUMBER)
+        if (_options.PageSize == 0 || _options.PageSize != _pageManager.Header.PageSize)
         {
-            throw new InvalidDataException("Invalid magic number in header");
+            _options.PageSize = _pageManager.Header.PageSize;
         }
 
-        if (_header.Version != PageConstants.VERSION)
-        {
-            throw new InvalidDataException($"Unsupported version: {_header.Version}");
-        }
+        _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataPage, _pageManager.Header.PageSize);
+        _collectionsMetadata.LoadFromDisk();
 
-        if (_options.PageSize == 0 || _options.PageSize != _header.PageSize)
-        {
-            _options.PageSize = _header.PageSize;
-        }
-
-        _bitmap = new Bitmap(_pageIO, _header.BitmapStartPage, _header.BitmapPageCount, _header.TotalPageCount);
-        _bitmap.LoadFromDisk();
-
-        _fsm = new FreeSpaceMap(_pageIO, _header.FsmStartPage, _header.FsmPageCount, _header.TotalPageCount);
-        _fsm.LoadFromDisk();
-
-        _documentStorage = new DocumentStorage(_pageIO, _bitmap, _fsm, _header.PageSize);
+        _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize);
 
         if (_options.UseWal && File.Exists(_walPath))
         {
@@ -190,9 +239,6 @@ public class GaldrDb : IDisposable
         }
     }
 
-    /// <summary>
-    /// Setup I/O (mmap if enabled/supported)
-    /// </summary>
     private void SetupIO()
     {
         bool useMmap = _options.UseMmap;
@@ -220,12 +266,31 @@ public class GaldrDb : IDisposable
 
     private void InitializeWalFile()
     {
-        
+
     }
 
     private void RecoverFromWal()
     {
-        
+
+    }
+
+    private int CalculateBTreeOrder(int pageSize)
+    {
+        const int HeaderSize = 8;
+        const int KeySize = 4;
+        const int ValueSize = 8;
+
+        int usableSpace = pageSize - HeaderSize;
+        int order = (usableSpace / (KeySize + ValueSize)) + 1;
+
+        if (order < 3)
+        {
+            order = 3;
+        }
+
+        int result = order;
+
+        return result;
     }
 
     #endregion

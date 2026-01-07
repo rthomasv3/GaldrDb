@@ -1,5 +1,6 @@
 using System;
 using GaldrDbCore.IO;
+using GaldrDbCore.Utilities;
 
 namespace GaldrDbCore.Pages;
 
@@ -8,15 +9,17 @@ public class FreeSpaceMap
     private readonly IPageIO _pageIO;
     private readonly int _startPage;
     private readonly int _pageCount;
-    private readonly int _totalPages;
+    private readonly int _pageSize;
+    private int _totalPages;
     private byte[] _fsm;
 
-    public FreeSpaceMap(IPageIO pageIO, int startPage, int pageCount, int totalPages)
+    public FreeSpaceMap(IPageIO pageIO, int startPage, int pageCount, int totalPages, int pageSize)
     {
         _pageIO = pageIO;
         _startPage = startPage;
         _pageCount = pageCount;
         _totalPages = totalPages;
+        _pageSize = pageSize;
 
         int fsmSizeBytes = (totalPages * 2 + 7) / 8;
         _fsm = new byte[fsmSizeBytes];
@@ -75,39 +78,66 @@ public class FreeSpaceMap
         return result;
     }
 
+    public void Resize(int newTotalPages)
+    {
+        if (newTotalPages <= _totalPages)
+        {
+            return;
+        }
+
+        int newFsmSizeBytes = (newTotalPages * 2 + 7) / 8;
+        byte[] newFsm = new byte[newFsmSizeBytes];
+        Array.Copy(_fsm, 0, newFsm, 0, _fsm.Length);
+
+        _fsm = newFsm;
+        _totalPages = newTotalPages;
+    }
+
     public void LoadFromDisk()
     {
-        int pageSize = _pageIO.ReadPage(0).Length;
-        int bytesPerPage = pageSize;
-        int fsmSizeBytes = (_totalPages * 2 + 7) / 8;
-        int offset = 0;
-
-        for (int i = 0; i < _pageCount; i++)
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        try
         {
-            byte[] pageData = _pageIO.ReadPage(_startPage + i);
-            int bytesToCopy = Math.Min(bytesPerPage, fsmSizeBytes - offset);
+            int fsmSizeBytes = (_totalPages * 2 + 7) / 8;
+            int offset = 0;
 
-            Array.Copy(pageData, 0, _fsm, offset, bytesToCopy);
-            offset += bytesToCopy;
+            for (int i = 0; i < _pageCount; i++)
+            {
+                _pageIO.ReadPage(_startPage + i, buffer);
+                int bytesToCopy = Math.Min(_pageSize, fsmSizeBytes - offset);
+
+                Array.Copy(buffer, 0, _fsm, offset, bytesToCopy);
+                offset += bytesToCopy;
+            }
+        }
+        finally
+        {
+            BufferPool.Return(buffer);
         }
     }
 
     public void WriteToDisk()
     {
-        int pageSize = _pageIO.ReadPage(0).Length;
-        int bytesPerPage = pageSize;
-        int fsmSizeBytes = (_totalPages * 2 + 7) / 8;
-        int offset = 0;
-
-        for (int i = 0; i < _pageCount; i++)
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        try
         {
-            byte[] pageData = new byte[pageSize];
-            int bytesToCopy = Math.Min(bytesPerPage, fsmSizeBytes - offset);
+            int fsmSizeBytes = (_totalPages * 2 + 7) / 8;
+            int offset = 0;
 
-            Array.Copy(_fsm, offset, pageData, 0, bytesToCopy);
-            _pageIO.WritePage(_startPage + i, pageData);
+            for (int i = 0; i < _pageCount; i++)
+            {
+                Array.Clear(buffer, 0, _pageSize);
+                int bytesToCopy = Math.Min(_pageSize, fsmSizeBytes - offset);
 
-            offset += bytesToCopy;
+                Array.Copy(_fsm, offset, buffer, 0, bytesToCopy);
+                _pageIO.WritePage(_startPage + i, buffer);
+
+                offset += bytesToCopy;
+            }
+        }
+        finally
+        {
+            BufferPool.Return(buffer);
         }
     }
 }

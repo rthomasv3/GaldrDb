@@ -4,8 +4,8 @@ namespace GaldrDbCore.IO;
 
 public interface IPageIO : IDisposable
 {
-    byte[] ReadPage(int pageId);
-    void WritePage(int pageId, byte[] data);
+    void ReadPage(int pageId, Span<byte> destination);
+    void WritePage(int pageId, ReadOnlySpan<byte> data);
     void Flush();
     void Close();
 }
