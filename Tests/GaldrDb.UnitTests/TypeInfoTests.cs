@@ -176,9 +176,12 @@ public class TypeInfoTests
             writer.WriteString("Name", doc.Name);
         };
 
+        List<string> uniqueIndexFields = new List<string> { "Email" };
+
         GaldrTypeInfo<TestDocument> typeInfo = new GaldrTypeInfo<TestDocument>(
             "TestDocuments",
             indexedFields,
+            uniqueIndexFields,
             idSetter,
             idGetter,
             extractFields);
@@ -187,6 +190,8 @@ public class TypeInfoTests
         Assert.HasCount(2, typeInfo.IndexedFieldNames);
         Assert.AreEqual("Name", typeInfo.IndexedFieldNames[0]);
         Assert.AreEqual("Email", typeInfo.IndexedFieldNames[1]);
+        Assert.HasCount(1, typeInfo.UniqueIndexFieldNames);
+        Assert.AreEqual("Email", typeInfo.UniqueIndexFieldNames[0]);
         Assert.IsNotNull(typeInfo.IdSetter);
         Assert.IsNotNull(typeInfo.IdGetter);
         Assert.IsNotNull(typeInfo.ExtractIndexedFields);
@@ -244,23 +249,28 @@ public class TypeInfoTests
     public void GaldrTypeInfo_EmptyIndexedFields_WorksCorrectly()
     {
         List<string> indexedFields = new List<string>();
+        List<string> uniqueIndexFields = new List<string>();
         GaldrTypeInfo<TestDocument> typeInfo = new GaldrTypeInfo<TestDocument>(
             "TestDocuments",
             indexedFields,
+            uniqueIndexFields,
             (doc, id) => doc.Id = id,
             doc => doc.Id,
             (doc, writer) => { });
 
         Assert.IsEmpty(typeInfo.IndexedFieldNames);
+        Assert.IsEmpty(typeInfo.UniqueIndexFieldNames);
     }
 
     private GaldrTypeInfo<TestDocument> CreateTestTypeInfo()
     {
         List<string> indexedFields = new List<string> { "Name", "Email" };
+        List<string> uniqueIndexFields = new List<string> { "Email" };
 
         GaldrTypeInfo<TestDocument> result = new GaldrTypeInfo<TestDocument>(
             "TestDocuments",
             indexedFields,
+            uniqueIndexFields,
             (doc, id) => doc.Id = id,
             doc => doc.Id,
             (doc, writer) =>

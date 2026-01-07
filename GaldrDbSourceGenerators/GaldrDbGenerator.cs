@@ -128,9 +128,24 @@ namespace GaldrDbSourceGenerators
                     continue;
                 }
 
-                // Check if property has [GaldrIndex] attribute
-                bool isIndexed = prop.GetAttributes()
-                    .Any(a => a.AttributeClass?.Name == "GaldrIndexAttribute");
+                // Check if property has [GaldrIndex] attribute and if it's unique
+                bool isIndexed = false;
+                bool isUniqueIndex = false;
+                AttributeData indexAttr = prop.GetAttributes()
+                    .FirstOrDefault(a => a.AttributeClass?.Name == "GaldrIndexAttribute");
+                
+                if (indexAttr != null)
+                {
+                    isIndexed = true;
+                    // Check for Unique = true in named arguments
+                    foreach (KeyValuePair<string, TypedConstant> namedArg in indexAttr.NamedArguments)
+                    {
+                        if (namedArg.Key == "Unique" && namedArg.Value.Value is bool uniqueValue)
+                        {
+                            isUniqueIndex = uniqueValue;
+                        }
+                    }
+                }
 
                 GaldrFieldTypeInfo fieldType = GetFieldType(prop.Type);
 
@@ -138,7 +153,8 @@ namespace GaldrDbSourceGenerators
                     prop.Name,
                     GetFullyQualifiedTypeName(prop.Type),
                     fieldType,
-                    isIndexed));
+                    isIndexed,
+                    isUniqueIndex));
             }
 
             return new ClassInfo(
@@ -396,6 +412,25 @@ namespace GaldrDbSourceGenerators
             }
             sb.AppendLine();
 
+            // UniqueIndexFieldNames property
+            List<string> uniqueIndexedFields = classInfo.Properties
+                .Where(p => p.IsIndexed && p.IsUniqueIndex)
+                .Select(p => $"\"{p.Name}\"")
+                .ToList();
+
+            sb.AppendLine($"        /// <summary>");
+            sb.AppendLine($"        /// List of unique index field names for constraint enforcement.");
+            sb.AppendLine($"        /// </summary>");
+            if (uniqueIndexedFields.Count == 0)
+            {
+                sb.AppendLine($"        public static IReadOnlyList<string> UniqueIndexFieldNames {{ get; }} = Array.Empty<string>();");
+            }
+            else
+            {
+                sb.AppendLine($"        public static IReadOnlyList<string> UniqueIndexFieldNames {{ get; }} = new string[] {{ {string.Join(", ", uniqueIndexedFields)} }};");
+            }
+            sb.AppendLine();
+
             // GaldrField properties for each property
             foreach (PropertyInfo prop in classInfo.Properties)
             {
@@ -449,6 +484,7 @@ namespace GaldrDbSourceGenerators
             sb.AppendLine($"        public static GaldrTypeInfo<{classInfo.FullyQualifiedName}> TypeInfo {{ get; }} = new GaldrTypeInfo<{classInfo.FullyQualifiedName}>(");
             sb.AppendLine($"            collectionName: CollectionName,");
             sb.AppendLine($"            indexedFieldNames: IndexedFieldNames,");
+            sb.AppendLine($"            uniqueIndexFieldNames: UniqueIndexFieldNames,");
             sb.AppendLine($"            idSetter: SetId,");
             sb.AppendLine($"            idGetter: GetId,");
             sb.AppendLine($"            extractIndexedFields: ExtractIndexedFields);");
@@ -586,13 +622,15 @@ namespace GaldrDbSourceGenerators
         public string TypeName { get; }
         public GaldrFieldTypeInfo FieldType { get; }
         public bool IsIndexed { get; }
+        public bool IsUniqueIndex { get; }
 
-        public PropertyInfo(string name, string typeName, GaldrFieldTypeInfo fieldType, bool isIndexed)
+        public PropertyInfo(string name, string typeName, GaldrFieldTypeInfo fieldType, bool isIndexed, bool isUniqueIndex)
         {
             Name = name;
             TypeName = typeName;
             FieldType = fieldType;
             IsIndexed = isIndexed;
+            IsUniqueIndex = isUniqueIndex;
         }
     }
 

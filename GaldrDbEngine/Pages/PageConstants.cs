@@ -6,4 +6,5 @@ public static class PageConstants
     public const int VERSION = 1;
     public const byte PAGE_TYPE_DOCUMENT = 1;
     public const byte PAGE_TYPE_BTREE = 2;
+    public const byte PAGE_TYPE_SECONDARY_INDEX = 3;
 }

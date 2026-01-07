@@ -120,7 +120,9 @@ public class PageManager
         }
 
         _bitmap.AllocatePage(pageId);
+        _fsm.SetFreeSpaceLevel(pageId, FreeSpaceLevel.None);
         _bitmap.WriteToDisk();
+        _fsm.WriteToDisk();
 
         int result = pageId;
 
@@ -156,11 +158,13 @@ public class PageManager
             }
 
             _bitmap.AllocatePage(pageId);
+            _fsm.SetFreeSpaceLevel(pageId, FreeSpaceLevel.None);
             pageIds[allocated] = pageId;
             allocated++;
         }
 
         _bitmap.WriteToDisk();
+        _fsm.WriteToDisk();
 
         int[] result = pageIds;
 

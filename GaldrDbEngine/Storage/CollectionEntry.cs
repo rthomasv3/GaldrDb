@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text;
 using GaldrDbEngine.Utilities;
 
@@ -10,11 +11,17 @@ public class CollectionEntry
     public int RootPage { get; set; }
     public int DocumentCount { get; set; }
     public int NextId { get; set; }
+    public List<IndexDefinition> Indexes { get; set; }
+
+    public CollectionEntry()
+    {
+        Indexes = new List<IndexDefinition>();
+    }
 
     public byte[] Serialize()
     {
         byte[] nameBytes = Encoding.UTF8.GetBytes(Name);
-        int totalSize = 4 + nameBytes.Length + 4 + 4 + 4;
+        int totalSize = GetSerializedSize();
         byte[] buffer = new byte[totalSize];
         int offset = 0;
 
@@ -32,6 +39,16 @@ public class CollectionEntry
 
         BinaryHelper.WriteInt32LE(buffer, offset, NextId);
         offset += 4;
+
+        BinaryHelper.WriteInt32LE(buffer, offset, Indexes.Count);
+        offset += 4;
+
+        for (int i = 0; i < Indexes.Count; i++)
+        {
+            byte[] indexBytes = Indexes[i].Serialize();
+            Array.Copy(indexBytes, 0, buffer, offset, indexBytes.Length);
+            offset += indexBytes.Length;
+        }
 
         return buffer;
     }
@@ -58,6 +75,17 @@ public class CollectionEntry
         entry.NextId = BinaryHelper.ReadInt32LE(buffer, offset);
         offset += 4;
 
+        int indexCount = BinaryHelper.ReadInt32LE(buffer, offset);
+        offset += 4;
+
+        for (int i = 0; i < indexCount; i++)
+        {
+            int indexBytesRead = 0;
+            IndexDefinition index = IndexDefinition.Deserialize(buffer, offset, out indexBytesRead);
+            entry.Indexes.Add(index);
+            offset += indexBytesRead;
+        }
+
         bytesRead = offset - startOffset;
 
         return entry;
@@ -66,8 +94,28 @@ public class CollectionEntry
     public int GetSerializedSize()
     {
         int nameByteCount = Encoding.UTF8.GetByteCount(Name);
-        // 4 bytes each for: nameLength (int32), RootPage (int32), DocumentCount (int32), NextId (int32)
-        int result = 4 + nameByteCount + 4 + 4 + 4;
+        int result = 4 + nameByteCount + 4 + 4 + 4 + 4;
+
+        for (int i = 0; i < Indexes.Count; i++)
+        {
+            result += Indexes[i].GetSerializedSize();
+        }
+
+        return result;
+    }
+
+    public IndexDefinition FindIndex(string fieldName)
+    {
+        IndexDefinition result = null;
+
+        for (int i = 0; i < Indexes.Count; i++)
+        {
+            if (Indexes[i].FieldName == fieldName)
+            {
+                result = Indexes[i];
+                break;
+            }
+        }
 
         return result;
     }
