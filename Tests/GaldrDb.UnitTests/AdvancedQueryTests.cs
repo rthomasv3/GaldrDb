@@ -46,7 +46,7 @@ public class AdvancedQueryTests
                 Age = 20 + (i % 50),
                 Email = $"person{i}@example.com"
             };
-            db.Insert(person, PersonMeta.TypeInfo);
+            db.Insert(person);
         }
 
         return db;
@@ -59,7 +59,7 @@ public class AdvancedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("notin_test.db", 10))
         {
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .WhereNotIn(PersonMeta.Name, "Person000", "Person001", "Person002")
                 .ToList();
 
@@ -78,7 +78,7 @@ public class AdvancedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("notin_empty.db", 10))
         {
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .WhereNotIn(PersonMeta.Name, new string[] { })
                 .ToList();
 
@@ -94,10 +94,10 @@ public class AdvancedQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@test.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@test.com" }, PersonMeta.TypeInfo);
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@test.com" });
+            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@test.com" });
 
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .WhereNotIn(PersonMeta.Name, "Alice", "Bob")
                 .ToList();
 
@@ -110,7 +110,7 @@ public class AdvancedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("notin_combined.db", 20))
         {
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .Where(PersonMeta.Age, FieldOp.GreaterThan, 25)
                 .WhereNotIn(PersonMeta.Name, "Person006", "Person007")
                 .ToList();
@@ -135,9 +135,9 @@ public class AdvancedQueryTests
         {
             ArgumentException exception = Assert.ThrowsExactly<ArgumentException>(() =>
             {
-                db.Query(PersonMeta.TypeInfo)
-                    .Where(PersonMeta.Age, FieldOp.StartsWith, 25)
-                    .ToList();
+                db.Query<Person>()
+                  .Where(PersonMeta.Age, FieldOp.StartsWith, 25)
+                  .ToList();
             });
 
             Assert.Contains("StartsWith", exception.Message);
@@ -152,9 +152,9 @@ public class AdvancedQueryTests
         {
             ArgumentException exception = Assert.ThrowsExactly<ArgumentException>(() =>
             {
-                db.Query(PersonMeta.TypeInfo)
-                    .Where(PersonMeta.Age, FieldOp.EndsWith, 25)
-                    .ToList();
+                db.Query<Person>()
+                  .Where(PersonMeta.Age, FieldOp.EndsWith, 25)
+                  .ToList();
             });
 
             Assert.Contains("EndsWith", exception.Message);
@@ -169,9 +169,9 @@ public class AdvancedQueryTests
         {
             ArgumentException exception = Assert.ThrowsExactly<ArgumentException>(() =>
             {
-                db.Query(PersonMeta.TypeInfo)
-                    .Where(PersonMeta.Age, FieldOp.Contains, 25)
-                    .ToList();
+                db.Query<Person>()
+                  .Where(PersonMeta.Age, FieldOp.Contains, 25)
+                  .ToList();
             });
 
             Assert.Contains("Contains", exception.Message);
@@ -186,9 +186,9 @@ public class AdvancedQueryTests
         {
             ArgumentException exception = Assert.ThrowsExactly<ArgumentException>(() =>
             {
-                db.Query(PersonMeta.TypeInfo)
-                    .Where(PersonMeta.Age, FieldOp.Between, 25)
-                    .ToList();
+                db.Query<Person>()
+                  .Where(PersonMeta.Age, FieldOp.Between, 25)
+                  .ToList();
             });
 
             Assert.Contains("Between", exception.Message);
@@ -203,9 +203,9 @@ public class AdvancedQueryTests
         {
             ArgumentException exception = Assert.ThrowsExactly<ArgumentException>(() =>
             {
-                db.Query(PersonMeta.TypeInfo)
-                    .Where(PersonMeta.Age, FieldOp.In, 25)
-                    .ToList();
+                db.Query<Person>()
+                  .Where(PersonMeta.Age, FieldOp.In, 25)
+                  .ToList();
             });
 
             Assert.Contains("In", exception.Message);
@@ -218,15 +218,15 @@ public class AdvancedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("validate_string_ok.db", 10))
         {
-            List<Person> startsWithResults = db.Query(PersonMeta.TypeInfo)
+            List<Person> startsWithResults = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.StartsWith, "Person00")
                 .ToList();
 
-            List<Person> endsWithResults = db.Query(PersonMeta.TypeInfo)
+            List<Person> endsWithResults = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.EndsWith, "009")
                 .ToList();
 
-            List<Person> containsResults = db.Query(PersonMeta.TypeInfo)
+            List<Person> containsResults = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.Contains, "son00")
                 .ToList();
 
@@ -248,11 +248,11 @@ public class AdvancedQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.Insert(new Person { Name = "Charlie", Age = 30, Email = "c@test.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Alice", Age = 25, Email = "a@test.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Bob", Age = 35, Email = "b@test.com" }, PersonMeta.TypeInfo);
+            db.Insert(new Person { Name = "Charlie", Age = 30, Email = "c@test.com" });
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "a@test.com" });
+            db.Insert(new Person { Name = "Bob", Age = 35, Email = "b@test.com" });
 
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .OrderBy(PersonMeta.Name)
                 .ToList();
 
@@ -271,11 +271,11 @@ public class AdvancedQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.Insert(new Person { Name = "Charlie", Age = 30, Email = "c@test.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Alice", Age = 25, Email = "a@test.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Bob", Age = 35, Email = "b@test.com" }, PersonMeta.TypeInfo);
+            db.Insert(new Person { Name = "Charlie", Age = 30, Email = "c@test.com" });
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "a@test.com" });
+            db.Insert(new Person { Name = "Bob", Age = 35, Email = "b@test.com" });
 
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .OrderByDescending(PersonMeta.Name)
                 .ToList();
 
@@ -294,11 +294,11 @@ public class AdvancedQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.Insert(new Person { Name = "Charlie", Age = 30, Email = "c@test.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Alice", Age = 25, Email = "a@test.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Bob", Age = 35, Email = "b@test.com" }, PersonMeta.TypeInfo);
+            db.Insert(new Person { Name = "Charlie", Age = 30, Email = "c@test.com" });
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "a@test.com" });
+            db.Insert(new Person { Name = "Bob", Age = 35, Email = "b@test.com" });
 
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .OrderBy(PersonMeta.Age)
                 .ToList();
 
@@ -314,7 +314,7 @@ public class AdvancedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("orderby_filter.db", 20))
         {
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .Where(PersonMeta.Age, FieldOp.LessThan, 25)
                 .OrderByDescending(PersonMeta.Name)
                 .ToList();
@@ -337,16 +337,16 @@ public class AdvancedQueryTests
         {
             for (int i = 0; i < 10; i++)
             {
-                db.Insert(new Person { Name = $"Person{i}", Age = 20 + i, Email = $"p{i}@test.com" }, PersonMeta.TypeInfo);
+                db.Insert(new Person { Name = $"Person{i}", Age = 20 + i, Email = $"p{i}@test.com" });
             }
 
-            List<Person> page1 = db.Query(PersonMeta.TypeInfo)
+            List<Person> page1 = db.Query<Person>()
                 .OrderBy(PersonMeta.Age)
                 .Skip(0)
                 .Limit(3)
                 .ToList();
 
-            List<Person> page2 = db.Query(PersonMeta.TypeInfo)
+            List<Person> page2 = db.Query<Person>()
                 .OrderBy(PersonMeta.Age)
                 .Skip(3)
                 .Limit(3)
@@ -373,12 +373,12 @@ public class AdvancedQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.Insert(new Person { Name = "Alice", Age = 30, Email = "a1@test.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Bob", Age = 25, Email = "b@test.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Alice", Age = 25, Email = "a2@test.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Bob", Age = 30, Email = "b2@test.com" }, PersonMeta.TypeInfo);
+            db.Insert(new Person { Name = "Alice", Age = 30, Email = "a1@test.com" });
+            db.Insert(new Person { Name = "Bob", Age = 25, Email = "b@test.com" });
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "a2@test.com" });
+            db.Insert(new Person { Name = "Bob", Age = 30, Email = "b2@test.com" });
 
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .OrderBy(PersonMeta.Name)
                 .OrderBy(PersonMeta.Age)
                 .ToList();
@@ -403,7 +403,7 @@ public class AdvancedQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .OrderBy(PersonMeta.Name)
                 .ToList();
 
@@ -416,7 +416,7 @@ public class AdvancedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("orderby_indexed.db", 50))
         {
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.StartsWith, "Person00")
                 .OrderByDescending(PersonMeta.Age)
                 .ToList();
