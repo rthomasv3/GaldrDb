@@ -435,6 +435,33 @@ public class GaldrDb : IDisposable
         return results;
     }
 
+    public CollectionEntry GetCollection(string collectionName)
+    {
+        return _collectionsMetadata.FindCollection(collectionName);
+    }
+
+    public List<T> GetDocumentsByLocations<T>(List<DocumentLocation> locations, GaldrTypeInfo<T> typeInfo)
+    {
+        List<T> results = new List<T>();
+
+        foreach (DocumentLocation location in locations)
+        {
+            byte[] jsonBytes = _documentStorage.ReadDocument(location.PageId, location.SlotIndex);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            T document = _jsonSerializer.Deserialize<T>(json, _jsonOptions);
+            results.Add(document);
+        }
+
+        return results;
+    }
+
+    public SecondaryIndexBTree GetSecondaryIndexTree(IndexDefinition indexDef)
+    {
+        int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
+        SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, maxKeys);
+        return indexTree;
+    }
+
     #endregion
 
     #region Index Operations
