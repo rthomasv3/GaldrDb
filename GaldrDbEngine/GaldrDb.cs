@@ -20,6 +20,7 @@ public class GaldrDb : IDisposable
     private readonly string _walPath;
     private readonly IGaldrJsonSerializer _jsonSerializer;
     private readonly GaldrJsonOptions _jsonOptions;
+    private readonly HashSet<string> _ensuredCollections;
     private IPageIO _pageIO;
     private PageManager _pageManager;
     private DocumentStorage _documentStorage;
@@ -42,6 +43,7 @@ public class GaldrDb : IDisposable
             WriteIndented = false,
             DetectCycles = true,
         };
+        _ensuredCollections = new HashSet<string>();
     }
 
     #endregion
@@ -237,29 +239,66 @@ public class GaldrDb : IDisposable
 
     #region Type-Safe CRUD Operations
 
+    public void EnsureCollection<T>()
+    {
+        EnsureCollection(GaldrTypeRegistry.Get<T>());
+    }
+
+    public int Insert<T>(T document)
+    {
+        return Insert(document, GaldrTypeRegistry.Get<T>());
+    }
+
+    public T GetById<T>(int id)
+    {
+        return GetById(id, GaldrTypeRegistry.Get<T>());
+    }
+
+    public bool Update<T>(T document)
+    {
+        return Update(document, GaldrTypeRegistry.Get<T>());
+    }
+
+    public bool Delete<T>(int id)
+    {
+        return Delete<T>(id, GaldrTypeRegistry.Get<T>());
+    }
+
+    public QueryBuilder<T> Query<T>()
+    {
+        return Query(GaldrTypeRegistry.Get<T>());
+    }
+
+    public List<T> GetAllDocuments<T>()
+    {
+        return GetAllDocuments(GaldrTypeRegistry.Get<T>());
+    }
+
     public void EnsureCollection<T>(GaldrTypeInfo<T> typeInfo)
     {
         string collectionName = typeInfo.CollectionName;
-        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
 
-        if (collection == null)
+        if (!_ensuredCollections.Contains(collectionName))
         {
-            CreateCollection(collectionName);
-            collection = _collectionsMetadata.FindCollection(collectionName);
-        }
+            CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
 
-        EnsureIndexes(collection, typeInfo);
+            if (collection == null)
+            {
+                CreateCollection(collectionName);
+                collection = _collectionsMetadata.FindCollection(collectionName);
+            }
+
+            EnsureIndexes(collection, typeInfo);
+            _ensuredCollections.Add(collectionName);
+        }
     }
 
     public int Insert<T>(T document, GaldrTypeInfo<T> typeInfo)
     {
-        string collectionName = typeInfo.CollectionName;
+        EnsureCollection(typeInfo);
 
+        string collectionName = typeInfo.CollectionName;
         CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
-        if (collection == null)
-        {
-            throw new InvalidOperationException($"Collection '{collectionName}' does not exist. Call EnsureCollection<T>() first.");
-        }
 
         int currentId = typeInfo.IdGetter(document);
         int assignedId;
@@ -317,12 +356,10 @@ public class GaldrDb : IDisposable
             throw new InvalidOperationException("Cannot update a document with Id = 0. The document must have a valid Id.");
         }
 
+        EnsureCollection(typeInfo);
+
         string collectionName = typeInfo.CollectionName;
         CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
-        if (collection == null)
-        {
-            throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
-        }
 
         int order = CalculateBTreeOrder(_options.PageSize);
         BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
@@ -367,12 +404,10 @@ public class GaldrDb : IDisposable
 
     public bool Delete<T>(int id, GaldrTypeInfo<T> typeInfo)
     {
+        EnsureCollection(typeInfo);
+
         string collectionName = typeInfo.CollectionName;
         CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
-        if (collection == null)
-        {
-            throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
-        }
 
         int order = CalculateBTreeOrder(_options.PageSize);
         BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);

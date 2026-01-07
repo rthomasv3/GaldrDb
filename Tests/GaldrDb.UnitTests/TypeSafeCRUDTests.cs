@@ -173,28 +173,23 @@ public class TypeSafeCRUDTests
     }
 
     [TestMethod]
-    public void Insert_WithoutEnsureCollection_ThrowsException()
+    public void Insert_WithoutEnsureCollection_AutoCreatesCollection()
     {
         string dbPath = Path.Combine(_testDirectory, "test.db");
         GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
 
-        bool exceptionThrown = false;
-
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            try
-            {
-                Person person = new Person { Name = "Test", Age = 25, Email = "test@example.com" };
-                db.Insert(person, PersonMeta.TypeInfo);
-            }
-            catch (InvalidOperationException ex)
-            {
-                exceptionThrown = true;
-                Assert.Contains("does not exist", ex.Message);
-            }
-        }
+            // Insert without calling EnsureCollection first - should auto-create
+            Person person = new Person { Name = "Test", Age = 25, Email = "test@example.com" };
+            int id = db.Insert(person, PersonMeta.TypeInfo);
 
-        Assert.IsTrue(exceptionThrown);
+            Assert.AreEqual(1, id);
+
+            Person retrieved = db.GetById(id, PersonMeta.TypeInfo);
+            Assert.IsNotNull(retrieved);
+            Assert.AreEqual("Test", retrieved.Name);
+        }
     }
 
     #endregion
@@ -730,6 +725,173 @@ public class TypeSafeCRUDTests
             List<Person> all = db.GetAllDocuments(PersonMeta.TypeInfo);
 
             Assert.IsEmpty(all);
+        }
+    }
+
+    #endregion
+
+    #region Parameter-less API Tests (Auto-resolved TypeInfo)
+
+    [TestMethod]
+    public void ParameterlessApi_FullCrudCycle_Works()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            // NO EnsureCollection call - Insert should auto-ensure
+
+            // Insert without typeInfo parameter
+            Person person = new Person { Name = "Auto API Test", Age = 42, Email = "auto@test.com" };
+            int id = db.Insert(person);
+            Assert.AreEqual(1, id);
+
+            // GetById without typeInfo parameter
+            Person retrieved = db.GetById<Person>(id);
+            Assert.IsNotNull(retrieved);
+            Assert.AreEqual("Auto API Test", retrieved.Name);
+            Assert.AreEqual(42, retrieved.Age);
+
+            // Update without typeInfo parameter
+            retrieved.Age = 43;
+            bool updated = db.Update(retrieved);
+            Assert.IsTrue(updated);
+
+            Person afterUpdate = db.GetById<Person>(id);
+            Assert.AreEqual(43, afterUpdate.Age);
+
+            // Query without typeInfo parameter
+            List<Person> queryResults = db.Query<Person>()
+                .Where(PersonMeta.Age, FieldOp.Equals, 43)
+                .ToList();
+            Assert.HasCount(1, queryResults);
+
+            // GetAllDocuments without typeInfo parameter
+            List<Person> all = db.GetAllDocuments<Person>();
+            Assert.HasCount(1, all);
+
+            // Delete without typeInfo parameter
+            bool deleted = db.Delete<Person>(id);
+            Assert.IsTrue(deleted);
+
+            Person afterDelete = db.GetById<Person>(id);
+            Assert.IsNull(afterDelete);
+        }
+    }
+
+    [TestMethod]
+    public void ParameterlessApi_MixedWithExplicitTypeInfo_Works()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            // NO EnsureCollection call - first Insert should auto-ensure
+
+            // Insert with explicit typeInfo
+            Person person1 = new Person { Name = "Explicit", Age = 30, Email = "explicit@test.com" };
+            int id1 = db.Insert(person1, PersonMeta.TypeInfo);
+
+            // Insert without typeInfo
+            Person person2 = new Person { Name = "Implicit", Age = 35, Email = "implicit@test.com" };
+            int id2 = db.Insert(person2);
+
+            // GetById mixing both styles
+            Person retrieved1 = db.GetById<Person>(id1);
+            Person retrieved2 = db.GetById(id2, PersonMeta.TypeInfo);
+
+            Assert.AreEqual("Explicit", retrieved1.Name);
+            Assert.AreEqual("Implicit", retrieved2.Name);
+
+            // Query without typeInfo
+            List<Person> all = db.Query<Person>().ToList();
+            Assert.HasCount(2, all);
+        }
+    }
+
+    [TestMethod]
+    public void AutoEnsureCollection_InsertCreatesCollection()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            // Insert directly without EnsureCollection - should auto-create
+            Person person = new Person { Name = "Auto Created", Age = 25, Email = "auto@test.com" };
+            int id = db.Insert(person);
+
+            Assert.AreEqual(1, id);
+
+            Person retrieved = db.GetById<Person>(id);
+            Assert.IsNotNull(retrieved);
+            Assert.AreEqual("Auto Created", retrieved.Name);
+        }
+    }
+
+    [TestMethod]
+    public void AutoEnsureCollection_UpdateCreatesCollection()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            // Update on non-existent collection should auto-create (but return false since doc doesn't exist)
+            Person person = new Person { Id = 999, Name = "Update Test", Age = 30, Email = "update@test.com" };
+            bool updated = db.Update(person);
+
+            Assert.IsFalse(updated);
+
+            // Now insert should work since collection was created
+            Person newPerson = new Person { Name = "After Update", Age = 35, Email = "after@test.com" };
+            int id = db.Insert(newPerson);
+            Assert.AreEqual(1, id);
+        }
+    }
+
+    [TestMethod]
+    public void AutoEnsureCollection_DeleteCreatesCollection()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            // Delete on non-existent collection should auto-create (but return false since doc doesn't exist)
+            bool deleted = db.Delete<Person>(999);
+
+            Assert.IsFalse(deleted);
+
+            // Now insert should work since collection was created
+            Person person = new Person { Name = "After Delete", Age = 40, Email = "afterdel@test.com" };
+            int id = db.Insert(person);
+            Assert.AreEqual(1, id);
+        }
+    }
+
+    [TestMethod]
+    public void AutoEnsureCollection_WithIndexedFields_CreatesIndexes()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            // Insert directly - should auto-create collection AND indexes
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@test.com" });
+            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@test.com" });
+            db.Insert(new Person { Name = "Charlie", Age = 25, Email = "charlie@test.com" });
+
+            // Query using indexed field - should use the auto-created index
+            List<Person> results = db.Query<Person>()
+                .Where(PersonMeta.Name, FieldOp.Equals, "Bob")
+                .ToList();
+
+            Assert.HasCount(1, results);
+            Assert.AreEqual("Bob", results[0].Name);
         }
     }
 

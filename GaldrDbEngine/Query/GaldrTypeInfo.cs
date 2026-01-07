@@ -5,6 +5,7 @@ namespace GaldrDbEngine.Query;
 
 public sealed class GaldrTypeInfo<T> : IGaldrTypeInfo
 {
+    public Type DocumentType { get; }
     public string CollectionName { get; }
     public IReadOnlyList<string> IndexedFieldNames { get; }
     public IReadOnlyList<string> UniqueIndexFieldNames { get; }
@@ -20,6 +21,7 @@ public sealed class GaldrTypeInfo<T> : IGaldrTypeInfo
         Func<T, int> idGetter,
         Action<T, IndexFieldWriter> extractIndexedFields)
     {
+        DocumentType = typeof(T);
         CollectionName = collectionName;
         IndexedFieldNames = indexedFieldNames;
         UniqueIndexFieldNames = uniqueIndexFieldNames;

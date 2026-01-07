@@ -37,7 +37,6 @@ public class AdvancedQueryTests
         GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false, UseMmap = false };
 
         GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options);
-        db.EnsureCollection(PersonMeta.TypeInfo);
 
         for (int i = 0; i < count; i++)
         {
@@ -95,8 +94,6 @@ public class AdvancedQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@test.com" }, PersonMeta.TypeInfo);
             db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@test.com" }, PersonMeta.TypeInfo);
 
@@ -251,8 +248,6 @@ public class AdvancedQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             db.Insert(new Person { Name = "Charlie", Age = 30, Email = "c@test.com" }, PersonMeta.TypeInfo);
             db.Insert(new Person { Name = "Alice", Age = 25, Email = "a@test.com" }, PersonMeta.TypeInfo);
             db.Insert(new Person { Name = "Bob", Age = 35, Email = "b@test.com" }, PersonMeta.TypeInfo);
@@ -276,8 +271,6 @@ public class AdvancedQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             db.Insert(new Person { Name = "Charlie", Age = 30, Email = "c@test.com" }, PersonMeta.TypeInfo);
             db.Insert(new Person { Name = "Alice", Age = 25, Email = "a@test.com" }, PersonMeta.TypeInfo);
             db.Insert(new Person { Name = "Bob", Age = 35, Email = "b@test.com" }, PersonMeta.TypeInfo);
@@ -301,8 +294,6 @@ public class AdvancedQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             db.Insert(new Person { Name = "Charlie", Age = 30, Email = "c@test.com" }, PersonMeta.TypeInfo);
             db.Insert(new Person { Name = "Alice", Age = 25, Email = "a@test.com" }, PersonMeta.TypeInfo);
             db.Insert(new Person { Name = "Bob", Age = 35, Email = "b@test.com" }, PersonMeta.TypeInfo);
@@ -344,8 +335,6 @@ public class AdvancedQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             for (int i = 0; i < 10; i++)
             {
                 db.Insert(new Person { Name = $"Person{i}", Age = 20 + i, Email = $"p{i}@test.com" }, PersonMeta.TypeInfo);
@@ -384,8 +373,6 @@ public class AdvancedQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             db.Insert(new Person { Name = "Alice", Age = 30, Email = "a1@test.com" }, PersonMeta.TypeInfo);
             db.Insert(new Person { Name = "Bob", Age = 25, Email = "b@test.com" }, PersonMeta.TypeInfo);
             db.Insert(new Person { Name = "Alice", Age = 25, Email = "a2@test.com" }, PersonMeta.TypeInfo);
@@ -416,8 +403,6 @@ public class AdvancedQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             List<Person> results = db.Query(PersonMeta.TypeInfo)
                 .OrderBy(PersonMeta.Name)
                 .ToList();
