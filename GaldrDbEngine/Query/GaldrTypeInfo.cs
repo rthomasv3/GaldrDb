@@ -1,0 +1,27 @@
+using System;
+using System.Collections.Generic;
+
+namespace GaldrDbCore.Query;
+
+public sealed class GaldrTypeInfo<T> : IGaldrTypeInfo
+{
+    public string CollectionName { get; }
+    public IReadOnlyList<string> IndexedFieldNames { get; }
+    public Action<T, int> IdSetter { get; }
+    public Func<T, int> IdGetter { get; }
+    public Action<T, IndexFieldWriter> ExtractIndexedFields { get; }
+
+    public GaldrTypeInfo(
+        string collectionName,
+        IReadOnlyList<string> indexedFieldNames,
+        Action<T, int> idSetter,
+        Func<T, int> idGetter,
+        Action<T, IndexFieldWriter> extractIndexedFields)
+    {
+        CollectionName = collectionName;
+        IndexedFieldNames = indexedFieldNames;
+        IdSetter = idSetter;
+        IdGetter = idGetter;
+        ExtractIndexedFields = extractIndexedFields;
+    }
+}

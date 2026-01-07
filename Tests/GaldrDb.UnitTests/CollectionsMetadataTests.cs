@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using GaldrDbCore.IO;
 using GaldrDbCore.Storage;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace GaldrDb.UnitTests;
 

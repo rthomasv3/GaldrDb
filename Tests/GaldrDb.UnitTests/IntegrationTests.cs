@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using GaldrDb.UnitTests.TestModels;
 using GaldrDbEngine;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 using GaldrDbInstance = GaldrDbEngine.GaldrDb;
 
 namespace GaldrDb.UnitTests;

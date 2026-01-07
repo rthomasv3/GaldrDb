@@ -65,6 +65,54 @@ public class BTree
         return SearchNode(_rootPageId, docId);
     }
 
+    public bool Delete(int docId)
+    {
+        return DeleteFromNode(_rootPageId, docId);
+    }
+
+    private bool DeleteFromNode(int pageId, int docId)
+    {
+        bool result = false;
+
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        try
+        {
+            _pageIO.ReadPage(pageId, buffer);
+            BTreeNode node = BTreeNode.Deserialize(buffer, _pageSize, _order);
+
+            int i = 0;
+            while (i < node.KeyCount && docId > node.Keys[i])
+            {
+                i++;
+            }
+
+            if (node.NodeType == BTreeNodeType.Leaf)
+            {
+                if (i < node.KeyCount && node.Keys[i] == docId)
+                {
+                    node.Keys.RemoveAt(i);
+                    node.LeafValues.RemoveAt(i);
+                    node.KeyCount--;
+
+                    byte[] nodeBytes = node.Serialize();
+                    _pageIO.WritePage(pageId, nodeBytes);
+
+                    result = true;
+                }
+            }
+            else
+            {
+                result = DeleteFromNode(node.ChildPageIds[i], docId);
+            }
+        }
+        finally
+        {
+            BufferPool.Return(buffer);
+        }
+
+        return result;
+    }
+
     private DocumentLocation SearchNode(int pageId, int docId)
     {
         DocumentLocation result = null;

@@ -6,6 +6,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GaldrDbEngine", "GaldrDbEng
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GaldrDb.UnitTests", "Tests\GaldrDb.UnitTests\GaldrDb.UnitTests.csproj", "{8A51F38F-C1E3-4928-840E-312066B6FC6E}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GaldrDbSourceGenerators", "GaldrDbSourceGenerators\GaldrDbSourceGenerators.csproj", "{3EB6FEB4-7E0A-4F5F-9156-1495B5C5330D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -24,5 +26,9 @@ Global
 		{8A51F38F-C1E3-4928-840E-312066B6FC6E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{8A51F38F-C1E3-4928-840E-312066B6FC6E}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{8A51F38F-C1E3-4928-840E-312066B6FC6E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3EB6FEB4-7E0A-4F5F-9156-1495B5C5330D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3EB6FEB4-7E0A-4F5F-9156-1495B5C5330D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3EB6FEB4-7E0A-4F5F-9156-1495B5C5330D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3EB6FEB4-7E0A-4F5F-9156-1495B5C5330D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

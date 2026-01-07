@@ -166,6 +166,71 @@ public class GaldrDb : IDisposable
         return result;
     }
 
+    public bool DeleteDocument(string collectionName, int docId)
+    {
+        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
+        }
+
+        int order = CalculateBTreeOrder(_options.PageSize);
+        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
+        DocumentLocation location = btree.Search(docId);
+
+        if (location == null)
+        {
+            return false;
+        }
+
+        _documentStorage.DeleteDocument(location.PageId, location.SlotIndex);
+
+        btree.Delete(docId);
+
+        collection.DocumentCount--;
+        _collectionsMetadata.UpdateCollection(collection);
+        _collectionsMetadata.WriteToDisk();
+
+        return true;
+    }
+
+    public bool UpdateDocument<T>(string collectionName, int docId, T document)
+    {
+        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
+        }
+
+        int order = CalculateBTreeOrder(_options.PageSize);
+        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
+        DocumentLocation oldLocation = btree.Search(docId);
+
+        if (oldLocation == null)
+        {
+            return false;
+        }
+
+        _documentStorage.DeleteDocument(oldLocation.PageId, oldLocation.SlotIndex);
+
+        string json = _jsonSerializer.Serialize(document, _jsonOptions);
+        byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
+        DocumentLocation newLocation = _documentStorage.WriteDocument(jsonBytes);
+
+        btree.Delete(docId);
+        btree.Insert(docId, newLocation);
+
+        int newRootPageId = btree.GetRootPageId();
+        if (newRootPageId != collection.RootPage)
+        {
+            collection.RootPage = newRootPageId;
+            _collectionsMetadata.UpdateCollection(collection);
+            _collectionsMetadata.WriteToDisk();
+        }
+
+        return true;
+    }
+
     #endregion
 
     #region Private Methods
