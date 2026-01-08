@@ -31,7 +31,7 @@ public class AdvancedQueryTests
         }
     }
 
-    private GaldrDbInstance CreateDatabaseWithPersons(string dbName, int count)
+    private GaldrDbInstance CreateDatabaseWithPeople(string dbName, int count)
     {
         string dbPath = Path.Combine(_testDirectory, dbName);
         GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false, UseMmap = false };
@@ -57,7 +57,7 @@ public class AdvancedQueryTests
     [TestMethod]
     public void WhereNotIn_ExcludesSpecifiedValues()
     {
-        using (GaldrDbInstance db = CreateDatabaseWithPersons("notin_test.db", 10))
+        using (GaldrDbInstance db = CreateDatabaseWithPeople("notin_test.db", 10))
         {
             List<Person> results = db.Query<Person>()
                 .WhereNotIn(PersonMeta.Name, "Person000", "Person001", "Person002")
@@ -76,7 +76,7 @@ public class AdvancedQueryTests
     [TestMethod]
     public void WhereNotIn_WithEmptyExclusionList_ReturnsAll()
     {
-        using (GaldrDbInstance db = CreateDatabaseWithPersons("notin_empty.db", 10))
+        using (GaldrDbInstance db = CreateDatabaseWithPeople("notin_empty.db", 10))
         {
             List<Person> results = db.Query<Person>()
                 .WhereNotIn(PersonMeta.Name, new string[] { })
@@ -108,7 +108,7 @@ public class AdvancedQueryTests
     [TestMethod]
     public void WhereNotIn_CombinedWithOtherFilters()
     {
-        using (GaldrDbInstance db = CreateDatabaseWithPersons("notin_combined.db", 20))
+        using (GaldrDbInstance db = CreateDatabaseWithPeople("notin_combined.db", 20))
         {
             List<Person> results = db.Query<Person>()
                 .Where(PersonMeta.Age, FieldOp.GreaterThan, 25)
@@ -131,7 +131,7 @@ public class AdvancedQueryTests
     [TestMethod]
     public void Where_StartsWithOnNonStringField_ThrowsException()
     {
-        using (GaldrDbInstance db = CreateDatabaseWithPersons("validate_startswith.db", 1))
+        using (GaldrDbInstance db = CreateDatabaseWithPeople("validate_startswith.db", 1))
         {
             ArgumentException exception = Assert.ThrowsExactly<ArgumentException>(() =>
             {
@@ -148,7 +148,7 @@ public class AdvancedQueryTests
     [TestMethod]
     public void Where_EndsWithOnNonStringField_ThrowsException()
     {
-        using (GaldrDbInstance db = CreateDatabaseWithPersons("validate_endswith.db", 1))
+        using (GaldrDbInstance db = CreateDatabaseWithPeople("validate_endswith.db", 1))
         {
             ArgumentException exception = Assert.ThrowsExactly<ArgumentException>(() =>
             {
@@ -165,7 +165,7 @@ public class AdvancedQueryTests
     [TestMethod]
     public void Where_ContainsOnNonStringField_ThrowsException()
     {
-        using (GaldrDbInstance db = CreateDatabaseWithPersons("validate_contains.db", 1))
+        using (GaldrDbInstance db = CreateDatabaseWithPeople("validate_contains.db", 1))
         {
             ArgumentException exception = Assert.ThrowsExactly<ArgumentException>(() =>
             {
@@ -182,7 +182,7 @@ public class AdvancedQueryTests
     [TestMethod]
     public void Where_BetweenOperation_ThrowsException()
     {
-        using (GaldrDbInstance db = CreateDatabaseWithPersons("validate_between.db", 1))
+        using (GaldrDbInstance db = CreateDatabaseWithPeople("validate_between.db", 1))
         {
             ArgumentException exception = Assert.ThrowsExactly<ArgumentException>(() =>
             {
@@ -199,7 +199,7 @@ public class AdvancedQueryTests
     [TestMethod]
     public void Where_InOperation_ThrowsException()
     {
-        using (GaldrDbInstance db = CreateDatabaseWithPersons("validate_in.db", 1))
+        using (GaldrDbInstance db = CreateDatabaseWithPeople("validate_in.db", 1))
         {
             ArgumentException exception = Assert.ThrowsExactly<ArgumentException>(() =>
             {
@@ -216,7 +216,7 @@ public class AdvancedQueryTests
     [TestMethod]
     public void Where_StringOperationsOnStringField_Works()
     {
-        using (GaldrDbInstance db = CreateDatabaseWithPersons("validate_string_ok.db", 10))
+        using (GaldrDbInstance db = CreateDatabaseWithPeople("validate_string_ok.db", 10))
         {
             List<Person> startsWithResults = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.StartsWith, "Person00")
@@ -312,7 +312,7 @@ public class AdvancedQueryTests
     [TestMethod]
     public void OrderBy_WithFilter()
     {
-        using (GaldrDbInstance db = CreateDatabaseWithPersons("orderby_filter.db", 20))
+        using (GaldrDbInstance db = CreateDatabaseWithPeople("orderby_filter.db", 20))
         {
             List<Person> results = db.Query<Person>()
                 .Where(PersonMeta.Age, FieldOp.LessThan, 25)
@@ -419,7 +419,7 @@ public class AdvancedQueryTests
     [TestMethod]
     public void OrderBy_WithIndexedFilter()
     {
-        using (GaldrDbInstance db = CreateDatabaseWithPersons("orderby_indexed.db", 50))
+        using (GaldrDbInstance db = CreateDatabaseWithPeople("orderby_indexed.db", 50))
         {
             List<Person> results = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.StartsWith, "Person00")
