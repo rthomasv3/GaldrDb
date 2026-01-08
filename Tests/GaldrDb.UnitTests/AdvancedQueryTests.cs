@@ -319,10 +319,15 @@ public class AdvancedQueryTests
                 .OrderByDescending(PersonMeta.Name)
                 .ToList();
 
-            for (int i = 1; i < results.Count; i++)
+            for (int i = 0; i < results.Count; ++i)
             {
                 Assert.IsLessThan(25, results[i].Age);
-                Assert.IsGreaterThanOrEqualTo(0, string.Compare(results[i - 1].Name, results[i].Name, StringComparison.Ordinal));
+            }
+            
+            for (int i = 1; i < results.Count; ++i)
+            {
+                Assert.IsGreaterThanOrEqualTo(0, string.Compare(results[i - 1].Name, 
+                    results[i].Name, StringComparison.Ordinal));
             }
         }
     }
