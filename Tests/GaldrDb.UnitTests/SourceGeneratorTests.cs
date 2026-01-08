@@ -4,6 +4,7 @@ using System.Linq;
 using GaldrDb.UnitTests.TestModels;
 using GaldrDbEngine.Generated;
 using GaldrDbEngine.Query;
+using GaldrDbEngine.Transactions;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace GaldrDb.UnitTests;
@@ -133,7 +134,7 @@ public class SourceGeneratorTests
 
         // Act
         typeInfo.ExtractIndexedFields(person, writer);
-        IReadOnlyList<(string FieldName, byte[] KeyBytes)> fields = writer.GetFields();
+        IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
 
         // Assert
         Assert.HasCount(1, fields);

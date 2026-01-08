@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using GaldrDbEngine.Query;
+using GaldrDbEngine.Transactions;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace GaldrDb.UnitTests;
@@ -15,7 +16,7 @@ public class TypeInfoTests
 
         writer.WriteString("Name", "Alice");
 
-        IReadOnlyList<(string FieldName, byte[] KeyBytes)> fields = writer.GetFields();
+        IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(1, fields);
         Assert.AreEqual("Name", fields[0].FieldName);
         Assert.IsNotNull(fields[0].KeyBytes);
@@ -28,7 +29,7 @@ public class TypeInfoTests
 
         writer.WriteString("Name", null);
 
-        IReadOnlyList<(string FieldName, byte[] KeyBytes)> fields = writer.GetFields();
+        IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.IsEmpty(fields);
     }
 
@@ -39,7 +40,7 @@ public class TypeInfoTests
 
         writer.WriteInt32("Age", 25);
 
-        IReadOnlyList<(string FieldName, byte[] KeyBytes)> fields = writer.GetFields();
+        IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(1, fields);
         Assert.AreEqual("Age", fields[0].FieldName);
         Assert.HasCount(4, fields[0].KeyBytes);
@@ -52,7 +53,7 @@ public class TypeInfoTests
 
         writer.WriteInt64("BigNumber", 9876543210L);
 
-        IReadOnlyList<(string FieldName, byte[] KeyBytes)> fields = writer.GetFields();
+        IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(1, fields);
         Assert.AreEqual("BigNumber", fields[0].FieldName);
         Assert.HasCount(8, fields[0].KeyBytes);
@@ -65,7 +66,7 @@ public class TypeInfoTests
 
         writer.WriteDouble("Price", 19.99);
 
-        IReadOnlyList<(string FieldName, byte[] KeyBytes)> fields = writer.GetFields();
+        IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(1, fields);
         Assert.AreEqual("Price", fields[0].FieldName);
         Assert.HasCount(8, fields[0].KeyBytes);
@@ -78,7 +79,7 @@ public class TypeInfoTests
 
         writer.WriteDecimal("Amount", 123.45m);
 
-        IReadOnlyList<(string FieldName, byte[] KeyBytes)> fields = writer.GetFields();
+        IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(1, fields);
         Assert.AreEqual("Amount", fields[0].FieldName);
         Assert.HasCount(16, fields[0].KeyBytes);
@@ -91,7 +92,7 @@ public class TypeInfoTests
 
         writer.WriteBoolean("IsActive", true);
 
-        IReadOnlyList<(string FieldName, byte[] KeyBytes)> fields = writer.GetFields();
+        IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(1, fields);
         Assert.AreEqual("IsActive", fields[0].FieldName);
         Assert.HasCount(1, fields[0].KeyBytes);
@@ -104,7 +105,7 @@ public class TypeInfoTests
 
         writer.WriteDateTime("Created", new DateTime(2025, 1, 7));
 
-        IReadOnlyList<(string FieldName, byte[] KeyBytes)> fields = writer.GetFields();
+        IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(1, fields);
         Assert.AreEqual("Created", fields[0].FieldName);
         Assert.HasCount(8, fields[0].KeyBytes);
@@ -117,7 +118,7 @@ public class TypeInfoTests
 
         writer.WriteDateTimeOffset("Timestamp", new DateTimeOffset(2025, 1, 7, 12, 0, 0, TimeSpan.Zero));
 
-        IReadOnlyList<(string FieldName, byte[] KeyBytes)> fields = writer.GetFields();
+        IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(1, fields);
         Assert.AreEqual("Timestamp", fields[0].FieldName);
         Assert.HasCount(16, fields[0].KeyBytes);
@@ -130,7 +131,7 @@ public class TypeInfoTests
 
         writer.WriteGuid("UniqueId", Guid.NewGuid());
 
-        IReadOnlyList<(string FieldName, byte[] KeyBytes)> fields = writer.GetFields();
+        IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(1, fields);
         Assert.AreEqual("UniqueId", fields[0].FieldName);
         Assert.HasCount(16, fields[0].KeyBytes);
@@ -145,7 +146,7 @@ public class TypeInfoTests
         writer.WriteInt32("Age", 30);
         writer.WriteBoolean("Active", true);
 
-        IReadOnlyList<(string FieldName, byte[] KeyBytes)> fields = writer.GetFields();
+        IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(3, fields);
         Assert.AreEqual("Name", fields[0].FieldName);
         Assert.AreEqual("Age", fields[1].FieldName);
@@ -161,7 +162,7 @@ public class TypeInfoTests
 
         writer.Clear();
 
-        IReadOnlyList<(string FieldName, byte[] KeyBytes)> fields = writer.GetFields();
+        IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.IsEmpty(fields);
     }
 
@@ -228,7 +229,7 @@ public class TypeInfoTests
 
         typeInfo.ExtractIndexedFields(doc, writer);
 
-        IReadOnlyList<(string FieldName, byte[] KeyBytes)> fields = writer.GetFields();
+        IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(2, fields);
         Assert.AreEqual("Name", fields[0].FieldName);
         Assert.AreEqual("Email", fields[1].FieldName);

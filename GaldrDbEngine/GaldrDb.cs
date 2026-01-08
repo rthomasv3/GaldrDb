@@ -7,6 +7,8 @@ using GaldrDbEngine.Pages;
 using GaldrDbEngine.Query;
 using GaldrDbEngine.Storage;
 using GaldrDbEngine.Utilities;
+using GaldrDbEngine.Transactions;
+using GaldrDbEngine.WAL;
 using GaldrJson;
 
 namespace GaldrDbEngine;
@@ -21,10 +23,14 @@ public class GaldrDb : IDisposable
     private readonly IGaldrJsonSerializer _jsonSerializer;
     private readonly GaldrJsonOptions _jsonOptions;
     private readonly HashSet<string> _ensuredCollections;
+    private IPageIO _basePageIO;
     private IPageIO _pageIO;
+    private WriteAheadLog _wal;
+    private WalPageIO _walPageIO;
     private PageManager _pageManager;
     private DocumentStorage _documentStorage;
     private CollectionsMetadata _collectionsMetadata;
+    private TransactionManager _txManager;
 
     #endregion
 
@@ -34,7 +40,16 @@ public class GaldrDb : IDisposable
     {
         _filePath = filePath;
         _options = options ?? new GaldrDbOptions();
-        _walPath = $"{Path.GetFileNameWithoutExtension(filePath)}.db-wal";
+        string directory = Path.GetDirectoryName(filePath);
+        string fileNameWithoutExt = Path.GetFileNameWithoutExtension(filePath);
+        if (string.IsNullOrEmpty(directory))
+        {
+            _walPath = $"{fileNameWithoutExt}.wal";
+        }
+        else
+        {
+            _walPath = Path.Combine(directory, $"{fileNameWithoutExt}.wal");
+        }
         _jsonSerializer = new GaldrJsonSerializer();
         _jsonOptions = new GaldrJsonOptions()
         {
@@ -87,11 +102,73 @@ public class GaldrDb : IDisposable
 
     public void Dispose()
     {
-        if (_pageIO != null)
+        // Flush WAL to ensure all committed data is persisted
+        if (_wal != null)
         {
-            _pageIO.Close();
-            _pageIO.Dispose();
+            _wal.Flush();
+            _wal.Dispose();
+            _wal = null;
         }
+
+        if (_basePageIO != null)
+        {
+            _basePageIO.Close();
+            _basePageIO.Dispose();
+            _basePageIO = null;
+        }
+
+        _pageIO = null;
+        _walPageIO = null;
+    }
+
+    public void Checkpoint()
+    {
+        if (_walPageIO != null)
+        {
+            _walPageIO.Checkpoint();
+        }
+    }
+
+    public Transaction BeginTransaction()
+    {
+        EnsureTransactionManager();
+
+        TxId txId = _txManager.AllocateTxId();
+        TxId snapshotTxId = _txManager.GetSnapshotTxId();
+
+        Transaction tx = new Transaction(
+            this,
+            _txManager,
+            txId,
+            snapshotTxId,
+            isReadOnly: false,
+            _jsonSerializer,
+            _jsonOptions);
+
+        _txManager.RegisterTransaction(txId);
+
+        return tx;
+    }
+
+    public Transaction BeginReadOnlyTransaction()
+    {
+        EnsureTransactionManager();
+
+        TxId txId = _txManager.AllocateTxId();
+        TxId snapshotTxId = _txManager.GetSnapshotTxId();
+
+        Transaction tx = new Transaction(
+            this,
+            _txManager,
+            txId,
+            snapshotTxId,
+            isReadOnly: true,
+            _jsonSerializer,
+            _jsonOptions);
+
+        _txManager.RegisterTransaction(txId);
+
+        return tx;
     }
 
     public void CreateCollection(string collectionName)
@@ -295,49 +372,12 @@ public class GaldrDb : IDisposable
 
     public int Insert<T>(T document, GaldrTypeInfo<T> typeInfo)
     {
-        EnsureCollection(typeInfo);
-
-        string collectionName = typeInfo.CollectionName;
-        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
-
-        int currentId = typeInfo.IdGetter(document);
-        int assignedId;
-
-        if (currentId == 0)
+        using (Transaction tx = BeginTransaction())
         {
-            assignedId = collection.NextId;
-            typeInfo.IdSetter(document, assignedId);
+            int id = tx.Insert(document, typeInfo);
+            tx.Commit();
+            return id;
         }
-        else
-        {
-            assignedId = currentId;
-        }
-
-        string json = _jsonSerializer.Serialize(document, _jsonOptions);
-        byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
-        DocumentLocation location = _documentStorage.WriteDocument(jsonBytes);
-
-        int order = CalculateBTreeOrder(_options.PageSize);
-        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
-        btree.Insert(assignedId, location);
-
-        int newRootPageId = btree.GetRootPageId();
-        if (newRootPageId != collection.RootPage)
-        {
-            collection.RootPage = newRootPageId;
-        }
-
-        InsertIntoIndexes(collection, document, assignedId, location, typeInfo);
-
-        collection.DocumentCount++;
-        if (assignedId >= collection.NextId)
-        {
-            collection.NextId = assignedId + 1;
-        }
-        _collectionsMetadata.UpdateCollection(collection);
-        _collectionsMetadata.WriteToDisk();
-
-        return assignedId;
     }
 
     public T GetById<T>(int id, GaldrTypeInfo<T> typeInfo)
@@ -349,91 +389,22 @@ public class GaldrDb : IDisposable
 
     public bool Update<T>(T document, GaldrTypeInfo<T> typeInfo)
     {
-        int id = typeInfo.IdGetter(document);
-
-        if (id == 0)
+        using (Transaction tx = BeginTransaction())
         {
-            throw new InvalidOperationException("Cannot update a document with Id = 0. The document must have a valid Id.");
+            bool result = tx.Update(document, typeInfo);
+            tx.Commit();
+            return result;
         }
-
-        EnsureCollection(typeInfo);
-
-        string collectionName = typeInfo.CollectionName;
-        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
-
-        int order = CalculateBTreeOrder(_options.PageSize);
-        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
-        DocumentLocation oldLocation = btree.Search(id);
-
-        if (oldLocation == null)
-        {
-            return false;
-        }
-
-        T oldDocument = default(T);
-        if (collection.Indexes.Count > 0)
-        {
-            byte[] oldJsonBytes = _documentStorage.ReadDocument(oldLocation.PageId, oldLocation.SlotIndex);
-            string oldJson = Encoding.UTF8.GetString(oldJsonBytes);
-            oldDocument = _jsonSerializer.Deserialize<T>(oldJson, _jsonOptions);
-            DeleteFromIndexes(collection, oldDocument, id, typeInfo);
-        }
-
-        _documentStorage.DeleteDocument(oldLocation.PageId, oldLocation.SlotIndex);
-
-        string json = _jsonSerializer.Serialize(document, _jsonOptions);
-        byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
-        DocumentLocation newLocation = _documentStorage.WriteDocument(jsonBytes);
-
-        btree.Delete(id);
-        btree.Insert(id, newLocation);
-
-        int newRootPageId = btree.GetRootPageId();
-        if (newRootPageId != collection.RootPage)
-        {
-            collection.RootPage = newRootPageId;
-        }
-
-        InsertIntoIndexes(collection, document, id, newLocation, typeInfo);
-
-        _collectionsMetadata.UpdateCollection(collection);
-        _collectionsMetadata.WriteToDisk();
-
-        return true;
     }
 
     public bool Delete<T>(int id, GaldrTypeInfo<T> typeInfo)
     {
-        EnsureCollection(typeInfo);
-
-        string collectionName = typeInfo.CollectionName;
-        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
-
-        int order = CalculateBTreeOrder(_options.PageSize);
-        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
-        DocumentLocation location = btree.Search(id);
-
-        if (location == null)
+        using (Transaction tx = BeginTransaction())
         {
-            return false;
+            bool result = tx.Delete<T>(id, typeInfo);
+            tx.Commit();
+            return result;
         }
-
-        if (collection.Indexes.Count > 0)
-        {
-            byte[] jsonBytes = _documentStorage.ReadDocument(location.PageId, location.SlotIndex);
-            string json = Encoding.UTF8.GetString(jsonBytes);
-            T document = _jsonSerializer.Deserialize<T>(json, _jsonOptions);
-            DeleteFromIndexes(collection, document, id, typeInfo);
-        }
-
-        _documentStorage.DeleteDocument(location.PageId, location.SlotIndex);
-        btree.Delete(id);
-
-        collection.DocumentCount--;
-        _collectionsMetadata.UpdateCollection(collection);
-        _collectionsMetadata.WriteToDisk();
-
-        return true;
     }
 
     public QueryBuilder<T> Query<T>(GaldrTypeInfo<T> typeInfo)
@@ -540,48 +511,6 @@ public class GaldrDb : IDisposable
         }
     }
 
-    private void InsertIntoIndexes<T>(CollectionEntry collection, T document, int docId, DocumentLocation location, GaldrTypeInfo<T> typeInfo)
-    {
-        if (collection.Indexes.Count == 0)
-        {
-            return;
-        }
-
-        IndexFieldWriter writer = new IndexFieldWriter();
-        typeInfo.ExtractIndexedFields(document, writer);
-        IReadOnlyList<(string FieldName, byte[] KeyBytes)> fields = writer.GetFields();
-
-        // First pass: check unique constraints
-        foreach ((string FieldName, byte[] KeyBytes) field in fields)
-        {
-            IndexDefinition indexDef = collection.FindIndex(field.FieldName);
-            if (indexDef != null && indexDef.IsUnique)
-            {
-                CheckUniqueConstraint(indexDef, field.FieldName, field.KeyBytes);
-            }
-        }
-
-        // Second pass: insert into all indexes
-        foreach ((string FieldName, byte[] KeyBytes) field in fields)
-        {
-            IndexDefinition indexDef = collection.FindIndex(field.FieldName);
-            if (indexDef != null)
-            {
-                int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
-                SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, maxKeys);
-
-                byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(field.KeyBytes, docId);
-                indexTree.Insert(compositeKey, location);
-
-                int newRootPageId = indexTree.GetRootPageId();
-                if (newRootPageId != indexDef.RootPageId)
-                {
-                    indexDef.RootPageId = newRootPageId;
-                }
-            }
-        }
-    }
-
     private void CheckUniqueConstraint(IndexDefinition indexDef, string fieldName, byte[] keyBytes)
     {
         int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
@@ -608,31 +537,6 @@ public class GaldrDb : IDisposable
         }
 
         return result;
-    }
-
-    private void DeleteFromIndexes<T>(CollectionEntry collection, T document, int docId, GaldrTypeInfo<T> typeInfo)
-    {
-        if (collection.Indexes.Count == 0)
-        {
-            return;
-        }
-
-        IndexFieldWriter writer = new IndexFieldWriter();
-        typeInfo.ExtractIndexedFields(document, writer);
-        IReadOnlyList<(string FieldName, byte[] KeyBytes)> fields = writer.GetFields();
-
-        foreach ((string FieldName, byte[] KeyBytes) field in fields)
-        {
-            IndexDefinition indexDef = collection.FindIndex(field.FieldName);
-            if (indexDef != null)
-            {
-                int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
-                SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, maxKeys);
-
-                byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(field.KeyBytes, docId);
-                indexTree.Delete(compositeKey);
-            }
-        }
     }
 
     #endregion
@@ -664,20 +568,22 @@ public class GaldrDb : IDisposable
 
         SetupIO();
 
-        _pageManager = new PageManager(_pageIO, _options.PageSize);
+        // Initialize using base page IO first
+        _pageManager = new PageManager(_basePageIO, _options.PageSize);
         _pageManager.Initialize();
 
-        _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataPage, _options.PageSize);
+        _collectionsMetadata = new CollectionsMetadata(_basePageIO, _pageManager.Header.CollectionsMetadataPage, _options.PageSize);
         _collectionsMetadata.WriteToDisk();
 
         _pageManager.Flush();
-
-        _documentStorage = new DocumentStorage(_pageIO, _pageManager, _options.PageSize);
 
         if (_options.UseWal)
         {
             InitializeWalFile();
         }
+
+        // Document storage uses the final _pageIO (WAL-wrapped if UseWal is true)
+        _documentStorage = new DocumentStorage(_pageIO, _pageManager, _options.PageSize);
     }
 
     private void OpenAndValidateFile()
@@ -689,7 +595,7 @@ public class GaldrDb : IDisposable
 
         SetupIO();
 
-        _pageManager = new PageManager(_pageIO, _options.PageSize);
+        _pageManager = new PageManager(_basePageIO, _options.PageSize);
         _pageManager.Load();
 
         if (_options.PageSize == 0 || _options.PageSize != _pageManager.Header.PageSize)
@@ -697,14 +603,23 @@ public class GaldrDb : IDisposable
             _options.PageSize = _pageManager.Header.PageSize;
         }
 
-        _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataPage, _pageManager.Header.PageSize);
+        _collectionsMetadata = new CollectionsMetadata(_basePageIO, _pageManager.Header.CollectionsMetadataPage, _pageManager.Header.PageSize);
         _collectionsMetadata.LoadFromDisk();
 
-        _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize);
+        _documentStorage = new DocumentStorage(_basePageIO, _pageManager, _pageManager.Header.PageSize);
 
-        if (_options.UseWal && File.Exists(_walPath))
+        if (_options.UseWal)
         {
-            RecoverFromWal();
+            if (File.Exists(_walPath))
+            {
+                RecoverFromWal();
+            }
+            else
+            {
+                InitializeWalFile();
+                // Update document storage to use WAL page IO
+                _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize);
+            }
         }
     }
 
@@ -719,28 +634,73 @@ public class GaldrDb : IDisposable
 
         bool createNew = !File.Exists(_filePath);
         long initialSize = (long)_options.PageSize * 4;
-        IPageIO pageIO = null;
 
         if (useMmap)
         {
-            pageIO = new MmapPageIO(_filePath, _options.PageSize, initialSize, createNew);
+            _basePageIO = new MmapPageIO(_filePath, _options.PageSize, initialSize, createNew);
         }
         else
         {
-            pageIO = new StandardPageIO(_filePath, _options.PageSize, createNew);
+            _basePageIO = new StandardPageIO(_filePath, _options.PageSize, createNew);
         }
 
-        _pageIO = pageIO;
+        _pageIO = _basePageIO;
     }
 
     private void InitializeWalFile()
     {
+        _wal = new WriteAheadLog(_walPath, _options.PageSize);
+        _wal.Create();
 
+        _walPageIO = new WalPageIO(_basePageIO, _wal, _options.PageSize);
+        _pageIO = _walPageIO;
     }
 
     private void RecoverFromWal()
     {
+        _wal = new WriteAheadLog(_walPath, _options.PageSize);
+        _wal.Open();
 
+        // Get all committed transactions
+        HashSet<ulong> committedTxIds = _wal.GetCommittedTransactions();
+        Dictionary<ulong, List<WalFrame>> framesByTx = _wal.GetFramesByTransaction();
+
+        // Apply committed transactions in order
+        List<ulong> sortedTxIds = new List<ulong>(committedTxIds);
+        sortedTxIds.Sort();
+
+        foreach (ulong txId in sortedTxIds)
+        {
+            if (framesByTx.TryGetValue(txId, out List<WalFrame> frames))
+            {
+                foreach (WalFrame frame in frames)
+                {
+                    if (frame.PageId >= 0 && frame.Data.Length > 0)
+                    {
+                        _basePageIO.WritePage(frame.PageId, frame.Data);
+                    }
+                }
+            }
+        }
+
+        _basePageIO.Flush();
+
+        // Reload page manager and metadata after recovery
+        _pageManager = new PageManager(_basePageIO, _options.PageSize);
+        _pageManager.Load();
+
+        _collectionsMetadata = new CollectionsMetadata(_basePageIO, _pageManager.Header.CollectionsMetadataPage, _pageManager.Header.PageSize);
+        _collectionsMetadata.LoadFromDisk();
+
+        // Truncate WAL after successful recovery
+        _wal.Truncate();
+
+        // Set up WAL page IO for future operations
+        _walPageIO = new WalPageIO(_basePageIO, _wal, _options.PageSize);
+        _pageIO = _walPageIO;
+
+        // Update the document storage to use the new page IO
+        _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize);
     }
 
     private int CalculateBTreeOrder(int pageSize)
@@ -776,6 +736,171 @@ public class GaldrDb : IDisposable
         }
 
         return result;
+    }
+
+    private void EnsureTransactionManager()
+    {
+        if (_txManager == null)
+        {
+            _txManager = new TransactionManager();
+        }
+    }
+
+    #endregion
+
+    #region Internal Transaction Commit Methods
+
+    internal void CommitInsert(string collectionName, int docId, byte[] serializedData, IReadOnlyList<IndexFieldEntry> indexFields)
+    {
+        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
+        }
+
+        DocumentLocation location = _documentStorage.WriteDocument(serializedData);
+
+        int order = CalculateBTreeOrder(_options.PageSize);
+        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
+        btree.Insert(docId, location);
+
+        int newRootPageId = btree.GetRootPageId();
+        if (newRootPageId != collection.RootPage)
+        {
+            collection.RootPage = newRootPageId;
+        }
+
+        if (indexFields != null && indexFields.Count > 0)
+        {
+            InsertIntoIndexesInternal(collection, docId, location, indexFields);
+        }
+
+        collection.DocumentCount++;
+        if (docId >= collection.NextId)
+        {
+            collection.NextId = docId + 1;
+        }
+        _collectionsMetadata.UpdateCollection(collection);
+        _collectionsMetadata.WriteToDisk();
+    }
+
+    internal void CommitUpdate(string collectionName, int docId, byte[] serializedData, IReadOnlyList<IndexFieldEntry> newIndexFields, IReadOnlyList<IndexFieldEntry> oldIndexFields)
+    {
+        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
+        }
+
+        int order = CalculateBTreeOrder(_options.PageSize);
+        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
+        DocumentLocation oldLocation = btree.Search(docId);
+
+        if (oldIndexFields != null && oldIndexFields.Count > 0)
+        {
+            DeleteFromIndexesInternal(collection, docId, oldIndexFields);
+        }
+
+        if (oldLocation != null)
+        {
+            _documentStorage.DeleteDocument(oldLocation.PageId, oldLocation.SlotIndex);
+        }
+
+        DocumentLocation newLocation = _documentStorage.WriteDocument(serializedData);
+
+        btree.Delete(docId);
+        btree.Insert(docId, newLocation);
+
+        int newRootPageId = btree.GetRootPageId();
+        if (newRootPageId != collection.RootPage)
+        {
+            collection.RootPage = newRootPageId;
+        }
+
+        if (newIndexFields != null && newIndexFields.Count > 0)
+        {
+            InsertIntoIndexesInternal(collection, docId, newLocation, newIndexFields);
+        }
+
+        _collectionsMetadata.UpdateCollection(collection);
+        _collectionsMetadata.WriteToDisk();
+    }
+
+    internal void CommitDelete(string collectionName, int docId, IReadOnlyList<IndexFieldEntry> oldIndexFields)
+    {
+        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
+        }
+
+        int order = CalculateBTreeOrder(_options.PageSize);
+        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
+        DocumentLocation location = btree.Search(docId);
+
+        if (location != null)
+        {
+            if (oldIndexFields != null && oldIndexFields.Count > 0)
+            {
+                DeleteFromIndexesInternal(collection, docId, oldIndexFields);
+            }
+
+            _documentStorage.DeleteDocument(location.PageId, location.SlotIndex);
+            btree.Delete(docId);
+
+            collection.DocumentCount--;
+            _collectionsMetadata.UpdateCollection(collection);
+            _collectionsMetadata.WriteToDisk();
+        }
+    }
+
+    private void InsertIntoIndexesInternal(CollectionEntry collection, int docId, DocumentLocation location, IReadOnlyList<IndexFieldEntry> indexFields)
+    {
+        // First pass: check unique constraints
+        foreach (IndexFieldEntry field in indexFields)
+        {
+            IndexDefinition indexDef = collection.FindIndex(field.FieldName);
+            if (indexDef != null && indexDef.IsUnique)
+            {
+                CheckUniqueConstraint(indexDef, field.FieldName, field.KeyBytes);
+            }
+        }
+
+        // Second pass: insert into all indexes
+        foreach (IndexFieldEntry field in indexFields)
+        {
+            IndexDefinition indexDef = collection.FindIndex(field.FieldName);
+            if (indexDef != null)
+            {
+                int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
+                SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, maxKeys);
+
+                byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(field.KeyBytes, docId);
+                indexTree.Insert(compositeKey, location);
+
+                int newRootPageId = indexTree.GetRootPageId();
+                if (newRootPageId != indexDef.RootPageId)
+                {
+                    indexDef.RootPageId = newRootPageId;
+                }
+            }
+        }
+    }
+
+    private void DeleteFromIndexesInternal(CollectionEntry collection, int docId, IReadOnlyList<IndexFieldEntry> indexFields)
+    {
+        foreach (IndexFieldEntry field in indexFields)
+        {
+            IndexDefinition indexDef = collection.FindIndex(field.FieldName);
+            if (indexDef != null)
+            {
+                int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
+                SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, maxKeys);
+
+                byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(field.KeyBytes, docId);
+                indexTree.Delete(compositeKey);
+            }
+        }
     }
 
     #endregion
