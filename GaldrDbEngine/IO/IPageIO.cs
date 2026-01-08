@@ -1,4 +1,6 @@
 using System;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace GaldrDbEngine.IO;
 
@@ -8,4 +10,8 @@ public interface IPageIO : IDisposable
     void WritePage(int pageId, ReadOnlySpan<byte> data);
     void Flush();
     void Close();
+
+    Task ReadPageAsync(int pageId, Memory<byte> destination, CancellationToken cancellationToken = default);
+    Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default);
+    Task FlushAsync(CancellationToken cancellationToken = default);
 }

@@ -81,7 +81,7 @@ public class TypeSafeCRUDTests
             LegacyCustomer customer = new LegacyCustomer { Name = "Test Customer", Email = "customer@example.com" };
             int id = db.Insert(customer, LegacyCustomerMeta.TypeInfo);
 
-            LegacyCustomer retrieved = db.GetDocument<LegacyCustomer>("Customer", id);
+            LegacyCustomer retrieved = db.GetById<LegacyCustomer>(id);
 
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("Test Customer", retrieved.Name);
@@ -676,60 +676,6 @@ public class TypeSafeCRUDTests
 
     #endregion
 
-    #region GetAllDocuments Tests
-
-    [TestMethod]
-    public void GetAllDocuments_ReturnsAllDocuments()
-    {
-        string dbPath = Path.Combine(_testDirectory, "test.db");
-        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
-
-        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
-        {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
-            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" }, PersonMeta.TypeInfo);
-
-            List<Person> all = db.GetAllDocuments(PersonMeta.TypeInfo);
-
-            Assert.HasCount(3, all);
-        }
-    }
-
-    [TestMethod]
-    public void GetAllDocuments_EmptyCollection_ReturnsEmptyList()
-    {
-        string dbPath = Path.Combine(_testDirectory, "test.db");
-        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
-
-        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
-        {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
-            List<Person> all = db.GetAllDocuments(PersonMeta.TypeInfo);
-
-            Assert.IsEmpty(all);
-        }
-    }
-
-    [TestMethod]
-    public void GetAllDocuments_NonExistentCollection_ReturnsEmptyList()
-    {
-        string dbPath = Path.Combine(_testDirectory, "test.db");
-        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
-
-        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
-        {
-            List<Person> all = db.GetAllDocuments(PersonMeta.TypeInfo);
-
-            Assert.IsEmpty(all);
-        }
-    }
-
-    #endregion
-
     #region Parameter-less API Tests (Auto-resolved TypeInfo)
 
     [TestMethod]
@@ -767,8 +713,8 @@ public class TypeSafeCRUDTests
                 .ToList();
             Assert.HasCount(1, queryResults);
 
-            // GetAllDocuments without typeInfo parameter
-            List<Person> all = db.GetAllDocuments<Person>();
+            // Query all documents without typeInfo parameter
+            List<Person> all = db.Query<Person>().ToList();
             Assert.HasCount(1, all);
 
             // Delete without typeInfo parameter

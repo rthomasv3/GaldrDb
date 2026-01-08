@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.IO.MemoryMappedFiles;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace GaldrDbEngine.IO;
 
@@ -175,5 +177,23 @@ public class MmapPageIO : IPageIO
         {
             _fileStream.Dispose();
         }
+    }
+
+    public Task ReadPageAsync(int pageId, Memory<byte> destination, CancellationToken cancellationToken = default)
+    {
+        ReadPage(pageId, destination.Span);
+        return Task.CompletedTask;
+    }
+
+    public Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    {
+        WritePage(pageId, data.Span);
+        return Task.CompletedTask;
+    }
+
+    public Task FlushAsync(CancellationToken cancellationToken = default)
+    {
+        Flush();
+        return Task.CompletedTask;
     }
 }

@@ -56,28 +56,41 @@ public class WriteAheadLog : IDisposable
 
         _walStream = new FileStream(_walPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
 
-        byte[] headerBuffer = new byte[WalHeader.HEADER_SIZE];
-        _walStream.Position = 0;
-        int bytesRead = _walStream.Read(headerBuffer, 0, WalHeader.HEADER_SIZE);
-
-        if (bytesRead < WalHeader.HEADER_SIZE)
+        // Handle empty WAL file (can occur after truncation or crash during creation)
+        if (_walStream.Length == 0)
         {
-            throw new InvalidOperationException("WAL file is corrupted: header too short");
+            _header = new WalHeader();
+            _header.PageSize = _pageSize;
+            byte[] headerBytes = _header.Serialize();
+            _walStream.Write(headerBytes, 0, headerBytes.Length);
+            _walStream.Flush();
+            _currentFrameNumber = 0;
         }
-
-        _header = WalHeader.Deserialize(headerBuffer);
-
-        if (!_header.ValidateMagicNumber())
+        else
         {
-            throw new InvalidOperationException("WAL file is corrupted: invalid magic number");
-        }
+            byte[] headerBuffer = new byte[WalHeader.HEADER_SIZE];
+            _walStream.Position = 0;
+            int bytesRead = _walStream.Read(headerBuffer, 0, WalHeader.HEADER_SIZE);
 
-        if (_header.PageSize != _pageSize)
-        {
-            throw new InvalidOperationException($"WAL page size mismatch: expected {_pageSize}, found {_header.PageSize}");
-        }
+            if (bytesRead < WalHeader.HEADER_SIZE)
+            {
+                throw new InvalidOperationException("WAL file is corrupted: header too short");
+            }
 
-        _currentFrameNumber = _header.FrameCount;
+            _header = WalHeader.Deserialize(headerBuffer);
+
+            if (!_header.ValidateMagicNumber())
+            {
+                throw new InvalidOperationException("WAL file is corrupted: invalid magic number");
+            }
+
+            if (_header.PageSize != _pageSize)
+            {
+                throw new InvalidOperationException($"WAL page size mismatch: expected {_pageSize}, found {_header.PageSize}");
+            }
+
+            _currentFrameNumber = _header.FrameCount;
+        }
     }
 
     public long WriteFrame(ulong txId, int pageId, byte pageType, byte[] data, WalFrameFlags flags)

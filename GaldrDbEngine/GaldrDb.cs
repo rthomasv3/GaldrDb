@@ -2,7 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using GaldrDbEngine.IO;
+using GaldrDbEngine.MVCC;
 using GaldrDbEngine.Pages;
 using GaldrDbEngine.Query;
 using GaldrDbEngine.Storage;
@@ -23,6 +26,7 @@ public class GaldrDb : IDisposable
     private readonly IGaldrJsonSerializer _jsonSerializer;
     private readonly GaldrJsonOptions _jsonOptions;
     private readonly HashSet<string> _ensuredCollections;
+    private readonly object _ddlLock;
     private IPageIO _basePageIO;
     private IPageIO _pageIO;
     private WriteAheadLog _wal;
@@ -31,6 +35,9 @@ public class GaldrDb : IDisposable
     private DocumentStorage _documentStorage;
     private CollectionsMetadata _collectionsMetadata;
     private TransactionManager _txManager;
+    private VersionIndex _versionIndex;
+    private VersionGarbageCollector _garbageCollector;
+    private long _lastGCCommitCount;
 
     #endregion
 
@@ -59,6 +66,7 @@ public class GaldrDb : IDisposable
             DetectCycles = true,
         };
         _ensuredCollections = new HashSet<string>();
+        _ddlLock = new object();
     }
 
     #endregion
@@ -129,9 +137,30 @@ public class GaldrDb : IDisposable
         }
     }
 
+    public async Task CheckpointAsync(CancellationToken cancellationToken = default)
+    {
+        if (_walPageIO != null)
+        {
+            await _walPageIO.CheckpointAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public GarbageCollectionResult Vacuum()
+    {
+        EnsureGarbageCollector();
+        return _garbageCollector.Collect();
+    }
+
+    public Task<GarbageCollectionResult> VacuumAsync(CancellationToken cancellationToken = default)
+    {
+        // GC is primarily in-memory work on the VersionIndex, so we just wrap the sync version
+        return Task.FromResult(Vacuum());
+    }
+
     public Transaction BeginTransaction()
     {
         EnsureTransactionManager();
+        EnsureVersionIndex();
 
         TxId txId = _txManager.AllocateTxId();
         TxId snapshotTxId = _txManager.GetSnapshotTxId();
@@ -139,13 +168,14 @@ public class GaldrDb : IDisposable
         Transaction tx = new Transaction(
             this,
             _txManager,
+            _versionIndex,
             txId,
             snapshotTxId,
-            isReadOnly: false,
+            false,
             _jsonSerializer,
             _jsonOptions);
 
-        _txManager.RegisterTransaction(txId);
+        _txManager.RegisterTransaction(txId, snapshotTxId);
 
         return tx;
     }
@@ -153,6 +183,7 @@ public class GaldrDb : IDisposable
     public Transaction BeginReadOnlyTransaction()
     {
         EnsureTransactionManager();
+        EnsureVersionIndex();
 
         TxId txId = _txManager.AllocateTxId();
         TxId snapshotTxId = _txManager.GetSnapshotTxId();
@@ -160,18 +191,27 @@ public class GaldrDb : IDisposable
         Transaction tx = new Transaction(
             this,
             _txManager,
+            _versionIndex,
             txId,
             snapshotTxId,
-            isReadOnly: true,
+            true,
             _jsonSerializer,
             _jsonOptions);
 
-        _txManager.RegisterTransaction(txId);
+        _txManager.RegisterTransaction(txId, snapshotTxId);
 
         return tx;
     }
 
-    public void CreateCollection(string collectionName)
+    internal void CreateCollection(string collectionName)
+    {
+        lock (_ddlLock)
+        {
+            CreateCollectionInternal(collectionName);
+        }
+    }
+
+    private void CreateCollectionInternal(string collectionName)
     {
         CollectionEntry existingCollection = _collectionsMetadata.FindCollection(collectionName);
         if (existingCollection != null)
@@ -179,137 +219,29 @@ public class GaldrDb : IDisposable
             throw new InvalidOperationException($"Collection '{collectionName}' already exists");
         }
 
-        int rootPageId = _pageManager.AllocatePage();
+        BeginWalTransaction(0);
 
-        int order = CalculateBTreeOrder(_options.PageSize);
-        BTreeNode rootNode = new BTreeNode(_options.PageSize, order, BTreeNodeType.Leaf);
-        byte[] rootBytes = rootNode.Serialize();
-        _pageIO.WritePage(rootPageId, rootBytes);
-
-        _collectionsMetadata.AddCollection(collectionName, rootPageId);
-        _collectionsMetadata.WriteToDisk();
-
-        _pageManager.SetFreeSpaceLevel(rootPageId, FreeSpaceLevel.None);
-    }
-
-    public int InsertDocument<T>(string collectionName, T document)
-    {
-        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
-        if (collection == null)
+        try
         {
-            throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
-        }
+            int rootPageId = _pageManager.AllocatePage();
 
-        string json = _jsonSerializer.Serialize(document, _jsonOptions);
-        byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
-        DocumentLocation location = _documentStorage.WriteDocument(jsonBytes);
+            int order = CalculateBTreeOrder(_options.PageSize);
+            BTreeNode rootNode = new BTreeNode(_options.PageSize, order, BTreeNodeType.Leaf);
+            byte[] rootBytes = rootNode.Serialize();
+            _pageIO.WritePage(rootPageId, rootBytes);
 
-        int docId = collection.NextId;
-        int order = CalculateBTreeOrder(_options.PageSize);
-        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
-        btree.Insert(docId, location);
-
-        int newRootPageId = btree.GetRootPageId();
-        if (newRootPageId != collection.RootPage)
-        {
-            collection.RootPage = newRootPageId;
-        }
-
-        collection.DocumentCount++;
-        collection.NextId++;
-        _collectionsMetadata.UpdateCollection(collection);
-        _collectionsMetadata.WriteToDisk();
-
-        return docId;
-    }
-
-    public T GetDocument<T>(string collectionName, int docId)
-    {
-        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
-        if (collection == null)
-        {
-            throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
-        }
-
-        int order = CalculateBTreeOrder(_options.PageSize);
-        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
-        DocumentLocation location = btree.Search(docId);
-
-        if (location == null)
-        {
-            return default(T);
-        }
-
-        byte[] jsonBytes = _documentStorage.ReadDocument(location.PageId, location.SlotIndex);
-        string json = Encoding.UTF8.GetString(jsonBytes);
-        T result = _jsonSerializer.Deserialize<T>(json, _jsonOptions);
-
-        return result;
-    }
-
-    public bool DeleteDocument(string collectionName, int docId)
-    {
-        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
-        if (collection == null)
-        {
-            throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
-        }
-
-        int order = CalculateBTreeOrder(_options.PageSize);
-        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
-        DocumentLocation location = btree.Search(docId);
-
-        if (location == null)
-        {
-            return false;
-        }
-
-        _documentStorage.DeleteDocument(location.PageId, location.SlotIndex);
-
-        btree.Delete(docId);
-
-        collection.DocumentCount--;
-        _collectionsMetadata.UpdateCollection(collection);
-        _collectionsMetadata.WriteToDisk();
-
-        return true;
-    }
-
-    public bool UpdateDocument<T>(string collectionName, int docId, T document)
-    {
-        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
-        if (collection == null)
-        {
-            throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
-        }
-
-        int order = CalculateBTreeOrder(_options.PageSize);
-        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
-        DocumentLocation oldLocation = btree.Search(docId);
-
-        if (oldLocation == null)
-        {
-            return false;
-        }
-
-        _documentStorage.DeleteDocument(oldLocation.PageId, oldLocation.SlotIndex);
-
-        string json = _jsonSerializer.Serialize(document, _jsonOptions);
-        byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
-        DocumentLocation newLocation = _documentStorage.WriteDocument(jsonBytes);
-
-        btree.Delete(docId);
-        btree.Insert(docId, newLocation);
-
-        int newRootPageId = btree.GetRootPageId();
-        if (newRootPageId != collection.RootPage)
-        {
-            collection.RootPage = newRootPageId;
-            _collectionsMetadata.UpdateCollection(collection);
+            _collectionsMetadata.AddCollection(collectionName, rootPageId);
             _collectionsMetadata.WriteToDisk();
-        }
 
-        return true;
+            _pageManager.SetFreeSpaceLevel(rootPageId, FreeSpaceLevel.None);
+
+            CommitWalTransaction();
+        }
+        catch
+        {
+            AbortWalTransaction();
+            throw;
+        }
     }
 
     #endregion
@@ -346,27 +278,25 @@ public class GaldrDb : IDisposable
         return Query(GaldrTypeRegistry.Get<T>());
     }
 
-    public List<T> GetAllDocuments<T>()
-    {
-        return GetAllDocuments(GaldrTypeRegistry.Get<T>());
-    }
-
     public void EnsureCollection<T>(GaldrTypeInfo<T> typeInfo)
     {
         string collectionName = typeInfo.CollectionName;
 
-        if (!_ensuredCollections.Contains(collectionName))
+        lock (_ddlLock)
         {
-            CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
-
-            if (collection == null)
+            if (!_ensuredCollections.Contains(collectionName))
             {
-                CreateCollection(collectionName);
-                collection = _collectionsMetadata.FindCollection(collectionName);
-            }
+                CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
 
-            EnsureIndexes(collection, typeInfo);
-            _ensuredCollections.Add(collectionName);
+                if (collection == null)
+                {
+                    CreateCollectionInternal(collectionName);
+                    collection = _collectionsMetadata.FindCollection(collectionName);
+                }
+
+                EnsureIndexes(collection, typeInfo);
+                _ensuredCollections.Add(collectionName);
+            }
         }
     }
 
@@ -382,9 +312,12 @@ public class GaldrDb : IDisposable
 
     public T GetById<T>(int id, GaldrTypeInfo<T> typeInfo)
     {
-        string collectionName = typeInfo.CollectionName;
-        T result = GetDocument<T>(collectionName, id);
-        return result;
+        using (Transaction tx = BeginReadOnlyTransaction())
+        {
+            T result = tx.GetById(id, typeInfo);
+            tx.Commit();
+            return result;
+        }
     }
 
     public bool Update<T>(T document, GaldrTypeInfo<T> typeInfo)
@@ -409,63 +342,84 @@ public class GaldrDb : IDisposable
 
     public QueryBuilder<T> Query<T>(GaldrTypeInfo<T> typeInfo)
     {
-        DatabaseQueryExecutor<T> executor = new DatabaseQueryExecutor<T>(this, typeInfo);
-        QueryBuilder<T> queryBuilder = new QueryBuilder<T>(executor);
-        return queryBuilder;
+        Transaction tx = BeginReadOnlyTransaction();
+        QueryBuilder<T> innerQuery = tx.Query(typeInfo);
+
+        // Wrap the executor to auto-dispose the transaction after query execution
+        AutoDisposingQueryExecutor<T> autoDisposingExecutor = new AutoDisposingQueryExecutor<T>(
+            innerQuery.GetExecutor(),
+            tx);
+
+        return new QueryBuilder<T>(autoDisposingExecutor);
     }
 
-    public List<T> GetAllDocuments<T>(GaldrTypeInfo<T> typeInfo)
-    {
-        string collectionName = typeInfo.CollectionName;
-        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
-
-        if (collection == null)
-        {
-            return new List<T>();
-        }
-
-        List<T> results = new List<T>();
-        int order = CalculateBTreeOrder(_options.PageSize);
-        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
-
-        List<BTreeEntry> allEntries = btree.GetAllEntries();
-
-        foreach (BTreeEntry entry in allEntries)
-        {
-            byte[] jsonBytes = _documentStorage.ReadDocument(entry.Location.PageId, entry.Location.SlotIndex);
-            string json = Encoding.UTF8.GetString(jsonBytes);
-            T document = _jsonSerializer.Deserialize<T>(json, _jsonOptions);
-            results.Add(document);
-        }
-
-        return results;
-    }
-
-    public CollectionEntry GetCollection(string collectionName)
+    internal CollectionEntry GetCollection(string collectionName)
     {
         return _collectionsMetadata.FindCollection(collectionName);
     }
 
-    public List<T> GetDocumentsByLocations<T>(List<DocumentLocation> locations, GaldrTypeInfo<T> typeInfo)
+    #endregion
+
+    #region Async Type-Safe CRUD Operations
+
+    public async Task<int> InsertAsync<T>(T document, CancellationToken cancellationToken = default)
     {
-        List<T> results = new List<T>();
-
-        foreach (DocumentLocation location in locations)
-        {
-            byte[] jsonBytes = _documentStorage.ReadDocument(location.PageId, location.SlotIndex);
-            string json = Encoding.UTF8.GetString(jsonBytes);
-            T document = _jsonSerializer.Deserialize<T>(json, _jsonOptions);
-            results.Add(document);
-        }
-
-        return results;
+        return await InsertAsync(document, GaldrTypeRegistry.Get<T>(), cancellationToken).ConfigureAwait(false);
     }
 
-    public SecondaryIndexBTree GetSecondaryIndexTree(IndexDefinition indexDef)
+    public async Task<T> GetByIdAsync<T>(int id, CancellationToken cancellationToken = default)
     {
-        int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
-        SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, maxKeys);
-        return indexTree;
+        return await GetByIdAsync(id, GaldrTypeRegistry.Get<T>(), cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<bool> UpdateAsync<T>(T document, CancellationToken cancellationToken = default)
+    {
+        return await UpdateAsync(document, GaldrTypeRegistry.Get<T>(), cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<bool> DeleteAsync<T>(int id, CancellationToken cancellationToken = default)
+    {
+        return await DeleteAsync<T>(id, GaldrTypeRegistry.Get<T>(), cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<int> InsertAsync<T>(T document, GaldrTypeInfo<T> typeInfo, CancellationToken cancellationToken = default)
+    {
+        using (Transaction tx = BeginTransaction())
+        {
+            int id = await tx.InsertAsync(document, typeInfo, cancellationToken).ConfigureAwait(false);
+            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return id;
+        }
+    }
+
+    public async Task<T> GetByIdAsync<T>(int id, GaldrTypeInfo<T> typeInfo, CancellationToken cancellationToken = default)
+    {
+        using (Transaction tx = BeginReadOnlyTransaction())
+        {
+            T result = await tx.GetByIdAsync(id, typeInfo, cancellationToken).ConfigureAwait(false);
+            tx.Commit();
+            return result;
+        }
+    }
+
+    public async Task<bool> UpdateAsync<T>(T document, GaldrTypeInfo<T> typeInfo, CancellationToken cancellationToken = default)
+    {
+        using (Transaction tx = BeginTransaction())
+        {
+            bool result = await tx.UpdateAsync(document, typeInfo, cancellationToken).ConfigureAwait(false);
+            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+    }
+
+    public async Task<bool> DeleteAsync<T>(int id, GaldrTypeInfo<T> typeInfo, CancellationToken cancellationToken = default)
+    {
+        using (Transaction tx = BeginTransaction())
+        {
+            bool result = await tx.DeleteAsync<T>(id, typeInfo, cancellationToken).ConfigureAwait(false);
+            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return result;
+        }
     }
 
     #endregion
@@ -476,38 +430,55 @@ public class GaldrDb : IDisposable
     {
         IReadOnlyList<string> indexedFieldNames = typeInfo.IndexedFieldNames;
         IReadOnlyList<string> uniqueIndexFieldNames = typeInfo.UniqueIndexFieldNames;
-        bool metadataChanged = false;
+        List<IndexDefinition> newIndexes = new List<IndexDefinition>();
 
         foreach (string fieldName in indexedFieldNames)
         {
             IndexDefinition existingIndex = collection.FindIndex(fieldName);
             if (existingIndex == null)
             {
-                int rootPageId = _pageManager.AllocatePage();
-                int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
-                SecondaryIndexNode rootNode = new SecondaryIndexNode(_options.PageSize, maxKeys, BTreeNodeType.Leaf);
-                byte[] rootBytes = rootNode.Serialize();
-                _pageIO.WritePage(rootPageId, rootBytes);
-
                 bool isUnique = ContainsFieldName(uniqueIndexFieldNames, fieldName);
 
                 IndexDefinition newIndex = new IndexDefinition
                 {
                     FieldName = fieldName,
                     FieldType = GaldrFieldType.String,
-                    RootPageId = rootPageId,
+                    RootPageId = -1,
                     IsUnique = isUnique
                 };
 
-                collection.Indexes.Add(newIndex);
-                metadataChanged = true;
+                newIndexes.Add(newIndex);
             }
         }
 
-        if (metadataChanged)
+        if (newIndexes.Count > 0)
         {
-            _collectionsMetadata.UpdateCollection(collection);
-            _collectionsMetadata.WriteToDisk();
+            BeginWalTransaction(0);
+
+            try
+            {
+                foreach (IndexDefinition newIndex in newIndexes)
+                {
+                    int rootPageId = _pageManager.AllocatePage();
+                    int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
+                    SecondaryIndexNode rootNode = new SecondaryIndexNode(_options.PageSize, maxKeys, BTreeNodeType.Leaf);
+                    byte[] rootBytes = rootNode.Serialize();
+                    _pageIO.WritePage(rootPageId, rootBytes);
+
+                    newIndex.RootPageId = rootPageId;
+                    collection.Indexes.Add(newIndex);
+                }
+
+                _collectionsMetadata.UpdateCollection(collection);
+                _collectionsMetadata.WriteToDisk();
+
+                CommitWalTransaction();
+            }
+            catch
+            {
+                AbortWalTransaction();
+                throw;
+            }
         }
     }
 
@@ -619,7 +590,15 @@ public class GaldrDb : IDisposable
                 InitializeWalFile();
                 // Update document storage to use WAL page IO
                 _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize);
+
+                // Rebuild VersionIndex from current database state
+                RebuildVersionIndex(0);
             }
+        }
+        else
+        {
+            // No WAL - still need to rebuild VersionIndex for MVCC reads to work
+            RebuildVersionIndex(0);
         }
     }
 
@@ -665,6 +644,9 @@ public class GaldrDb : IDisposable
         HashSet<ulong> committedTxIds = _wal.GetCommittedTransactions();
         Dictionary<ulong, List<WalFrame>> framesByTx = _wal.GetFramesByTransaction();
 
+        // Find the highest committed TxId for TransactionManager initialization
+        ulong maxCommittedTxId = 0;
+
         // Apply committed transactions in order
         List<ulong> sortedTxIds = new List<ulong>(committedTxIds);
         sortedTxIds.Sort();
@@ -680,6 +662,11 @@ public class GaldrDb : IDisposable
                         _basePageIO.WritePage(frame.PageId, frame.Data);
                     }
                 }
+            }
+
+            if (txId > maxCommittedTxId)
+            {
+                maxCommittedTxId = txId;
             }
         }
 
@@ -701,6 +688,41 @@ public class GaldrDb : IDisposable
 
         // Update the document storage to use the new page IO
         _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize);
+
+        // Initialize TransactionManager with recovered TxId
+        EnsureTransactionManager();
+        if (maxCommittedTxId > 0)
+        {
+            _txManager.SetLastCommittedTxId(new TxId(maxCommittedTxId));
+        }
+
+        // Rebuild VersionIndex from current database state
+        RebuildVersionIndex(maxCommittedTxId);
+    }
+
+    private void RebuildVersionIndex(ulong recoveredTxId)
+    {
+        EnsureVersionIndex();
+
+        // Use TxId 0 for recovered documents (they existed before current session)
+        // This ensures all new transactions will see them in their snapshot
+        TxId baseTxId = new TxId(recoveredTxId > 0 ? recoveredTxId : 0);
+
+        List<CollectionEntry> collections = _collectionsMetadata.GetAllCollections();
+        int order = CalculateBTreeOrder(_options.PageSize);
+
+        foreach (CollectionEntry collection in collections)
+        {
+            _versionIndex.EnsureCollection(collection.Name);
+
+            BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
+            List<BTreeEntry> entries = btree.GetAllEntries();
+
+            foreach (BTreeEntry entry in entries)
+            {
+                _versionIndex.AddVersion(collection.Name, entry.Key, baseTxId, entry.Location);
+            }
+        }
     }
 
     private int CalculateBTreeOrder(int pageSize)
@@ -746,11 +768,86 @@ public class GaldrDb : IDisposable
         }
     }
 
+    private void EnsureVersionIndex()
+    {
+        if (_versionIndex == null)
+        {
+            _versionIndex = new VersionIndex();
+        }
+    }
+
+    private void EnsureGarbageCollector()
+    {
+        if (_garbageCollector == null)
+        {
+            EnsureTransactionManager();
+            EnsureVersionIndex();
+            _garbageCollector = new VersionGarbageCollector(_versionIndex, _txManager);
+            _lastGCCommitCount = 0;
+        }
+    }
+
+    internal void TryRunGarbageCollection()
+    {
+        if (!_options.AutoGarbageCollection)
+        {
+            return;
+        }
+
+        EnsureGarbageCollector();
+
+        long currentCommitCount = _txManager.CommitCount;
+        long commitsSinceLastGC = currentCommitCount - _lastGCCommitCount;
+
+        if (commitsSinceLastGC >= _options.GarbageCollectionThreshold)
+        {
+            _garbageCollector.Collect();
+            _lastGCCommitCount = currentCommitCount;
+        }
+    }
+
+    internal void TryRunAutoCheckpoint()
+    {
+        if (!_options.AutoCheckpoint || _wal == null)
+        {
+            return;
+        }
+
+        if (_wal.CurrentFrameNumber >= _options.WalCheckpointThreshold)
+        {
+            Checkpoint();
+        }
+    }
+
+    internal void BeginWalTransaction(ulong txId)
+    {
+        if (_walPageIO != null)
+        {
+            _walPageIO.BeginTransaction(txId);
+        }
+    }
+
+    internal void CommitWalTransaction()
+    {
+        if (_walPageIO != null)
+        {
+            _walPageIO.CommitTransaction();
+        }
+    }
+
+    internal void AbortWalTransaction()
+    {
+        if (_walPageIO != null)
+        {
+            _walPageIO.AbortTransaction();
+        }
+    }
+
     #endregion
 
     #region Internal Transaction Commit Methods
 
-    internal void CommitInsert(string collectionName, int docId, byte[] serializedData, IReadOnlyList<IndexFieldEntry> indexFields)
+    internal DocumentLocation CommitInsert(string collectionName, int docId, byte[] serializedData, IReadOnlyList<IndexFieldEntry> indexFields)
     {
         CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
         if (collection == null)
@@ -782,9 +879,11 @@ public class GaldrDb : IDisposable
         }
         _collectionsMetadata.UpdateCollection(collection);
         _collectionsMetadata.WriteToDisk();
+
+        return location;
     }
 
-    internal void CommitUpdate(string collectionName, int docId, byte[] serializedData, IReadOnlyList<IndexFieldEntry> newIndexFields, IReadOnlyList<IndexFieldEntry> oldIndexFields)
+    internal DocumentLocation CommitUpdate(string collectionName, int docId, byte[] serializedData, IReadOnlyList<IndexFieldEntry> newIndexFields, IReadOnlyList<IndexFieldEntry> oldIndexFields)
     {
         CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
         if (collection == null)
@@ -801,10 +900,8 @@ public class GaldrDb : IDisposable
             DeleteFromIndexesInternal(collection, docId, oldIndexFields);
         }
 
-        if (oldLocation != null)
-        {
-            _documentStorage.DeleteDocument(oldLocation.PageId, oldLocation.SlotIndex);
-        }
+        // Note: We do NOT delete the old document from storage for MVCC.
+        // Old versions must remain readable until garbage collection.
 
         DocumentLocation newLocation = _documentStorage.WriteDocument(serializedData);
 
@@ -824,6 +921,13 @@ public class GaldrDb : IDisposable
 
         _collectionsMetadata.UpdateCollection(collection);
         _collectionsMetadata.WriteToDisk();
+
+        return newLocation;
+    }
+
+    internal byte[] ReadDocumentByLocation(DocumentLocation location)
+    {
+        return _documentStorage.ReadDocument(location.PageId, location.SlotIndex);
     }
 
     internal void CommitDelete(string collectionName, int docId, IReadOnlyList<IndexFieldEntry> oldIndexFields)
@@ -845,7 +949,8 @@ public class GaldrDb : IDisposable
                 DeleteFromIndexesInternal(collection, docId, oldIndexFields);
             }
 
-            _documentStorage.DeleteDocument(location.PageId, location.SlotIndex);
+            // Note: We do NOT delete the document from storage for MVCC.
+            // Old versions must remain readable until garbage collection.
             btree.Delete(docId);
 
             collection.DocumentCount--;
@@ -900,6 +1005,123 @@ public class GaldrDb : IDisposable
                 byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(field.KeyBytes, docId);
                 indexTree.Delete(compositeKey);
             }
+        }
+    }
+
+    #endregion
+
+    #region Internal Async Transaction Commit Methods
+
+    internal async Task<DocumentLocation> CommitInsertAsync(string collectionName, int docId, byte[] serializedData, IReadOnlyList<IndexFieldEntry> indexFields, CancellationToken cancellationToken = default)
+    {
+        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
+        }
+
+        DocumentLocation location = await _documentStorage.WriteDocumentAsync(serializedData, cancellationToken).ConfigureAwait(false);
+
+        int order = CalculateBTreeOrder(_options.PageSize);
+        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
+        await btree.InsertAsync(docId, location, cancellationToken).ConfigureAwait(false);
+
+        int newRootPageId = btree.GetRootPageId();
+        if (newRootPageId != collection.RootPage)
+        {
+            collection.RootPage = newRootPageId;
+        }
+
+        if (indexFields != null && indexFields.Count > 0)
+        {
+            InsertIntoIndexesInternal(collection, docId, location, indexFields);
+        }
+
+        collection.DocumentCount++;
+        if (docId >= collection.NextId)
+        {
+            collection.NextId = docId + 1;
+        }
+        _collectionsMetadata.UpdateCollection(collection);
+        _collectionsMetadata.WriteToDisk();
+
+        return location;
+    }
+
+    internal async Task<DocumentLocation> CommitUpdateAsync(string collectionName, int docId, byte[] serializedData, IReadOnlyList<IndexFieldEntry> newIndexFields, IReadOnlyList<IndexFieldEntry> oldIndexFields, CancellationToken cancellationToken = default)
+    {
+        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
+        }
+
+        int order = CalculateBTreeOrder(_options.PageSize);
+        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
+        DocumentLocation oldLocation = await btree.SearchAsync(docId, cancellationToken).ConfigureAwait(false);
+
+        if (oldIndexFields != null && oldIndexFields.Count > 0)
+        {
+            DeleteFromIndexesInternal(collection, docId, oldIndexFields);
+        }
+
+        // Note: We do NOT delete the old document from storage for MVCC.
+        // Old versions must remain readable until garbage collection.
+
+        DocumentLocation newLocation = await _documentStorage.WriteDocumentAsync(serializedData, cancellationToken).ConfigureAwait(false);
+
+        await btree.DeleteAsync(docId, cancellationToken).ConfigureAwait(false);
+        await btree.InsertAsync(docId, newLocation, cancellationToken).ConfigureAwait(false);
+
+        int newRootPageId = btree.GetRootPageId();
+        if (newRootPageId != collection.RootPage)
+        {
+            collection.RootPage = newRootPageId;
+        }
+
+        if (newIndexFields != null && newIndexFields.Count > 0)
+        {
+            InsertIntoIndexesInternal(collection, docId, newLocation, newIndexFields);
+        }
+
+        _collectionsMetadata.UpdateCollection(collection);
+        _collectionsMetadata.WriteToDisk();
+
+        return newLocation;
+    }
+
+    internal async Task<byte[]> ReadDocumentByLocationAsync(DocumentLocation location, CancellationToken cancellationToken = default)
+    {
+        byte[] result = await _documentStorage.ReadDocumentAsync(location.PageId, location.SlotIndex, cancellationToken).ConfigureAwait(false);
+        return result;
+    }
+
+    internal async Task CommitDeleteAsync(string collectionName, int docId, IReadOnlyList<IndexFieldEntry> oldIndexFields, CancellationToken cancellationToken = default)
+    {
+        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
+        }
+
+        int order = CalculateBTreeOrder(_options.PageSize);
+        BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
+        DocumentLocation location = await btree.SearchAsync(docId, cancellationToken).ConfigureAwait(false);
+
+        if (location != null)
+        {
+            if (oldIndexFields != null && oldIndexFields.Count > 0)
+            {
+                DeleteFromIndexesInternal(collection, docId, oldIndexFields);
+            }
+
+            // Note: We do NOT delete the document from storage for MVCC.
+            // Old versions must remain readable until garbage collection.
+            await btree.DeleteAsync(docId, cancellationToken).ConfigureAwait(false);
+
+            collection.DocumentCount--;
+            _collectionsMetadata.UpdateCollection(collection);
+            _collectionsMetadata.WriteToDisk();
         }
     }
 

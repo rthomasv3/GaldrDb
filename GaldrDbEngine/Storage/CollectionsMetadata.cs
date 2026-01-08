@@ -133,4 +133,9 @@ public class CollectionsMetadata
     {
         return _collections.Count;
     }
+
+    public List<CollectionEntry> GetAllCollections()
+    {
+        return new List<CollectionEntry>(_collections);
+    }
 }

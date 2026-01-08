@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace GaldrDbEngine.IO;
 
@@ -84,5 +86,49 @@ public class StandardPageIO : IPageIO
         {
             _fileStream.Dispose();
         }
+    }
+
+    public async Task ReadPageAsync(int pageId, Memory<byte> destination, CancellationToken cancellationToken = default)
+    {
+        if (destination.Length < _pageSize)
+        {
+            throw new ArgumentException($"Destination length {destination.Length} is smaller than page size {_pageSize}");
+        }
+
+        long offset = (long)pageId * _pageSize;
+
+        _fileStream.Seek(offset, SeekOrigin.Begin);
+
+        int totalBytesRead = 0;
+
+        while (totalBytesRead < _pageSize)
+        {
+            int bytesRead = await _fileStream.ReadAsync(destination.Slice(totalBytesRead, _pageSize - totalBytesRead), cancellationToken);
+
+            if (bytesRead == 0)
+            {
+                break;
+            }
+
+            totalBytesRead += bytesRead;
+        }
+    }
+
+    public async Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    {
+        if (data.Length != _pageSize)
+        {
+            throw new ArgumentException($"Data length {data.Length} does not match page size {_pageSize}");
+        }
+
+        long offset = (long)pageId * _pageSize;
+
+        _fileStream.Seek(offset, SeekOrigin.Begin);
+        await _fileStream.WriteAsync(data, cancellationToken);
+    }
+
+    public async Task FlushAsync(CancellationToken cancellationToken = default)
+    {
+        await _fileStream.FlushAsync(cancellationToken);
     }
 }

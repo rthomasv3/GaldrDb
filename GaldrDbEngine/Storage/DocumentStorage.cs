@@ -1,4 +1,6 @@
 using System;
+using System.Threading;
+using System.Threading.Tasks;
 using GaldrDbEngine.IO;
 using GaldrDbEngine.Pages;
 using GaldrDbEngine.Utilities;
@@ -277,6 +279,161 @@ public class DocumentStorage
     private bool IsPageInitialized(byte[] pageBytes)
     {
         bool result = pageBytes[0] == PageConstants.PAGE_TYPE_DOCUMENT;
+
+        return result;
+    }
+
+    public async Task<DocumentLocation> WriteDocumentAsync(byte[] documentBytes, CancellationToken cancellationToken = default)
+    {
+        int documentSize = documentBytes.Length;
+        int usablePageSize = _pageSize - 100;
+        int pagesNeeded = 1;
+
+        if (documentSize > usablePageSize)
+        {
+            pagesNeeded = (documentSize + usablePageSize - 1) / usablePageSize;
+        }
+
+        int[] pageIds = new int[pagesNeeded];
+        DocumentLocation result = null;
+
+        if (pagesNeeded == 1)
+        {
+            int pageId = FindOrAllocatePageForDocument(documentSize);
+            pageIds[0] = pageId;
+
+            byte[] pageBuffer = BufferPool.Rent(_pageSize);
+            try
+            {
+                await _pageIO.ReadPageAsync(pageId, pageBuffer, cancellationToken).ConfigureAwait(false);
+                DocumentPage page = null;
+
+                if (IsPageInitialized(pageBuffer))
+                {
+                    page = DocumentPage.Deserialize(pageBuffer, _pageSize);
+                }
+                else
+                {
+                    page = DocumentPage.CreateNew(_pageSize);
+                }
+
+                int slotIndex = page.AddDocument(documentBytes, pageIds, documentSize);
+
+                byte[] serializedPage = page.Serialize();
+                await _pageIO.WritePageAsync(pageId, serializedPage, cancellationToken).ConfigureAwait(false);
+
+                UpdateFSM(pageId, page.GetFreeSpaceBytes());
+
+                result = new DocumentLocation(pageId, slotIndex);
+            }
+            finally
+            {
+                BufferPool.Return(pageBuffer);
+            }
+        }
+        else
+        {
+            pageIds = _pageManager.AllocatePages(pagesNeeded);
+
+            int firstPageId = pageIds[0];
+            int offset = 0;
+            int firstPageDataSize = Math.Min(documentSize, usablePageSize);
+
+            byte[] firstPageData = new byte[firstPageDataSize];
+            Array.Copy(documentBytes, 0, firstPageData, 0, firstPageDataSize);
+
+            DocumentPage firstPage = DocumentPage.CreateNew(_pageSize);
+            int slotIndexResult = firstPage.AddDocument(firstPageData, pageIds, documentSize);
+
+            byte[] firstPageBytes = firstPage.Serialize();
+            await _pageIO.WritePageAsync(firstPageId, firstPageBytes, cancellationToken).ConfigureAwait(false);
+
+            UpdateFSM(firstPageId, firstPage.GetFreeSpaceBytes());
+
+            offset += firstPageDataSize;
+
+            byte[] continuationBuffer = BufferPool.Rent(_pageSize);
+            try
+            {
+                for (int i = 1; i < pagesNeeded; i++)
+                {
+                    int pageId = pageIds[i];
+                    int remainingSize = documentSize - offset;
+                    int chunkSize = Math.Min(remainingSize, _pageSize);
+
+                    Array.Clear(continuationBuffer, 0, _pageSize);
+                    Array.Copy(documentBytes, offset, continuationBuffer, 0, chunkSize);
+
+                    await _pageIO.WritePageAsync(pageId, continuationBuffer, cancellationToken).ConfigureAwait(false);
+
+                    UpdateFSM(pageId, _pageSize - chunkSize);
+
+                    offset += chunkSize;
+                }
+            }
+            finally
+            {
+                BufferPool.Return(continuationBuffer);
+            }
+
+            result = new DocumentLocation(firstPageId, slotIndexResult);
+        }
+
+        return result;
+    }
+
+    public async Task<byte[]> ReadDocumentAsync(int pageId, int slotIndex, CancellationToken cancellationToken = default)
+    {
+        byte[] result = null;
+        byte[] pageBuffer = BufferPool.Rent(_pageSize);
+        try
+        {
+            await _pageIO.ReadPageAsync(pageId, pageBuffer, cancellationToken).ConfigureAwait(false);
+            DocumentPage page = DocumentPage.Deserialize(pageBuffer, _pageSize);
+
+            if (slotIndex < 0 || slotIndex >= page.SlotCount)
+            {
+                throw new ArgumentOutOfRangeException(nameof(slotIndex));
+            }
+
+            SlotEntry entry = page.Slots[slotIndex];
+
+            if (entry.PageCount == 0 || entry.TotalSize == 0)
+            {
+                throw new InvalidOperationException("Document slot has been deleted");
+            }
+
+            if (entry.PageCount == 1)
+            {
+                result = page.GetDocumentData(slotIndex);
+            }
+            else
+            {
+                byte[] fullDocument = new byte[entry.TotalSize];
+                int offset = 0;
+
+                byte[] firstPageData = page.GetDocumentData(slotIndex);
+                Array.Copy(firstPageData, 0, fullDocument, offset, firstPageData.Length);
+                offset += firstPageData.Length;
+
+                for (int i = 1; i < entry.PageCount; i++)
+                {
+                    int continuationPageId = entry.PageIds[i];
+                    await _pageIO.ReadPageAsync(continuationPageId, pageBuffer, cancellationToken).ConfigureAwait(false);
+                    int remainingSize = entry.TotalSize - offset;
+                    int chunkSize = Math.Min(remainingSize, _pageSize);
+
+                    Array.Copy(pageBuffer, 0, fullDocument, offset, chunkSize);
+                    offset += chunkSize;
+                }
+
+                result = fullDocument;
+            }
+        }
+        finally
+        {
+            BufferPool.Return(pageBuffer);
+        }
 
         return result;
     }

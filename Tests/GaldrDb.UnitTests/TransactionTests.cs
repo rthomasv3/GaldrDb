@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 using GaldrDb.UnitTests.TestModels;
 using GaldrDbEngine;
 using GaldrDbEngine.Generated;
@@ -99,9 +100,10 @@ public class TransactionTests
         TransactionManager txManager = new TransactionManager();
         TxId tx1 = txManager.AllocateTxId();
         TxId tx2 = txManager.AllocateTxId();
+        TxId snapshot = txManager.GetSnapshotTxId();
 
-        txManager.RegisterTransaction(tx1);
-        txManager.RegisterTransaction(tx2);
+        txManager.RegisterTransaction(tx1, snapshot);
+        txManager.RegisterTransaction(tx2, snapshot);
 
         Assert.AreEqual(2, txManager.ActiveTransactionCount);
         Assert.IsTrue(txManager.IsTransactionActive(tx1));
@@ -120,9 +122,10 @@ public class TransactionTests
         TransactionManager txManager = new TransactionManager();
         TxId tx1 = txManager.AllocateTxId();
         TxId tx2 = txManager.AllocateTxId();
+        TxId snapshot = txManager.GetSnapshotTxId();
 
-        txManager.RegisterTransaction(tx1);
-        txManager.RegisterTransaction(tx2);
+        txManager.RegisterTransaction(tx1, snapshot);
+        txManager.RegisterTransaction(tx2, snapshot);
 
         Assert.AreEqual(TxId.None, txManager.LastCommittedTxId);
 
@@ -143,9 +146,10 @@ public class TransactionTests
         TxId tx1 = txManager.AllocateTxId();
         TxId tx2 = txManager.AllocateTxId();
         TxId tx3 = txManager.AllocateTxId();
+        TxId snapshot = txManager.GetSnapshotTxId();
 
-        txManager.RegisterTransaction(tx2);
-        txManager.RegisterTransaction(tx3);
+        txManager.RegisterTransaction(tx2, snapshot);
+        txManager.RegisterTransaction(tx3, snapshot);
 
         TxId oldest = txManager.GetOldestActiveTransaction();
 
@@ -203,7 +207,7 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.CreateCollection("people");
+            db.EnsureCollection(PersonMeta.TypeInfo);
 
             using (Transaction tx = db.BeginTransaction())
             {
@@ -688,6 +692,300 @@ public class TransactionTests
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("Persistent", retrieved.Name);
             Assert.AreEqual(40, retrieved.Age);
+        }
+    }
+
+    #endregion
+
+    #region Async CRUD Tests
+
+    [TestMethod]
+    public async Task TransactionAsync_InsertAsync_AddsToWriteSet()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.EnsureCollection(PersonMeta.TypeInfo);
+
+            using (Transaction tx = db.BeginTransaction())
+            {
+                Person person = new Person { Name = "AsyncTest", Age = 30, Email = "async@example.com" };
+                int id = await tx.InsertAsync(person, PersonMeta.TypeInfo);
+
+                Assert.AreEqual(1, tx.WriteSetCount);
+                Assert.IsGreaterThan(0, id);
+
+                tx.Rollback();
+            }
+        }
+    }
+
+    [TestMethod]
+    public async Task TransactionAsync_InsertAsync_ReadYourOwnWrites()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.EnsureCollection(PersonMeta.TypeInfo);
+
+            using (Transaction tx = db.BeginTransaction())
+            {
+                Person person = new Person { Name = "AsyncRead", Age = 25, Email = "asyncread@example.com" };
+                int id = await tx.InsertAsync(person, PersonMeta.TypeInfo);
+
+                Person retrieved = await tx.GetByIdAsync<Person>(id, PersonMeta.TypeInfo);
+
+                Assert.IsNotNull(retrieved);
+                Assert.AreEqual("AsyncRead", retrieved.Name);
+                Assert.AreEqual(25, retrieved.Age);
+
+                tx.Rollback();
+            }
+        }
+    }
+
+    [TestMethod]
+    public async Task TransactionAsync_CommitAsync_PersistsWriteSet()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true };
+
+        int insertedId;
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.EnsureCollection(PersonMeta.TypeInfo);
+
+            using (Transaction tx = db.BeginTransaction())
+            {
+                Person person = new Person { Name = "AsyncCommit", Age = 35, Email = "asynccommit@example.com" };
+                insertedId = await tx.InsertAsync(person, PersonMeta.TypeInfo);
+
+                await tx.CommitAsync();
+            }
+
+            Person retrieved = db.GetById<Person>(insertedId, PersonMeta.TypeInfo);
+            Assert.IsNotNull(retrieved);
+            Assert.AreEqual("AsyncCommit", retrieved.Name);
+        }
+    }
+
+    [TestMethod]
+    public async Task TransactionAsync_UpdateAsync_ModifiesDocument()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true };
+
+        int insertedId;
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.EnsureCollection(PersonMeta.TypeInfo);
+
+            Person person = new Person { Name = "OriginalAsync", Age = 25, Email = "originalasync@example.com" };
+            insertedId = db.Insert(person, PersonMeta.TypeInfo);
+
+            using (Transaction tx = db.BeginTransaction())
+            {
+                Person updated = new Person { Id = insertedId, Name = "UpdatedAsync", Age = 30, Email = "updatedasync@example.com" };
+                bool result = await tx.UpdateAsync(updated, PersonMeta.TypeInfo);
+
+                Assert.IsTrue(result);
+
+                await tx.CommitAsync();
+            }
+
+            Person retrieved = db.GetById<Person>(insertedId, PersonMeta.TypeInfo);
+            Assert.AreEqual("UpdatedAsync", retrieved.Name);
+            Assert.AreEqual(30, retrieved.Age);
+        }
+    }
+
+    [TestMethod]
+    public async Task TransactionAsync_DeleteAsync_RemovesDocument()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true };
+
+        int insertedId;
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.EnsureCollection(PersonMeta.TypeInfo);
+
+            Person person = new Person { Name = "ToDeleteAsync", Age = 25, Email = "deleteasync@example.com" };
+            insertedId = db.Insert(person, PersonMeta.TypeInfo);
+
+            using (Transaction tx = db.BeginTransaction())
+            {
+                bool result = await tx.DeleteAsync<Person>(insertedId, PersonMeta.TypeInfo);
+
+                Assert.IsTrue(result);
+
+                Person withinTx = await tx.GetByIdAsync<Person>(insertedId, PersonMeta.TypeInfo);
+                Assert.IsNull(withinTx);
+
+                await tx.CommitAsync();
+            }
+
+            Person retrieved = db.GetById<Person>(insertedId, PersonMeta.TypeInfo);
+            Assert.IsNull(retrieved);
+        }
+    }
+
+    [TestMethod]
+    public async Task TransactionAsync_MultipleAsyncOperations_AllCommittedTogether()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true };
+
+        int id1;
+        int id2;
+        int id3;
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.EnsureCollection(PersonMeta.TypeInfo);
+
+            using (Transaction tx = db.BeginTransaction())
+            {
+                Person person1 = new Person { Name = "AsyncPerson1", Age = 25, Email = "ap1@example.com" };
+                id1 = await tx.InsertAsync(person1, PersonMeta.TypeInfo);
+
+                Person person2 = new Person { Name = "AsyncPerson2", Age = 30, Email = "ap2@example.com" };
+                id2 = await tx.InsertAsync(person2, PersonMeta.TypeInfo);
+
+                Person person3 = new Person { Name = "AsyncPerson3", Age = 35, Email = "ap3@example.com" };
+                id3 = await tx.InsertAsync(person3, PersonMeta.TypeInfo);
+
+                Assert.AreEqual(3, tx.WriteSetCount);
+
+                await tx.CommitAsync();
+            }
+
+            Person r1 = db.GetById<Person>(id1, PersonMeta.TypeInfo);
+            Person r2 = db.GetById<Person>(id2, PersonMeta.TypeInfo);
+            Person r3 = db.GetById<Person>(id3, PersonMeta.TypeInfo);
+
+            Assert.IsNotNull(r1);
+            Assert.IsNotNull(r2);
+            Assert.IsNotNull(r3);
+        }
+    }
+
+    #endregion
+
+    #region GaldrDb Async API Tests
+
+    [TestMethod]
+    public async Task GaldrDbAsync_InsertAsync_InsertsDocument()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.EnsureCollection(PersonMeta.TypeInfo);
+
+            Person person = new Person { Name = "DbAsyncInsert", Age = 40, Email = "dbasync@example.com" };
+            int id = await db.InsertAsync(person, PersonMeta.TypeInfo);
+
+            Assert.IsGreaterThan(0, id);
+
+            Person retrieved = db.GetById<Person>(id, PersonMeta.TypeInfo);
+            Assert.IsNotNull(retrieved);
+            Assert.AreEqual("DbAsyncInsert", retrieved.Name);
+        }
+    }
+
+    [TestMethod]
+    public async Task GaldrDbAsync_GetByIdAsync_RetrievesDocument()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.EnsureCollection(PersonMeta.TypeInfo);
+
+            Person person = new Person { Name = "DbAsyncGet", Age = 45, Email = "dbasyncget@example.com" };
+            int id = db.Insert(person, PersonMeta.TypeInfo);
+
+            Person retrieved = await db.GetByIdAsync<Person>(id, PersonMeta.TypeInfo);
+
+            Assert.IsNotNull(retrieved);
+            Assert.AreEqual("DbAsyncGet", retrieved.Name);
+            Assert.AreEqual(45, retrieved.Age);
+        }
+    }
+
+    [TestMethod]
+    public async Task GaldrDbAsync_UpdateAsync_UpdatesDocument()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.EnsureCollection(PersonMeta.TypeInfo);
+
+            Person person = new Person { Name = "DbAsyncUpdateOrig", Age = 50, Email = "dbasyncupdate@example.com" };
+            int id = db.Insert(person, PersonMeta.TypeInfo);
+
+            Person updated = new Person { Id = id, Name = "DbAsyncUpdateNew", Age = 55, Email = "dbasyncupdatenew@example.com" };
+            bool result = await db.UpdateAsync(updated, PersonMeta.TypeInfo);
+
+            Assert.IsTrue(result);
+
+            Person retrieved = db.GetById<Person>(id, PersonMeta.TypeInfo);
+            Assert.AreEqual("DbAsyncUpdateNew", retrieved.Name);
+            Assert.AreEqual(55, retrieved.Age);
+        }
+    }
+
+    [TestMethod]
+    public async Task GaldrDbAsync_DeleteAsync_DeletesDocument()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.EnsureCollection(PersonMeta.TypeInfo);
+
+            Person person = new Person { Name = "DbAsyncDelete", Age = 60, Email = "dbasyncdelete@example.com" };
+            int id = db.Insert(person, PersonMeta.TypeInfo);
+
+            bool result = await db.DeleteAsync<Person>(id, PersonMeta.TypeInfo);
+
+            Assert.IsTrue(result);
+
+            Person retrieved = db.GetById<Person>(id, PersonMeta.TypeInfo);
+            Assert.IsNull(retrieved);
+        }
+    }
+
+    [TestMethod]
+    public async Task GaldrDbAsync_GetDocumentAsync_RetrievesDocument()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.EnsureCollection(PersonMeta.TypeInfo);
+
+            Person person = new Person { Name = "GetDocAsync", Age = 65, Email = "getdocasync@example.com" };
+            int id = db.Insert(person, PersonMeta.TypeInfo);
+
+            Person retrieved = await db.GetByIdAsync<Person>(id);
+
+            Assert.IsNotNull(retrieved);
+            Assert.AreEqual("GetDocAsync", retrieved.Name);
         }
     }
 

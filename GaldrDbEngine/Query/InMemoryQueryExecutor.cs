@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace GaldrDbEngine.Query;
 
@@ -72,5 +74,15 @@ public sealed class InMemoryQueryExecutor<T> : IQueryExecutor<T>
         }
 
         return count;
+    }
+
+    public Task<List<T>> ExecuteQueryAsync(QueryBuilder<T> query, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult(ExecuteQuery(query));
+    }
+
+    public Task<int> ExecuteCountAsync(QueryBuilder<T> query, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult(ExecuteCount(query));
     }
 }

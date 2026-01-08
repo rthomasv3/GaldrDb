@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace GaldrDbEngine.Query;
 
@@ -141,6 +143,33 @@ public sealed class QueryBuilder<T>
         return _executor.ExecuteCount(this);
     }
 
+    public Task<List<T>> ToListAsync(CancellationToken cancellationToken = default)
+    {
+        return _executor.ExecuteQueryAsync(this, cancellationToken);
+    }
+
+    public async Task<T> FirstOrDefaultAsync(CancellationToken cancellationToken = default)
+    {
+        int? originalLimit = _limit;
+        _limit = 1;
+
+        List<T> results = await _executor.ExecuteQueryAsync(this, cancellationToken).ConfigureAwait(false);
+
+        _limit = originalLimit;
+
+        if (results.Count > 0)
+        {
+            return results[0];
+        }
+
+        return default;
+    }
+
+    public Task<int> CountAsync(CancellationToken cancellationToken = default)
+    {
+        return _executor.ExecuteCountAsync(this, cancellationToken);
+    }
+
     public IReadOnlyList<IFieldFilter> Filters
     {
         get { return _filters; }
@@ -159,5 +188,10 @@ public sealed class QueryBuilder<T>
     public IReadOnlyList<OrderByClause<T>> OrderByClauses
     {
         get { return _orderByClauses; }
+    }
+
+    internal IQueryExecutor<T> GetExecutor()
+    {
+        return _executor;
     }
 }

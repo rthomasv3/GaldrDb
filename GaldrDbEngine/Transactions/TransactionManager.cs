@@ -7,15 +7,19 @@ public class TransactionManager
 {
     private readonly object _lock;
     private readonly HashSet<TxId> _activeTransactionIds;
+    private readonly Dictionary<TxId, TxId> _activeSnapshots; // TxId -> SnapshotTxId
     private TxId _nextTxId;
     private TxId _lastCommittedTxId;
+    private long _commitCount;
 
     public TransactionManager()
     {
         _lock = new object();
         _activeTransactionIds = new HashSet<TxId>();
+        _activeSnapshots = new Dictionary<TxId, TxId>();
         _nextTxId = new TxId(1);
         _lastCommittedTxId = TxId.None;
+        _commitCount = 0;
     }
 
     public TxId LastCommittedTxId
@@ -50,11 +54,12 @@ public class TransactionManager
         }
     }
 
-    public void RegisterTransaction(TxId txId)
+    public void RegisterTransaction(TxId txId, TxId snapshotTxId)
     {
         lock (_lock)
         {
             _activeTransactionIds.Add(txId);
+            _activeSnapshots[txId] = snapshotTxId;
         }
     }
 
@@ -63,6 +68,7 @@ public class TransactionManager
         lock (_lock)
         {
             _activeTransactionIds.Remove(txId);
+            _activeSnapshots.Remove(txId);
         }
     }
 
@@ -76,6 +82,8 @@ public class TransactionManager
             }
 
             _activeTransactionIds.Remove(txId);
+            _activeSnapshots.Remove(txId);
+            _commitCount++;
         }
     }
 
@@ -84,6 +92,18 @@ public class TransactionManager
         lock (_lock)
         {
             _activeTransactionIds.Remove(txId);
+            _activeSnapshots.Remove(txId);
+        }
+    }
+
+    public long CommitCount
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _commitCount;
+            }
         }
     }
 
@@ -106,6 +126,24 @@ public class TransactionManager
                 if (txId < oldest)
                 {
                     oldest = txId;
+                }
+            }
+
+            return oldest;
+        }
+    }
+
+    public TxId GetOldestActiveSnapshot()
+    {
+        lock (_lock)
+        {
+            TxId oldest = TxId.MaxValue;
+
+            foreach (TxId snapshotTxId in _activeSnapshots.Values)
+            {
+                if (snapshotTxId < oldest)
+                {
+                    oldest = snapshotTxId;
                 }
             }
 
