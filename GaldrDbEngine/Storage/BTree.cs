@@ -33,10 +33,11 @@ public class BTree
     public void Insert(int docId, DocumentLocation location)
     {
         byte[] rootBuffer = BufferPool.Rent(_pageSize);
+        BTreeNode root = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
             _pageIO.ReadPage(_rootPageId, rootBuffer);
-            BTreeNode root = BTreeNode.Deserialize(rootBuffer, _pageSize, _order);
+            BTreeNode.DeserializeTo(rootBuffer, root, _order);
 
             if (root.IsFull())
             {
@@ -83,25 +84,31 @@ public class BTree
     private void CollectAllEntries(int pageId, List<BTreeEntry> entries)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
+        BTreeNode node = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
+        Stack<int> pageStack = new Stack<int>();
+        pageStack.Push(pageId);
+
         try
         {
-            _pageIO.ReadPage(pageId, buffer);
-            BTreeNode node = BTreeNode.Deserialize(buffer, _pageSize, _order);
+            while (pageStack.Count > 0)
+            {
+                int currentPageId = pageStack.Pop();
+                _pageIO.ReadPage(currentPageId, buffer);
+                BTreeNode.DeserializeTo(buffer, node, _order);
 
-            if (node.NodeType == BTreeNodeType.Leaf)
-            {
-                for (int i = 0; i < node.KeyCount; i++)
+                if (node.NodeType == BTreeNodeType.Leaf)
                 {
-                    entries.Add(new BTreeEntry(node.Keys[i], node.LeafValues[i]));
-                }
-            }
-            else
-            {
-                for (int i = 0; i <= node.KeyCount; i++)
-                {
-                    if (i < node.ChildPageIds.Count)
+                    for (int i = 0; i < node.KeyCount; i++)
                     {
-                        CollectAllEntries(node.ChildPageIds[i], entries);
+                        entries.Add(new BTreeEntry(node.Keys[i], node.LeafValues[i]));
+                    }
+                }
+                else
+                {
+                    // Push children in reverse order so they're processed left-to-right
+                    for (int i = node.KeyCount; i >= 0; i--)
+                    {
+                        pageStack.Push(node.ChildPageIds[i]);
                     }
                 }
             }
@@ -117,34 +124,41 @@ public class BTree
         bool result = false;
 
         byte[] buffer = BufferPool.Rent(_pageSize);
+        BTreeNode node = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
-            _pageIO.ReadPage(pageId, buffer);
-            BTreeNode node = BTreeNode.Deserialize(buffer, _pageSize, _order);
+            int currentPageId = pageId;
 
-            int i = 0;
-            while (i < node.KeyCount && docId > node.Keys[i])
+            while (currentPageId != 0)
             {
-                i++;
-            }
+                _pageIO.ReadPage(currentPageId, buffer);
+                BTreeNode.DeserializeTo(buffer, node, _order);
 
-            if (node.NodeType == BTreeNodeType.Leaf)
-            {
-                if (i < node.KeyCount && node.Keys[i] == docId)
+                int i = 0;
+                while (i < node.KeyCount && docId > node.Keys[i])
                 {
-                    node.Keys.RemoveAt(i);
-                    node.LeafValues.RemoveAt(i);
-                    node.KeyCount--;
-
-                    node.SerializeTo(buffer);
-                    _pageIO.WritePage(pageId, buffer);
-
-                    result = true;
+                    i++;
                 }
-            }
-            else
-            {
-                result = DeleteFromNode(node.ChildPageIds[i], docId);
+
+                if (node.NodeType == BTreeNodeType.Leaf)
+                {
+                    if (i < node.KeyCount && node.Keys[i] == docId)
+                    {
+                        node.Keys.RemoveAt(i);
+                        node.LeafValues.RemoveAt(i);
+                        node.KeyCount--;
+
+                        node.SerializeTo(buffer);
+                        _pageIO.WritePage(currentPageId, buffer);
+
+                        result = true;
+                    }
+                    break;
+                }
+                else
+                {
+                    currentPageId = node.ChildPageIds[i];
+                }
             }
         }
         finally
@@ -160,27 +174,34 @@ public class BTree
         DocumentLocation result = null;
 
         byte[] buffer = BufferPool.Rent(_pageSize);
+        BTreeNode node = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
-            _pageIO.ReadPage(pageId, buffer);
-            BTreeNode node = BTreeNode.Deserialize(buffer, _pageSize, _order);
+            int currentPageId = pageId;
 
-            int i = 0;
-            while (i < node.KeyCount && docId > node.Keys[i])
+            while (currentPageId != 0)
             {
-                i++;
-            }
+                _pageIO.ReadPage(currentPageId, buffer);
+                BTreeNode.DeserializeTo(buffer, node, _order);
 
-            if (node.NodeType == BTreeNodeType.Leaf)
-            {
-                if (i < node.KeyCount && node.Keys[i] == docId)
+                int i = 0;
+                while (i < node.KeyCount && docId > node.Keys[i])
                 {
-                    result = node.LeafValues[i];
+                    i++;
                 }
-            }
-            else
-            {
-                result = SearchNode(node.ChildPageIds[i], docId);
+
+                if (node.NodeType == BTreeNodeType.Leaf)
+                {
+                    if (i < node.KeyCount && node.Keys[i] == docId)
+                    {
+                        result = node.LeafValues[i];
+                    }
+                    break;
+                }
+                else
+                {
+                    currentPageId = node.ChildPageIds[i];
+                }
             }
         }
         finally
@@ -194,69 +215,71 @@ public class BTree
     private void InsertNonFull(int pageId, int docId, DocumentLocation location)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
+        byte[] childBuffer = BufferPool.Rent(_pageSize);
+        BTreeNode node = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode child = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
-            _pageIO.ReadPage(pageId, buffer);
-            BTreeNode node = BTreeNode.Deserialize(buffer, _pageSize, _order);
+            int currentPageId = pageId;
 
-            int i = node.KeyCount - 1;
-
-            if (node.NodeType == BTreeNodeType.Leaf)
+            while (true)
             {
-                node.Keys.Add(0);
-                node.LeafValues.Add(null);
+                _pageIO.ReadPage(currentPageId, buffer);
+                BTreeNode.DeserializeTo(buffer, node, _order);
 
-                while (i >= 0 && docId < node.Keys[i])
+                int i = node.KeyCount - 1;
+
+                if (node.NodeType == BTreeNodeType.Leaf)
                 {
-                    node.Keys[i + 1] = node.Keys[i];
-                    node.LeafValues[i + 1] = node.LeafValues[i];
-                    i--;
+                    node.Keys.Add(0);
+                    node.LeafValues.Add(null);
+
+                    while (i >= 0 && docId < node.Keys[i])
+                    {
+                        node.Keys[i + 1] = node.Keys[i];
+                        node.LeafValues[i + 1] = node.LeafValues[i];
+                        i--;
+                    }
+
+                    node.Keys[i + 1] = docId;
+                    node.LeafValues[i + 1] = location;
+                    node.KeyCount++;
+
+                    node.SerializeTo(buffer);
+                    _pageIO.WritePage(currentPageId, buffer);
+                    break;
                 }
-
-                node.Keys[i + 1] = docId;
-                node.LeafValues[i + 1] = location;
-                node.KeyCount++;
-
-                node.SerializeTo(buffer);
-                _pageIO.WritePage(pageId, buffer);
-            }
-            else
-            {
-                while (i >= 0 && docId < node.Keys[i])
+                else
                 {
-                    i--;
-                }
-                i++;
+                    while (i >= 0 && docId < node.Keys[i])
+                    {
+                        i--;
+                    }
+                    i++;
 
-                byte[] childBuffer = BufferPool.Rent(_pageSize);
-                try
-                {
                     _pageIO.ReadPage(node.ChildPageIds[i], childBuffer);
-                    BTreeNode child = BTreeNode.Deserialize(childBuffer, _pageSize, _order);
+                    BTreeNode.DeserializeTo(childBuffer, child, _order);
 
                     if (child.IsFull())
                     {
-                        SplitChild(pageId, i, node.ChildPageIds[i]);
+                        SplitChild(currentPageId, i, node.ChildPageIds[i]);
 
-                        _pageIO.ReadPage(pageId, buffer);
-                        node = BTreeNode.Deserialize(buffer, _pageSize, _order);
+                        _pageIO.ReadPage(currentPageId, buffer);
+                        BTreeNode.DeserializeTo(buffer, node, _order);
 
                         if (docId > node.Keys[i])
                         {
                             i++;
                         }
                     }
-                }
-                finally
-                {
-                    BufferPool.Return(childBuffer);
-                }
 
-                InsertNonFull(node.ChildPageIds[i], docId, location);
+                    currentPageId = node.ChildPageIds[i];
+                }
             }
         }
         finally
         {
+            BufferPool.Return(childBuffer);
             BufferPool.Return(buffer);
         }
     }
@@ -265,13 +288,15 @@ public class BTree
     {
         byte[] childBuffer = BufferPool.Rent(_pageSize);
         byte[] parentBuffer = BufferPool.Rent(_pageSize);
+        BTreeNode fullChild = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode parent = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
             _pageIO.ReadPage(childPageId, childBuffer);
-            BTreeNode fullChild = BTreeNode.Deserialize(childBuffer, _pageSize, _order);
+            BTreeNode.DeserializeTo(childBuffer, fullChild, _order);
 
             _pageIO.ReadPage(parentPageId, parentBuffer);
-            BTreeNode parent = BTreeNode.Deserialize(parentBuffer, _pageSize, _order);
+            BTreeNode.DeserializeTo(parentBuffer, parent, _order);
 
             int newChildPageId = _pageManager.AllocatePage();
             BTreeNode newChild = new BTreeNode(_pageSize, _order, fullChild.NodeType);
@@ -301,18 +326,16 @@ public class BTree
             }
 
             int originalKeyCount = fullChild.KeyCount;
-            fullChild.KeyCount = (ushort)(mid + 1);
-            int keysToRemove = originalKeyCount - (mid + 1);
-
-            if (keysToRemove > 0)
-            {
-                fullChild.Keys.RemoveRange(mid + 1, keysToRemove);
-            }
 
             if (fullChild.NodeType == BTreeNodeType.Leaf)
             {
+                // For leaf nodes, keep the middle key (B+ tree: leaves hold all data)
+                fullChild.KeyCount = (ushort)(mid + 1);
+                int keysToRemove = originalKeyCount - (mid + 1);
+
                 if (keysToRemove > 0)
                 {
+                    fullChild.Keys.RemoveRange(mid + 1, keysToRemove);
                     fullChild.LeafValues.RemoveRange(mid + 1, keysToRemove);
                 }
                 newChild.NextLeaf = fullChild.NextLeaf;
@@ -320,10 +343,20 @@ public class BTree
             }
             else
             {
-                int childPointersToRemove = fullChild.ChildPageIds.Count - (mid + 2);
+                // For internal nodes, the middle key is promoted (removed from child)
+                fullChild.KeyCount = (ushort)mid;
+                int keysToRemove = originalKeyCount - mid;
+
+                if (keysToRemove > 0)
+                {
+                    fullChild.Keys.RemoveRange(mid, keysToRemove);
+                }
+
+                // Keep mid+1 children for mid keys
+                int childPointersToRemove = fullChild.ChildPageIds.Count - (mid + 1);
                 if (childPointersToRemove > 0)
                 {
-                    fullChild.ChildPageIds.RemoveRange(mid + 2, childPointersToRemove);
+                    fullChild.ChildPageIds.RemoveRange(mid + 1, childPointersToRemove);
                 }
             }
 
@@ -356,10 +389,11 @@ public class BTree
     public async Task InsertAsync(int docId, DocumentLocation location, CancellationToken cancellationToken = default)
     {
         byte[] rootBuffer = BufferPool.Rent(_pageSize);
+        BTreeNode root = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
             await _pageIO.ReadPageAsync(_rootPageId, rootBuffer, cancellationToken).ConfigureAwait(false);
-            BTreeNode root = BTreeNode.Deserialize(rootBuffer, _pageSize, _order);
+            BTreeNode.DeserializeTo(rootBuffer, root, _order);
 
             if (root.IsFull())
             {
@@ -397,27 +431,34 @@ public class BTree
         DocumentLocation result = null;
 
         byte[] buffer = BufferPool.Rent(_pageSize);
+        BTreeNode node = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
-            await _pageIO.ReadPageAsync(pageId, buffer, cancellationToken).ConfigureAwait(false);
-            BTreeNode node = BTreeNode.Deserialize(buffer, _pageSize, _order);
+            int currentPageId = pageId;
 
-            int i = 0;
-            while (i < node.KeyCount && docId > node.Keys[i])
+            while (currentPageId != 0)
             {
-                i++;
-            }
+                await _pageIO.ReadPageAsync(currentPageId, buffer, cancellationToken).ConfigureAwait(false);
+                BTreeNode.DeserializeTo(buffer, node, _order);
 
-            if (node.NodeType == BTreeNodeType.Leaf)
-            {
-                if (i < node.KeyCount && node.Keys[i] == docId)
+                int i = 0;
+                while (i < node.KeyCount && docId > node.Keys[i])
                 {
-                    result = node.LeafValues[i];
+                    i++;
                 }
-            }
-            else
-            {
-                result = await SearchNodeAsync(node.ChildPageIds[i], docId, cancellationToken).ConfigureAwait(false);
+
+                if (node.NodeType == BTreeNodeType.Leaf)
+                {
+                    if (i < node.KeyCount && node.Keys[i] == docId)
+                    {
+                        result = node.LeafValues[i];
+                    }
+                    break;
+                }
+                else
+                {
+                    currentPageId = node.ChildPageIds[i];
+                }
             }
         }
         finally
@@ -431,69 +472,71 @@ public class BTree
     private async Task InsertNonFullAsync(int pageId, int docId, DocumentLocation location, CancellationToken cancellationToken)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
+        byte[] childBuffer = BufferPool.Rent(_pageSize);
+        BTreeNode node = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode child = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
-            await _pageIO.ReadPageAsync(pageId, buffer, cancellationToken).ConfigureAwait(false);
-            BTreeNode node = BTreeNode.Deserialize(buffer, _pageSize, _order);
+            int currentPageId = pageId;
 
-            int i = node.KeyCount - 1;
-
-            if (node.NodeType == BTreeNodeType.Leaf)
+            while (true)
             {
-                node.Keys.Add(0);
-                node.LeafValues.Add(null);
+                await _pageIO.ReadPageAsync(currentPageId, buffer, cancellationToken).ConfigureAwait(false);
+                BTreeNode.DeserializeTo(buffer, node, _order);
 
-                while (i >= 0 && docId < node.Keys[i])
+                int i = node.KeyCount - 1;
+
+                if (node.NodeType == BTreeNodeType.Leaf)
                 {
-                    node.Keys[i + 1] = node.Keys[i];
-                    node.LeafValues[i + 1] = node.LeafValues[i];
-                    i--;
+                    node.Keys.Add(0);
+                    node.LeafValues.Add(null);
+
+                    while (i >= 0 && docId < node.Keys[i])
+                    {
+                        node.Keys[i + 1] = node.Keys[i];
+                        node.LeafValues[i + 1] = node.LeafValues[i];
+                        i--;
+                    }
+
+                    node.Keys[i + 1] = docId;
+                    node.LeafValues[i + 1] = location;
+                    node.KeyCount++;
+
+                    node.SerializeTo(buffer);
+                    await _pageIO.WritePageAsync(currentPageId, buffer, cancellationToken).ConfigureAwait(false);
+                    break;
                 }
-
-                node.Keys[i + 1] = docId;
-                node.LeafValues[i + 1] = location;
-                node.KeyCount++;
-
-                node.SerializeTo(buffer);
-                await _pageIO.WritePageAsync(pageId, buffer, cancellationToken).ConfigureAwait(false);
-            }
-            else
-            {
-                while (i >= 0 && docId < node.Keys[i])
+                else
                 {
-                    i--;
-                }
-                i++;
+                    while (i >= 0 && docId < node.Keys[i])
+                    {
+                        i--;
+                    }
+                    i++;
 
-                byte[] childBuffer = BufferPool.Rent(_pageSize);
-                try
-                {
                     await _pageIO.ReadPageAsync(node.ChildPageIds[i], childBuffer, cancellationToken).ConfigureAwait(false);
-                    BTreeNode child = BTreeNode.Deserialize(childBuffer, _pageSize, _order);
+                    BTreeNode.DeserializeTo(childBuffer, child, _order);
 
                     if (child.IsFull())
                     {
-                        await SplitChildAsync(pageId, i, node.ChildPageIds[i], cancellationToken).ConfigureAwait(false);
+                        await SplitChildAsync(currentPageId, i, node.ChildPageIds[i], cancellationToken).ConfigureAwait(false);
 
-                        await _pageIO.ReadPageAsync(pageId, buffer, cancellationToken).ConfigureAwait(false);
-                        node = BTreeNode.Deserialize(buffer, _pageSize, _order);
+                        await _pageIO.ReadPageAsync(currentPageId, buffer, cancellationToken).ConfigureAwait(false);
+                        BTreeNode.DeserializeTo(buffer, node, _order);
 
                         if (docId > node.Keys[i])
                         {
                             i++;
                         }
                     }
-                }
-                finally
-                {
-                    BufferPool.Return(childBuffer);
-                }
 
-                await InsertNonFullAsync(node.ChildPageIds[i], docId, location, cancellationToken).ConfigureAwait(false);
+                    currentPageId = node.ChildPageIds[i];
+                }
             }
         }
         finally
         {
+            BufferPool.Return(childBuffer);
             BufferPool.Return(buffer);
         }
     }
@@ -502,13 +545,15 @@ public class BTree
     {
         byte[] childBuffer = BufferPool.Rent(_pageSize);
         byte[] parentBuffer = BufferPool.Rent(_pageSize);
+        BTreeNode fullChild = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode parent = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
             await _pageIO.ReadPageAsync(childPageId, childBuffer, cancellationToken).ConfigureAwait(false);
-            BTreeNode fullChild = BTreeNode.Deserialize(childBuffer, _pageSize, _order);
+            BTreeNode.DeserializeTo(childBuffer, fullChild, _order);
 
             await _pageIO.ReadPageAsync(parentPageId, parentBuffer, cancellationToken).ConfigureAwait(false);
-            BTreeNode parent = BTreeNode.Deserialize(parentBuffer, _pageSize, _order);
+            BTreeNode.DeserializeTo(parentBuffer, parent, _order);
 
             int newChildPageId = _pageManager.AllocatePage();
             BTreeNode newChild = new BTreeNode(_pageSize, _order, fullChild.NodeType);
@@ -538,18 +583,16 @@ public class BTree
             }
 
             int originalKeyCount = fullChild.KeyCount;
-            fullChild.KeyCount = (ushort)(mid + 1);
-            int keysToRemove = originalKeyCount - (mid + 1);
-
-            if (keysToRemove > 0)
-            {
-                fullChild.Keys.RemoveRange(mid + 1, keysToRemove);
-            }
 
             if (fullChild.NodeType == BTreeNodeType.Leaf)
             {
+                // For leaf nodes, keep the middle key (B+ tree: leaves hold all data)
+                fullChild.KeyCount = (ushort)(mid + 1);
+                int keysToRemove = originalKeyCount - (mid + 1);
+
                 if (keysToRemove > 0)
                 {
+                    fullChild.Keys.RemoveRange(mid + 1, keysToRemove);
                     fullChild.LeafValues.RemoveRange(mid + 1, keysToRemove);
                 }
                 newChild.NextLeaf = fullChild.NextLeaf;
@@ -557,10 +600,20 @@ public class BTree
             }
             else
             {
-                int childPointersToRemove = fullChild.ChildPageIds.Count - (mid + 2);
+                // For internal nodes, the middle key is promoted (removed from child)
+                fullChild.KeyCount = (ushort)mid;
+                int keysToRemove = originalKeyCount - mid;
+
+                if (keysToRemove > 0)
+                {
+                    fullChild.Keys.RemoveRange(mid, keysToRemove);
+                }
+
+                // Keep mid+1 children for mid keys
+                int childPointersToRemove = fullChild.ChildPageIds.Count - (mid + 1);
                 if (childPointersToRemove > 0)
                 {
-                    fullChild.ChildPageIds.RemoveRange(mid + 2, childPointersToRemove);
+                    fullChild.ChildPageIds.RemoveRange(mid + 1, childPointersToRemove);
                 }
             }
 
@@ -589,34 +642,41 @@ public class BTree
         bool result = false;
 
         byte[] buffer = BufferPool.Rent(_pageSize);
+        BTreeNode node = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
-            await _pageIO.ReadPageAsync(pageId, buffer, cancellationToken).ConfigureAwait(false);
-            BTreeNode node = BTreeNode.Deserialize(buffer, _pageSize, _order);
+            int currentPageId = pageId;
 
-            int i = 0;
-            while (i < node.KeyCount && docId > node.Keys[i])
+            while (currentPageId != 0)
             {
-                i++;
-            }
+                await _pageIO.ReadPageAsync(currentPageId, buffer, cancellationToken).ConfigureAwait(false);
+                BTreeNode.DeserializeTo(buffer, node, _order);
 
-            if (node.NodeType == BTreeNodeType.Leaf)
-            {
-                if (i < node.KeyCount && node.Keys[i] == docId)
+                int i = 0;
+                while (i < node.KeyCount && docId > node.Keys[i])
                 {
-                    node.Keys.RemoveAt(i);
-                    node.LeafValues.RemoveAt(i);
-                    node.KeyCount--;
-
-                    node.SerializeTo(buffer);
-                    await _pageIO.WritePageAsync(pageId, buffer, cancellationToken).ConfigureAwait(false);
-
-                    result = true;
+                    i++;
                 }
-            }
-            else
-            {
-                result = await DeleteFromNodeAsync(node.ChildPageIds[i], docId, cancellationToken).ConfigureAwait(false);
+
+                if (node.NodeType == BTreeNodeType.Leaf)
+                {
+                    if (i < node.KeyCount && node.Keys[i] == docId)
+                    {
+                        node.Keys.RemoveAt(i);
+                        node.LeafValues.RemoveAt(i);
+                        node.KeyCount--;
+
+                        node.SerializeTo(buffer);
+                        await _pageIO.WritePageAsync(currentPageId, buffer, cancellationToken).ConfigureAwait(false);
+
+                        result = true;
+                    }
+                    break;
+                }
+                else
+                {
+                    currentPageId = node.ChildPageIds[i];
+                }
             }
         }
         finally

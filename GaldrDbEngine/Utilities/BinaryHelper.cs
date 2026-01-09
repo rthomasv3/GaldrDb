@@ -120,6 +120,45 @@ public static class BinaryHelper
         return result;
     }
 
+    public static uint CalculateCRC32(byte[] data, int offset, int length)
+    {
+        uint crc = 0xFFFFFFFF;
+
+        int end = offset + length;
+        for (int i = offset; i < end; i++)
+        {
+            byte index = (byte)((crc ^ data[i]) & 0xFF);
+            crc = (crc >> 8) ^ _crc32Table[index];
+        }
+
+        uint result = crc ^ 0xFFFFFFFF;
+
+        return result;
+    }
+
+    public static uint CalculateCRC32Segmented(byte[] data, int segment1Start, int segment1Length, int segment2Start, int segment2Length)
+    {
+        uint crc = 0xFFFFFFFF;
+
+        int end1 = segment1Start + segment1Length;
+        for (int i = segment1Start; i < end1; i++)
+        {
+            byte index = (byte)((crc ^ data[i]) & 0xFF);
+            crc = (crc >> 8) ^ _crc32Table[index];
+        }
+
+        int end2 = segment2Start + segment2Length;
+        for (int i = segment2Start; i < end2; i++)
+        {
+            byte index = (byte)((crc ^ data[i]) & 0xFF);
+            crc = (crc >> 8) ^ _crc32Table[index];
+        }
+
+        uint result = crc ^ 0xFFFFFFFF;
+
+        return result;
+    }
+
     public static ulong CalculateCRC64(byte[] data)
     {
         ulong crc = 0xFFFFFFFFFFFFFFFF;

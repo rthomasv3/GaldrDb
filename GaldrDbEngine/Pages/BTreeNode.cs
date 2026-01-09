@@ -102,18 +102,42 @@ public class BTreeNode
         }
     }
 
-    public static BTreeNode Deserialize(byte[] buffer, int pageSize, int order)
+    public static void DeserializeTo(byte[] buffer, BTreeNode node, int order)
     {
         int offset = 0;
 
-        byte pageType = buffer[offset];
+        node.PageType = buffer[offset];
         offset += 1;
 
         BTreeNodeType nodeType = (BTreeNodeType)buffer[offset];
         offset += 1;
 
-        BTreeNode node = new BTreeNode(pageSize, order, nodeType);
-        node.PageType = pageType;
+        // Handle node type change
+        if (nodeType != node.NodeType)
+        {
+            node.NodeType = nodeType;
+            if (nodeType == BTreeNodeType.Internal)
+            {
+                if (node.ChildPageIds == null)
+                {
+                    node.ChildPageIds = new List<int>(order);
+                }
+                node.LeafValues = null;
+            }
+            else
+            {
+                node.ChildPageIds = null;
+                if (node.LeafValues == null)
+                {
+                    node.LeafValues = new List<DocumentLocation>(order - 1);
+                }
+            }
+        }
+
+        // Clear existing data
+        node.Keys.Clear();
+        node.ChildPageIds?.Clear();
+        node.LeafValues?.Clear();
 
         node.KeyCount = BinaryHelper.ReadUInt16LE(buffer, offset);
         offset += 2;
@@ -151,7 +175,5 @@ public class BTreeNode
                 node.LeafValues.Add(location);
             }
         }
-
-        return node;
     }
 }

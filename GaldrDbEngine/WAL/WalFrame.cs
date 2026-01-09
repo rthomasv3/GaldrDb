@@ -21,10 +21,9 @@ public class WalFrame
         Data = Array.Empty<byte>();
     }
 
-    public byte[] Serialize()
+    public int SerializeTo(byte[] buffer)
     {
         int totalSize = FRAME_HEADER_SIZE + Data.Length;
-        byte[] buffer = new byte[totalSize];
         int offset = 0;
 
         BinaryHelper.WriteUInt64LE(buffer, offset, (ulong)FrameNumber);
@@ -59,11 +58,11 @@ public class WalFrame
             Array.Copy(Data, 0, buffer, offset, Data.Length);
         }
 
-        // Calculate checksum over entire frame (excluding checksum field)
-        Checksum = CalculateFrameChecksum(buffer);
+        // Calculate checksum over entire frame (excluding checksum field at bytes 28-31)
+        Checksum = CalculateFrameChecksumInPlace(buffer, totalSize);
         BinaryHelper.WriteUInt32LE(buffer, FRAME_HEADER_SIZE - 4, Checksum);
 
-        return buffer;
+        return totalSize;
     }
 
     public static WalFrame DeserializeHeader(byte[] headerBuffer)
@@ -114,14 +113,23 @@ public class WalFrame
         return frame;
     }
 
-    public bool ValidateChecksum()
+    public bool ValidateChecksum(int pageSize)
     {
-        byte[] buffer = Serialize();
-        uint calculatedChecksum = CalculateFrameChecksum(buffer);
+        int bufferSize = FRAME_HEADER_SIZE + pageSize;
+        byte[] buffer = BufferPool.Rent(bufferSize);
+        try
+        {
+            int totalSize = SerializeTo(buffer);
+            uint calculatedChecksum = CalculateFrameChecksumInPlace(buffer, totalSize);
 
-        bool result = calculatedChecksum == Checksum;
+            bool result = calculatedChecksum == Checksum;
 
-        return result;
+            return result;
+        }
+        finally
+        {
+            BufferPool.Return(buffer);
+        }
     }
 
     public bool IsCommit()
@@ -138,23 +146,28 @@ public class WalFrame
         return result;
     }
 
-    private static uint CalculateFrameChecksum(byte[] buffer)
+    private static uint CalculateFrameChecksumInPlace(byte[] buffer, int totalSize)
     {
-        // Calculate checksum over frame header (excluding checksum field) + data
-        int checksumDataSize = buffer.Length - 4;
-        byte[] checksumData = new byte[checksumDataSize];
+        // Calculate checksum over frame header (excluding checksum field at bytes 28-31) + data
+        // Segment 1: bytes 0-27 (header before checksum)
+        // Segment 2: bytes 32+ (data after header)
+        int headerBeforeChecksum = FRAME_HEADER_SIZE - 4; // 28 bytes
+        int dataLength = totalSize - FRAME_HEADER_SIZE;
 
-        // Copy header bytes before checksum field (28 bytes)
-        Array.Copy(buffer, 0, checksumData, 0, FRAME_HEADER_SIZE - 4);
-
-        // Copy data bytes
-        if (buffer.Length > FRAME_HEADER_SIZE)
+        uint checksum;
+        if (dataLength > 0)
         {
-            Array.Copy(buffer, FRAME_HEADER_SIZE, checksumData, FRAME_HEADER_SIZE - 4, buffer.Length - FRAME_HEADER_SIZE);
+            checksum = BinaryHelper.CalculateCRC32Segmented(
+                buffer,
+                0, headerBeforeChecksum,
+                FRAME_HEADER_SIZE, dataLength);
         }
-
-        uint checksum = BinaryHelper.CalculateCRC32(checksumData);
+        else
+        {
+            checksum = BinaryHelper.CalculateCRC32(buffer, 0, headerBeforeChecksum);
+        }
 
         return checksum;
     }
+
 }

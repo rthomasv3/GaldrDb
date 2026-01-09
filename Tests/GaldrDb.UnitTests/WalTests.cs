@@ -119,7 +119,8 @@ public class WalTests
             Data = testData
         };
 
-        byte[] serialized = frame.Serialize();
+        byte[] serialized = new byte[WalFrame.FRAME_HEADER_SIZE + testData.Length];
+        frame.SerializeTo(serialized);
         WalFrame deserialized = WalFrame.Deserialize(serialized);
 
         Assert.AreEqual(42, deserialized.FrameNumber);
@@ -133,6 +134,9 @@ public class WalTests
     [TestMethod]
     public void WalFrame_ValidateChecksum_ValidFrame_ReturnsTrue()
     {
+        byte[] testData = new byte[] { 1, 2, 3, 4, 5 };
+        int pageSize = 8192;
+
         WalFrame frame = new WalFrame
         {
             FrameNumber = 1,
@@ -140,13 +144,14 @@ public class WalTests
             PageId = 5,
             PageType = 0x02,
             Flags = WalFrameFlags.None,
-            Data = new byte[] { 1, 2, 3, 4, 5 }
+            Data = testData
         };
 
-        byte[] serialized = frame.Serialize();
+        byte[] serialized = new byte[WalFrame.FRAME_HEADER_SIZE + pageSize];
+        frame.SerializeTo(serialized);
         WalFrame deserialized = WalFrame.Deserialize(serialized);
 
-        bool result = deserialized.ValidateChecksum();
+        bool result = deserialized.ValidateChecksum(pageSize);
 
         Assert.IsTrue(result);
     }
@@ -193,6 +198,8 @@ public class WalTests
     [TestMethod]
     public void WalFrame_EmptyData_SerializesCorrectly()
     {
+        int pageSize = 8192;
+
         WalFrame frame = new WalFrame
         {
             FrameNumber = 1,
@@ -203,11 +210,12 @@ public class WalTests
             Data = Array.Empty<byte>()
         };
 
-        byte[] serialized = frame.Serialize();
+        byte[] serialized = new byte[WalFrame.FRAME_HEADER_SIZE + pageSize];
+        frame.SerializeTo(serialized);
         WalFrame deserialized = WalFrame.Deserialize(serialized);
 
         Assert.IsEmpty(deserialized.Data);
-        Assert.IsTrue(deserialized.ValidateChecksum());
+        Assert.IsTrue(deserialized.ValidateChecksum(pageSize));
     }
 
     [TestMethod]

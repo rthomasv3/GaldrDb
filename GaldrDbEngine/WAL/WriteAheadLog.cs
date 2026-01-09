@@ -99,6 +99,8 @@ public class WriteAheadLog : IDisposable
         {
             _currentFrameNumber++;
 
+            byte[] frameData = data ?? Array.Empty<byte>();
+
             WalFrame frame = new WalFrame
             {
                 FrameNumber = _currentFrameNumber,
@@ -106,29 +108,31 @@ public class WriteAheadLog : IDisposable
                 PageId = pageId,
                 PageType = pageType,
                 Flags = flags,
-                Data = data ?? Array.Empty<byte>()
+                Data = frameData
             };
 
-            byte[] frameBytes = frame.Serialize();
-
-            long framePosition = WalHeader.HEADER_SIZE + (_currentFrameNumber - 1) * (WalFrame.FRAME_HEADER_SIZE + _pageSize);
-            _walStream.Position = framePosition;
-            _walStream.Write(frameBytes, 0, frameBytes.Length);
-
-            // Pad to full page size if data is smaller
-            int paddingNeeded = _pageSize - frame.Data.Length;
-            if (paddingNeeded > 0)
+            int frameBufferSize = WalFrame.FRAME_HEADER_SIZE + _pageSize;
+            byte[] frameBuffer = BufferPool.Rent(frameBufferSize);
+            try
             {
-                byte[] padding = BufferPool.Rent(paddingNeeded);
-                try
+                int bytesWritten = frame.SerializeTo(frameBuffer);
+
+                long framePosition = WalHeader.HEADER_SIZE + (_currentFrameNumber - 1) * (WalFrame.FRAME_HEADER_SIZE + _pageSize);
+                _walStream.Position = framePosition;
+                _walStream.Write(frameBuffer, 0, bytesWritten);
+
+                // Pad to full page size if data is smaller
+                int paddingNeeded = _pageSize - frameData.Length;
+                if (paddingNeeded > 0)
                 {
-                    Array.Clear(padding, 0, paddingNeeded);
-                    _walStream.Write(padding, 0, paddingNeeded);
+                    // Clear the padding area in the same buffer and write it
+                    Array.Clear(frameBuffer, 0, paddingNeeded);
+                    _walStream.Write(frameBuffer, 0, paddingNeeded);
                 }
-                finally
-                {
-                    BufferPool.Return(padding);
-                }
+            }
+            finally
+            {
+                BufferPool.Return(frameBuffer);
             }
 
             _header.FrameCount = _currentFrameNumber;
@@ -164,7 +168,7 @@ public class WriteAheadLog : IDisposable
                     {
                         WalFrame frame = WalFrame.Deserialize(frameBuffer);
 
-                        if (!frame.ValidateChecksum())
+                        if (!frame.ValidateChecksum(_pageSize))
                         {
                             throw new InvalidOperationException($"WAL frame {i} has invalid checksum");
                         }
@@ -209,7 +213,7 @@ public class WriteAheadLog : IDisposable
                     {
                         WalFrame frame = WalFrame.Deserialize(frameBuffer);
 
-                        if (!frame.ValidateChecksum())
+                        if (!frame.ValidateChecksum(_pageSize))
                         {
                             throw new InvalidOperationException($"WAL frame {i} has invalid checksum");
                         }
