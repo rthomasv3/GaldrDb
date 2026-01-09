@@ -110,11 +110,9 @@ public class SecondaryIndexNodeTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Name = "Test", Age = 25, Email = "test@example.com" };
 
-            int id = db.Insert(person, PersonMeta.TypeInfo);
+            int id = db.Insert(person);
 
             Assert.AreEqual(1, id);
         }
@@ -217,16 +215,14 @@ public class SecondaryIndexNodeTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             for (int i = 0; i < 10; i++)
             {
                 Person person = new Person { Name = $"Person{i}", Age = 20 + i, Email = $"person{i}@example.com" };
-                int id = db.Insert(person, PersonMeta.TypeInfo);
+                int id = db.Insert(person);
                 Assert.AreEqual(i + 1, id, $"Expected id {i + 1}, got {id}");
             }
 
-            Person retrieved = db.GetById(5, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(5);
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("Person4", retrieved.Name);
         }

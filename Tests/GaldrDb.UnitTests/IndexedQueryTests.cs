@@ -37,7 +37,6 @@ public class IndexedQueryTests
         GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false, UseMmap = false };
 
         GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options);
-        db.EnsureCollection(PersonMeta.TypeInfo);
 
         for (int i = 0; i < count; i++)
         {
@@ -47,7 +46,7 @@ public class IndexedQueryTests
                 Age = 20 + (i % 50),
                 Email = $"person{i}@example.com"
             };
-            db.Insert(person, PersonMeta.TypeInfo);
+            db.Insert(person);
         }
 
         return db;
@@ -58,7 +57,7 @@ public class IndexedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("equals_test.db", 100))
         {
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.Equals, "Person050")
                 .ToList();
 
@@ -72,7 +71,7 @@ public class IndexedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("equals_nomatch.db", 100))
         {
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.Equals, "NonExistent")
                 .ToList();
 
@@ -85,7 +84,7 @@ public class IndexedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("startswith_test.db", 100))
         {
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.StartsWith, "Person00")
                 .ToList();
 
@@ -102,7 +101,7 @@ public class IndexedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("multi_filter.db", 100))
         {
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.StartsWith, "Person0")
                 .Where(PersonMeta.Age, FieldOp.GreaterThan, 25)
                 .ToList();
@@ -120,7 +119,7 @@ public class IndexedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("limit_test.db", 100))
         {
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.StartsWith, "Person")
                 .Limit(5)
                 .ToList();
@@ -134,11 +133,11 @@ public class IndexedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("skip_test.db", 100))
         {
-            List<Person> allResults = db.Query(PersonMeta.TypeInfo)
+            List<Person> allResults = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.StartsWith, "Person00")
                 .ToList();
 
-            List<Person> skippedResults = db.Query(PersonMeta.TypeInfo)
+            List<Person> skippedResults = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.StartsWith, "Person00")
                 .Skip(3)
                 .ToList();
@@ -152,13 +151,13 @@ public class IndexedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("paginate_test.db", 100))
         {
-            List<Person> page1 = db.Query(PersonMeta.TypeInfo)
+            List<Person> page1 = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.StartsWith, "Person0")
                 .Skip(0)
                 .Limit(5)
                 .ToList();
 
-            List<Person> page2 = db.Query(PersonMeta.TypeInfo)
+            List<Person> page2 = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.StartsWith, "Person0")
                 .Skip(5)
                 .Limit(5)
@@ -188,7 +187,7 @@ public class IndexedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("count_test.db", 100))
         {
-            int count = db.Query(PersonMeta.TypeInfo)
+            int count = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.StartsWith, "Person00")
                 .Count();
 
@@ -201,7 +200,7 @@ public class IndexedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("count_opt.db", 100))
         {
-            int count = db.Query(PersonMeta.TypeInfo)
+            int count = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.Equals, "Person050")
                 .Count();
 
@@ -214,7 +213,7 @@ public class IndexedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("first_test.db", 100))
         {
-            Person result = db.Query(PersonMeta.TypeInfo)
+            Person result = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.Equals, "Person050")
                 .FirstOrDefault();
 
@@ -228,7 +227,7 @@ public class IndexedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("first_null.db", 100))
         {
-            Person result = db.Query(PersonMeta.TypeInfo)
+            Person result = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.Equals, "NonExistent")
                 .FirstOrDefault();
 
@@ -241,7 +240,7 @@ public class IndexedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("no_filter.db", 50))
         {
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .ToList();
 
             Assert.HasCount(50, results);
@@ -253,7 +252,7 @@ public class IndexedQueryTests
     {
         using (GaldrDbInstance db = CreateDatabaseWithPersons("nonindexed.db", 100))
         {
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .Where(PersonMeta.Age, FieldOp.Equals, 25)
                 .ToList();
 
@@ -272,15 +271,13 @@ public class IndexedQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             for (int i = 0; i < 10; i++)
             {
                 Person person = new Person { Name = $"Test{i}", Age = 20 + i, Email = $"test{i}@example.com" };
-                db.Insert(person, PersonMeta.TypeInfo);
+                db.Insert(person);
             }
 
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.StartsWith, "Test")
                 .Where(PersonMeta.Name, FieldOp.Equals, "Test5")
                 .ToList();
@@ -298,9 +295,7 @@ public class IndexedQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.Equals, "Test")
                 .ToList();
 
@@ -316,7 +311,7 @@ public class IndexedQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.Equals, "Test")
                 .ToList();
 
@@ -332,15 +327,13 @@ public class IndexedQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             for (int i = 0; i < 5; i++)
             {
                 Person person = new Person { Name = "SameName", Age = 20 + i, Email = $"person{i}@example.com" };
-                db.Insert(person, PersonMeta.TypeInfo);
+                db.Insert(person);
             }
 
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.Equals, "SameName")
                 .ToList();
 

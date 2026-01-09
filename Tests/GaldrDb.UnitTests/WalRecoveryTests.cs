@@ -42,9 +42,8 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
             Person person = new Person { Name = "John Doe", Age = 30, Email = "john@example.com" };
-            insertedId = db.Insert(person, PersonMeta.TypeInfo);
+            insertedId = db.Insert(person);
         }
 
         // WAL file should exist after close
@@ -52,7 +51,7 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
-            Person retrieved = db.GetById(insertedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(insertedId);
 
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("John Doe", retrieved.Name);
@@ -70,8 +69,6 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             for (int i = 0; i < 10; i++)
             {
                 Person person = new Person
@@ -80,7 +77,7 @@ public class WalRecoveryTests
                     Age = 20 + i,
                     Email = $"person{i}@example.com"
                 };
-                ids[i] = db.Insert(person, PersonMeta.TypeInfo);
+                ids[i] = db.Insert(person);
             }
         }
 
@@ -88,7 +85,7 @@ public class WalRecoveryTests
         {
             for (int i = 0; i < 10; i++)
             {
-                Person retrieved = db.GetById(ids[i], PersonMeta.TypeInfo);
+                Person retrieved = db.GetById<Person>(ids[i]);
 
                 Assert.IsNotNull(retrieved);
                 Assert.AreEqual($"Person {i}", retrieved.Name);
@@ -109,28 +106,27 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
             Person person1 = new Person { Name = "First", Age = 25, Email = "first@example.com" };
-            id1 = db.Insert(person1, PersonMeta.TypeInfo);
+            id1 = db.Insert(person1);
         }
 
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
             Person person2 = new Person { Name = "Second", Age = 30, Email = "second@example.com" };
-            id2 = db.Insert(person2, PersonMeta.TypeInfo);
+            id2 = db.Insert(person2);
         }
 
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
             Person person3 = new Person { Name = "Third", Age = 35, Email = "third@example.com" };
-            id3 = db.Insert(person3, PersonMeta.TypeInfo);
+            id3 = db.Insert(person3);
         }
 
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
-            Person retrieved1 = db.GetById(id1, PersonMeta.TypeInfo);
-            Person retrieved2 = db.GetById(id2, PersonMeta.TypeInfo);
-            Person retrieved3 = db.GetById(id3, PersonMeta.TypeInfo);
+            Person retrieved1 = db.GetById<Person>(id1);
+            Person retrieved2 = db.GetById<Person>(id2);
+            Person retrieved3 = db.GetById<Person>(id3);
 
             Assert.IsNotNull(retrieved1);
             Assert.IsNotNull(retrieved2);
@@ -150,8 +146,6 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             for (int i = 0; i < 50; i++)
             {
                 Person person = new Person
@@ -160,7 +154,7 @@ public class WalRecoveryTests
                     Age = 20 + i,
                     Email = $"person{i}@example.com"
                 };
-                db.Insert(person, PersonMeta.TypeInfo);
+                db.Insert(person);
             }
 
             long walSizeBeforeCheckpoint = new FileInfo(walPath).Length;
@@ -183,20 +177,19 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
             Person person = new Person { Name = "Test Person", Age = 40, Email = "test@example.com" };
-            insertedId = db.Insert(person, PersonMeta.TypeInfo);
+            insertedId = db.Insert(person);
 
             db.Checkpoint();
 
-            Person retrieved = db.GetById(insertedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(insertedId);
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("Test Person", retrieved.Name);
         }
 
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
-            Person retrieved = db.GetById(insertedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(insertedId);
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("Test Person", retrieved.Name);
         }
@@ -214,9 +207,8 @@ public class WalRecoveryTests
         // Create database and insert a committed document
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
             Person person = new Person { Name = "Committed", Age = 25, Email = "committed@example.com" };
-            committedId = db.Insert(person, PersonMeta.TypeInfo);
+            committedId = db.Insert(person);
         }
 
         // Now manually append an uncommitted frame to the WAL to simulate a crash
@@ -237,7 +229,7 @@ public class WalRecoveryTests
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
             // Committed data should be recovered
-            Person retrieved = db.GetById(committedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(committedId);
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("Committed", retrieved.Name);
         }
@@ -255,9 +247,8 @@ public class WalRecoveryTests
         GaldrDbOptions noWalOptions = new GaldrDbOptions { PageSize = 8192, UseWal = false };
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, noWalOptions))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
             Person person = new Person { Name = "NoWal Person", Age = 25, Email = "nowal@example.com" };
-            id1 = db.Insert(person, PersonMeta.TypeInfo);
+            id1 = db.Insert(person);
         }
 
         // Open with WAL enabled
@@ -265,20 +256,20 @@ public class WalRecoveryTests
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, walOptions))
         {
             // Original data should be accessible
-            Person retrieved1 = db.GetById(id1, PersonMeta.TypeInfo);
+            Person retrieved1 = db.GetById<Person>(id1);
             Assert.IsNotNull(retrieved1);
             Assert.AreEqual("NoWal Person", retrieved1.Name);
 
             // Insert new data with WAL
             Person person2 = new Person { Name = "Wal Person", Age = 30, Email = "wal@example.com" };
-            id2 = db.Insert(person2, PersonMeta.TypeInfo);
+            id2 = db.Insert(person2);
         }
 
         // Reopen with WAL - both should be accessible
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, walOptions))
         {
-            Person retrieved1 = db.GetById(id1, PersonMeta.TypeInfo);
-            Person retrieved2 = db.GetById(id2, PersonMeta.TypeInfo);
+            Person retrieved1 = db.GetById<Person>(id1);
+            Person retrieved2 = db.GetById<Person>(id2);
 
             Assert.IsNotNull(retrieved1);
             Assert.IsNotNull(retrieved2);
@@ -298,28 +289,26 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person1 = new Person { Name = "Original Name", Age = 25, Email = "original@example.com" };
-            id1 = db.Insert(person1, PersonMeta.TypeInfo);
+            id1 = db.Insert(person1);
 
             Person person2 = new Person { Name = "To Be Deleted", Age = 30, Email = "delete@example.com" };
-            id2 = db.Insert(person2, PersonMeta.TypeInfo);
+            id2 = db.Insert(person2);
 
             // Update person1
             person1.Id = id1;
             person1.Name = "Updated Name";
             person1.Age = 26;
-            db.Update(person1, PersonMeta.TypeInfo);
+            db.Update<Person>(person1);
 
             // Delete person2
-            db.Delete<Person>(id2, PersonMeta.TypeInfo);
+            db.Delete<Person>(id2);
         }
 
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
-            Person retrieved1 = db.GetById(id1, PersonMeta.TypeInfo);
-            Person retrieved2 = db.GetById(id2, PersonMeta.TypeInfo);
+            Person retrieved1 = db.GetById<Person>(id1);
+            Person retrieved2 = db.GetById<Person>(id2);
 
             Assert.IsNotNull(retrieved1);
             Assert.AreEqual("Updated Name", retrieved1.Name);
@@ -339,19 +328,17 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             using (Transaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "TxPerson", Age = 35, Email = "txperson@example.com" };
-                insertedId = tx.Insert(person, PersonMeta.TypeInfo);
+                insertedId = tx.Insert(person);
                 tx.Commit();
             }
         }
 
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
-            Person retrieved = db.GetById(insertedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(insertedId);
 
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("TxPerson", retrieved.Name);
@@ -371,17 +358,15 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             using (Transaction tx = db.BeginTransaction())
             {
                 Person person1 = new Person { Name = "Person1", Age = 25, Email = "p1@example.com" };
                 Person person2 = new Person { Name = "Person2", Age = 30, Email = "p2@example.com" };
                 Person person3 = new Person { Name = "Person3", Age = 35, Email = "p3@example.com" };
 
-                id1 = tx.Insert(person1, PersonMeta.TypeInfo);
-                id2 = tx.Insert(person2, PersonMeta.TypeInfo);
-                id3 = tx.Insert(person3, PersonMeta.TypeInfo);
+                id1 = tx.Insert(person1);
+                id2 = tx.Insert(person2);
+                id3 = tx.Insert(person3);
 
                 tx.Commit();
             }
@@ -389,9 +374,9 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
-            Person r1 = db.GetById(id1, PersonMeta.TypeInfo);
-            Person r2 = db.GetById(id2, PersonMeta.TypeInfo);
-            Person r3 = db.GetById(id3, PersonMeta.TypeInfo);
+            Person r1 = db.GetById<Person>(id1);
+            Person r2 = db.GetById<Person>(id2);
+            Person r3 = db.GetById<Person>(id3);
 
             Assert.IsNotNull(r1);
             Assert.IsNotNull(r2);
@@ -412,12 +397,10 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             using (Transaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "Original", Age = 25, Email = "original@example.com" };
-                insertedId = tx.Insert(person, PersonMeta.TypeInfo);
+                insertedId = tx.Insert(person);
                 tx.Commit();
             }
         }
@@ -427,7 +410,7 @@ public class WalRecoveryTests
             // After reopen, VersionIndex should be rebuilt and transactions should work
             using (Transaction tx = db.BeginTransaction())
             {
-                Person retrieved = tx.GetById(insertedId, PersonMeta.TypeInfo);
+                Person retrieved = tx.GetById<Person>(insertedId);
 
                 Assert.IsNotNull(retrieved);
                 Assert.AreEqual("Original", retrieved.Name);
@@ -435,14 +418,14 @@ public class WalRecoveryTests
                 // Update within transaction
                 retrieved.Name = "Updated";
                 retrieved.Age = 30;
-                bool updateResult = tx.Update(retrieved, PersonMeta.TypeInfo);
+                bool updateResult = tx.Update(retrieved);
 
                 Assert.IsTrue(updateResult);
                 tx.Commit();
             }
 
             // Verify update persisted
-            Person finalResult = db.GetById(insertedId, PersonMeta.TypeInfo);
+            Person finalResult = db.GetById<Person>(insertedId);
             Assert.AreEqual("Updated", finalResult.Name);
             Assert.AreEqual(30, finalResult.Age);
         }
@@ -460,27 +443,24 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-            id1 = db.Insert(new Person { Name = "First", Age = 25, Email = "first@example.com" }, PersonMeta.TypeInfo);
+            id1 = db.Insert(new Person { Name = "First", Age = 25, Email = "first@example.com" });
         }
 
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-            id2 = db.Insert(new Person { Name = "Second", Age = 30, Email = "second@example.com" }, PersonMeta.TypeInfo);
+            id2 = db.Insert(new Person { Name = "Second", Age = 30, Email = "second@example.com" });
         }
 
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-            id3 = db.Insert(new Person { Name = "Third", Age = 35, Email = "third@example.com" }, PersonMeta.TypeInfo);
+            id3 = db.Insert(new Person { Name = "Third", Age = 35, Email = "third@example.com" });
         }
 
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
-            Person r1 = db.GetById(id1, PersonMeta.TypeInfo);
-            Person r2 = db.GetById(id2, PersonMeta.TypeInfo);
-            Person r3 = db.GetById(id3, PersonMeta.TypeInfo);
+            Person r1 = db.GetById<Person>(id1);
+            Person r2 = db.GetById<Person>(id2);
+            Person r3 = db.GetById<Person>(id3);
 
             Assert.IsNotNull(r1);
             Assert.IsNotNull(r2);
@@ -502,9 +482,8 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
             Person person = new Person { Name = "Committed", Age = 25, Email = "committed@example.com" };
-            committedId = db.Insert(person, PersonMeta.TypeInfo);
+            committedId = db.Insert(person);
         }
 
         // Append partial/truncated data to WAL to simulate crash mid-write
@@ -522,7 +501,7 @@ public class WalRecoveryTests
         // Reopen - recovery should handle partial frame gracefully
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
-            Person retrieved = db.GetById(committedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(committedId);
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("Committed", retrieved.Name);
         }
@@ -539,9 +518,8 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
             Person person = new Person { Name = "Committed", Age = 25, Email = "committed@example.com" };
-            committedId = db.Insert(person, PersonMeta.TypeInfo);
+            committedId = db.Insert(person);
         }
 
         // Append multiple uncommitted transactions
@@ -572,7 +550,7 @@ public class WalRecoveryTests
         // Reopen - all uncommitted transactions should be ignored
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
-            Person retrieved = db.GetById(committedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(committedId);
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("Committed", retrieved.Name);
         }
@@ -590,9 +568,8 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-            id1 = db.Insert(new Person { Name = "First", Age = 25, Email = "first@example.com" }, PersonMeta.TypeInfo);
-            id2 = db.Insert(new Person { Name = "Second", Age = 30, Email = "second@example.com" }, PersonMeta.TypeInfo);
+            id1 = db.Insert(new Person { Name = "First", Age = 25, Email = "first@example.com" });
+            id2 = db.Insert(new Person { Name = "Second", Age = 30, Email = "second@example.com" });
         }
 
         // Append interleaved committed and uncommitted transactions
@@ -625,8 +602,8 @@ public class WalRecoveryTests
         // Reopen - original data should still be accessible
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
-            Person r1 = db.GetById(id1, PersonMeta.TypeInfo);
-            Person r2 = db.GetById(id2, PersonMeta.TypeInfo);
+            Person r1 = db.GetById<Person>(id1);
+            Person r2 = db.GetById<Person>(id2);
 
             Assert.IsNotNull(r1);
             Assert.IsNotNull(r2);
@@ -643,15 +620,15 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
+            
         }
 
         // Reopen and verify collection exists and is usable
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
-            int id = db.Insert(new Person { Name = "Test", Age = 25, Email = "test@example.com" }, PersonMeta.TypeInfo);
+            int id = db.Insert(new Person { Name = "Test", Age = 25, Email = "test@example.com" });
 
-            Person retrieved = db.GetById(id, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(id);
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("Test", retrieved.Name);
         }
@@ -669,24 +646,22 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             // Insert before checkpoint
-            id1 = db.Insert(new Person { Name = "BeforeCheckpoint", Age = 25, Email = "before@example.com" }, PersonMeta.TypeInfo);
+            id1 = db.Insert(new Person { Name = "BeforeCheckpoint", Age = 25, Email = "before@example.com" });
 
             db.Checkpoint();
 
             // Insert after checkpoint
-            id2 = db.Insert(new Person { Name = "AfterCheckpoint1", Age = 30, Email = "after1@example.com" }, PersonMeta.TypeInfo);
-            id3 = db.Insert(new Person { Name = "AfterCheckpoint2", Age = 35, Email = "after2@example.com" }, PersonMeta.TypeInfo);
+            id2 = db.Insert(new Person { Name = "AfterCheckpoint1", Age = 30, Email = "after1@example.com" });
+            id3 = db.Insert(new Person { Name = "AfterCheckpoint2", Age = 35, Email = "after2@example.com" });
         }
 
         // Reopen - all data should be recovered
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
-            Person r1 = db.GetById(id1, PersonMeta.TypeInfo);
-            Person r2 = db.GetById(id2, PersonMeta.TypeInfo);
-            Person r3 = db.GetById(id3, PersonMeta.TypeInfo);
+            Person r1 = db.GetById<Person>(id1);
+            Person r2 = db.GetById<Person>(id2);
+            Person r3 = db.GetById<Person>(id3);
 
             Assert.IsNotNull(r1);
             Assert.IsNotNull(r2);
@@ -708,8 +683,7 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-            insertedId = db.Insert(new Person { Name = "Test", Age = 25, Email = "test@example.com" }, PersonMeta.TypeInfo);
+            insertedId = db.Insert(new Person { Name = "Test", Age = 25, Email = "test@example.com" });
             db.Checkpoint();
         }
 
@@ -719,7 +693,7 @@ public class WalRecoveryTests
         // Reopen - should handle empty WAL gracefully
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
-            Person retrieved = db.GetById(insertedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(insertedId);
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("Test", retrieved.Name);
         }
@@ -735,8 +709,6 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             using (Transaction tx = db.BeginTransaction())
             {
                 for (int i = 0; i < 100; i++)
@@ -746,7 +718,7 @@ public class WalRecoveryTests
                         Name = $"Person{i}",
                         Age = 20 + i,
                         Email = $"person{i}@example.com"
-                    }, PersonMeta.TypeInfo);
+                    });
                 }
                 tx.Commit();
             }
@@ -757,7 +729,7 @@ public class WalRecoveryTests
         {
             for (int i = 0; i < 100; i++)
             {
-                Person retrieved = db.GetById(ids[i], PersonMeta.TypeInfo);
+                Person retrieved = db.GetById<Person>(ids[i]);
                 Assert.IsNotNull(retrieved, $"Person {i} should exist");
                 Assert.AreEqual($"Person{i}", retrieved.Name);
             }
@@ -774,15 +746,13 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             // Committed transaction
-            committedId = db.Insert(new Person { Name = "Committed", Age = 25, Email = "committed@example.com" }, PersonMeta.TypeInfo);
+            committedId = db.Insert(new Person { Name = "Committed", Age = 25, Email = "committed@example.com" });
 
             // Rolled back transaction
             using (Transaction tx = db.BeginTransaction())
             {
-                tx.Insert(new Person { Name = "RolledBack", Age = 30, Email = "rolledback@example.com" }, PersonMeta.TypeInfo);
+                tx.Insert(new Person { Name = "RolledBack", Age = 30, Email = "rolledback@example.com" });
                 tx.Rollback();
             }
         }
@@ -790,12 +760,12 @@ public class WalRecoveryTests
         // Reopen
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
-            Person committed = db.GetById(committedId, PersonMeta.TypeInfo);
+            Person committed = db.GetById<Person>(committedId);
             Assert.IsNotNull(committed);
             Assert.AreEqual("Committed", committed.Name);
 
             // Only one person should exist
-            System.Collections.Generic.List<Person> all = db.Query(PersonMeta.TypeInfo).ToList();
+            System.Collections.Generic.List<Person> all = db.Query<Person>().ToList();
             Assert.HasCount(1, all);
         }
     }

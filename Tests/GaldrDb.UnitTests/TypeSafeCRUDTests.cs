@@ -41,28 +41,8 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Name = "Test", Age = 25, Email = "test@example.com" };
-            int id = db.Insert(person, PersonMeta.TypeInfo);
-
-            Assert.IsGreaterThan(0, id);
-        }
-    }
-
-    [TestMethod]
-    public void EnsureCollection_CalledTwice_DoesNotThrow()
-    {
-        string dbPath = Path.Combine(_testDirectory, "test.db");
-        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
-
-        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
-        {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
-            Person person = new Person { Name = "Test", Age = 25, Email = "test@example.com" };
-            int id = db.Insert(person, PersonMeta.TypeInfo);
+            int id = db.Insert(person);
 
             Assert.IsGreaterThan(0, id);
         }
@@ -76,10 +56,8 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(LegacyCustomerMeta.TypeInfo);
-
             LegacyCustomer customer = new LegacyCustomer { Name = "Test Customer", Email = "customer@example.com" };
-            int id = db.Insert(customer, LegacyCustomerMeta.TypeInfo);
+            int id = db.Insert(customer);
 
             LegacyCustomer retrieved = db.GetById<LegacyCustomer>(id);
 
@@ -100,10 +78,8 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Id = 0, Name = "Auto ID", Age = 30, Email = "auto@example.com" };
-            int assignedId = db.Insert(person, PersonMeta.TypeInfo);
+            int assignedId = db.Insert(person);
 
             Assert.AreEqual(1, assignedId);
             Assert.AreEqual(1, person.Id);
@@ -118,10 +94,8 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Id = 100, Name = "Explicit ID", Age = 25, Email = "explicit@example.com" };
-            int assignedId = db.Insert(person, PersonMeta.TypeInfo);
+            int assignedId = db.Insert(person);
 
             Assert.AreEqual(100, assignedId);
             Assert.AreEqual(100, person.Id);
@@ -136,15 +110,13 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person1 = new Person { Name = "First", Age = 20, Email = "first@example.com" };
             Person person2 = new Person { Name = "Second", Age = 25, Email = "second@example.com" };
             Person person3 = new Person { Name = "Third", Age = 30, Email = "third@example.com" };
 
-            int id1 = db.Insert(person1, PersonMeta.TypeInfo);
-            int id2 = db.Insert(person2, PersonMeta.TypeInfo);
-            int id3 = db.Insert(person3, PersonMeta.TypeInfo);
+            int id1 = db.Insert(person1);
+            int id2 = db.Insert(person2);
+            int id3 = db.Insert(person3);
 
             Assert.AreEqual(1, id1);
             Assert.AreEqual(2, id2);
@@ -160,13 +132,11 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person1 = new Person { Id = 50, Name = "High ID", Age = 30, Email = "high@example.com" };
-            db.Insert(person1, PersonMeta.TypeInfo);
+            db.Insert(person1);
 
             Person person2 = new Person { Name = "Auto After High", Age = 25, Email = "auto@example.com" };
-            int id2 = db.Insert(person2, PersonMeta.TypeInfo);
+            int id2 = db.Insert(person2);
 
             Assert.AreEqual(51, id2);
         }
@@ -182,11 +152,11 @@ public class TypeSafeCRUDTests
         {
             // Insert without calling EnsureCollection first - should auto-create
             Person person = new Person { Name = "Test", Age = 25, Email = "test@example.com" };
-            int id = db.Insert(person, PersonMeta.TypeInfo);
+            int id = db.Insert(person);
 
             Assert.AreEqual(1, id);
 
-            Person retrieved = db.GetById(id, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(id);
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("Test", retrieved.Name);
         }
@@ -204,12 +174,10 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Name = "John Doe", Age = 35, Email = "john@example.com" };
-            int id = db.Insert(person, PersonMeta.TypeInfo);
+            int id = db.Insert(person);
 
-            Person retrieved = db.GetById(id, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(id);
 
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("John Doe", retrieved.Name);
@@ -226,9 +194,7 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
-            Person retrieved = db.GetById(999, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(999);
 
             Assert.IsNull(retrieved);
         }
@@ -246,14 +212,12 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Name = "Original", Age = 30, Email = "original@example.com" };
-            int id = db.Insert(person, PersonMeta.TypeInfo);
+            int id = db.Insert(person);
 
             person.Name = "Updated";
             person.Age = 35;
-            bool result = db.Update(person, PersonMeta.TypeInfo);
+            bool result = db.Update(person);
 
             Assert.IsTrue(result);
         }
@@ -267,17 +231,15 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Name = "Original", Age = 30, Email = "original@example.com" };
-            int id = db.Insert(person, PersonMeta.TypeInfo);
+            int id = db.Insert(person);
 
             person.Name = "Updated";
             person.Age = 35;
             person.Email = "updated@example.com";
-            db.Update(person, PersonMeta.TypeInfo);
+            db.Update(person);
 
-            Person retrieved = db.GetById(id, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(id);
 
             Assert.AreEqual("Updated", retrieved.Name);
             Assert.AreEqual(35, retrieved.Age);
@@ -293,10 +255,8 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Id = 999, Name = "Ghost", Age = 0, Email = "ghost@example.com" };
-            bool result = db.Update(person, PersonMeta.TypeInfo);
+            bool result = db.Update(person);
 
             Assert.IsFalse(result);
         }
@@ -312,12 +272,10 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             try
             {
                 Person person = new Person { Id = 0, Name = "Zero ID", Age = 25, Email = "zero@example.com" };
-                db.Update(person, PersonMeta.TypeInfo);
+                db.Update(person);
             }
             catch (InvalidOperationException ex)
             {
@@ -341,12 +299,10 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Name = "To Delete", Age = 30, Email = "delete@example.com" };
-            int id = db.Insert(person, PersonMeta.TypeInfo);
+            int id = db.Insert(person);
 
-            bool result = db.Delete<Person>(id, PersonMeta.TypeInfo);
+            bool result = db.Delete<Person>(id);
 
             Assert.IsTrue(result);
         }
@@ -360,14 +316,12 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Name = "To Delete", Age = 30, Email = "delete@example.com" };
-            int id = db.Insert(person, PersonMeta.TypeInfo);
+            int id = db.Insert(person);
 
-            db.Delete<Person>(id, PersonMeta.TypeInfo);
+            db.Delete<Person>(id);
 
-            Person retrieved = db.GetById(id, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(id);
 
             Assert.IsNull(retrieved);
         }
@@ -381,9 +335,7 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
-            bool result = db.Delete<Person>(999, PersonMeta.TypeInfo);
+            bool result = db.Delete<Person>(999);
 
             Assert.IsFalse(result);
         }
@@ -401,29 +353,27 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Name = "Full Cycle", Age = 25, Email = "cycle@example.com" };
-            int id = db.Insert(person, PersonMeta.TypeInfo);
+            int id = db.Insert(person);
             Assert.AreEqual(1, id);
 
-            Person retrieved = db.GetById(id, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(id);
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("Full Cycle", retrieved.Name);
 
             retrieved.Name = "Updated Cycle";
             retrieved.Age = 30;
-            bool updated = db.Update(retrieved, PersonMeta.TypeInfo);
+            bool updated = db.Update<Person>(retrieved);
             Assert.IsTrue(updated);
 
-            Person afterUpdate = db.GetById(id, PersonMeta.TypeInfo);
+            Person afterUpdate = db.GetById<Person>(id);
             Assert.AreEqual("Updated Cycle", afterUpdate.Name);
             Assert.AreEqual(30, afterUpdate.Age);
 
-            bool deleted = db.Delete<Person>(id, PersonMeta.TypeInfo);
+            bool deleted = db.Delete<Person>(id);
             Assert.IsTrue(deleted);
 
-            Person afterDelete = db.GetById(id, PersonMeta.TypeInfo);
+            Person afterDelete = db.GetById<Person>(id);
             Assert.IsNull(afterDelete);
         }
     }
@@ -438,15 +388,13 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Name = "Persist Test", Age = 40, Email = "persist@example.com" };
-            insertedId = db.Insert(person, PersonMeta.TypeInfo);
+            insertedId = db.Insert(person);
         }
 
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath))
         {
-            Person retrieved = db.GetById(insertedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(insertedId);
 
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("Persist Test", retrieved.Name);
@@ -466,13 +414,11 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
+            db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
 
-            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" }, PersonMeta.TypeInfo);
-
-            List<Person> results = db.Query(PersonMeta.TypeInfo).ToList();
+            List<Person> results = db.Query<Person>().ToList();
 
             Assert.HasCount(3, results);
         }
@@ -486,13 +432,11 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
+            db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
 
-            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" }, PersonMeta.TypeInfo);
-
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .Where(PersonMeta.Age, FieldOp.GreaterThan, 28)
                 .ToList();
 
@@ -509,14 +453,12 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             for (int i = 1; i <= 10; i++)
             {
-                db.Insert(new Person { Name = $"Person {i}", Age = 20 + i, Email = $"person{i}@example.com" }, PersonMeta.TypeInfo);
+                db.Insert(new Person { Name = $"Person {i}", Age = 20 + i, Email = $"person{i}@example.com" });
             }
 
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .Skip(3)
                 .Limit(4)
                 .ToList();
@@ -533,12 +475,10 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
 
-            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" }, PersonMeta.TypeInfo);
-
-            Person result = db.Query(PersonMeta.TypeInfo)
+            Person result = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.Equals, "Bob")
                 .FirstOrDefault();
 
@@ -555,11 +495,9 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
 
-            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" }, PersonMeta.TypeInfo);
-
-            Person result = db.Query(PersonMeta.TypeInfo)
+            Person result = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.Equals, "NonExistent")
                 .FirstOrDefault();
 
@@ -575,14 +513,12 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             for (int i = 1; i <= 5; i++)
             {
-                db.Insert(new Person { Name = $"Person {i}", Age = 20 + i, Email = $"person{i}@example.com" }, PersonMeta.TypeInfo);
+                db.Insert(new Person { Name = $"Person {i}", Age = 20 + i, Email = $"person{i}@example.com" });
             }
 
-            int count = db.Query(PersonMeta.TypeInfo).Count();
+            int count = db.Query<Person>().Count();
 
             Assert.AreEqual(5, count);
         }
@@ -596,13 +532,11 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
+            db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
 
-            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" }, PersonMeta.TypeInfo);
-
-            int count = db.Query(PersonMeta.TypeInfo)
+            int count = db.Query<Person>()
                 .Where(PersonMeta.Age, FieldOp.GreaterThanOrEqual, 30)
                 .Count();
 
@@ -618,9 +552,7 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
-            List<Person> results = db.Query(PersonMeta.TypeInfo).ToList();
+            List<Person> results = db.Query<Person>().ToList();
 
             Assert.IsEmpty(results);
         }
@@ -634,14 +566,12 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
+            db.Insert(new Person { Name = "Alice", Age = 20, Email = "alice@example.com" });
+            db.Insert(new Person { Name = "Bob", Age = 25, Email = "bob@example.com" });
+            db.Insert(new Person { Name = "Charlie", Age = 30, Email = "charlie@example.com" });
+            db.Insert(new Person { Name = "Diana", Age = 35, Email = "diana@example.com" });
 
-            db.Insert(new Person { Name = "Alice", Age = 20, Email = "alice@example.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Bob", Age = 25, Email = "bob@example.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Charlie", Age = 30, Email = "charlie@example.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Diana", Age = 35, Email = "diana@example.com" }, PersonMeta.TypeInfo);
-
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .WhereBetween(PersonMeta.Age, 24, 31)
                 .ToList();
 
@@ -658,13 +588,11 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
+            db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
 
-            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" }, PersonMeta.TypeInfo);
-            db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" }, PersonMeta.TypeInfo);
-
-            List<Person> results = db.Query(PersonMeta.TypeInfo)
+            List<Person> results = db.Query<Person>()
                 .WhereIn(PersonMeta.Name, new string[] { "Alice", "Charlie" })
                 .ToList();
 
@@ -738,7 +666,7 @@ public class TypeSafeCRUDTests
 
             // Insert with explicit typeInfo
             Person person1 = new Person { Name = "Explicit", Age = 30, Email = "explicit@test.com" };
-            int id1 = db.Insert(person1, PersonMeta.TypeInfo);
+            int id1 = db.Insert(person1);
 
             // Insert without typeInfo
             Person person2 = new Person { Name = "Implicit", Age = 35, Email = "implicit@test.com" };
@@ -746,7 +674,7 @@ public class TypeSafeCRUDTests
 
             // GetById mixing both styles
             Person retrieved1 = db.GetById<Person>(id1);
-            Person retrieved2 = db.GetById(id2, PersonMeta.TypeInfo);
+            Person retrieved2 = db.GetById<Person>(id2);
 
             Assert.AreEqual("Explicit", retrieved1.Name);
             Assert.AreEqual("Implicit", retrieved2.Name);

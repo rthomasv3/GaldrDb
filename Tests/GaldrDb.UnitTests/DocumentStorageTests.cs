@@ -305,4 +305,77 @@ public class DocumentStorageTests
         bool result = testData == readData;
         Assert.IsTrue(result);
     }
+
+    [TestMethod]
+    public void ContinuationPage_NotReusedForNewDocument_Sync()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 4096;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
+
+        // Write a large document that spans multiple pages
+        byte[] largeDocument = new byte[5000];
+        for (int i = 0; i < largeDocument.Length; i++)
+        {
+            largeDocument[i] = (byte)'A';
+        }
+        DocumentLocation loc1 = storage.WriteDocument(largeDocument);
+
+        // Write a small document - should NOT reuse continuation pages
+        byte[] smallDocument = Encoding.UTF8.GetBytes("Small document");
+        DocumentLocation loc2 = storage.WriteDocument(smallDocument);
+
+        // Verify the small document is on a different page than the continuation page
+        // The large document uses at least 2 pages, so continuation is loc1.PageId + 1
+        bool smallDocOnDifferentPage = loc2.PageId != loc1.PageId + 1;
+
+        // Verify both documents are readable and correct
+        byte[] read1 = storage.ReadDocument(loc1.PageId, loc1.SlotIndex);
+        byte[] read2 = storage.ReadDocument(loc2.PageId, loc2.SlotIndex);
+
+        pageIO.Dispose();
+
+        Assert.IsTrue(smallDocOnDifferentPage, $"Small document should not be on continuation page. loc1.PageId={loc1.PageId}, loc2.PageId={loc2.PageId}");
+        Assert.HasCount(largeDocument.Length, read1);
+        Assert.AreEqual("Small document", Encoding.UTF8.GetString(read2));
+    }
+
+    [TestMethod]
+    public async System.Threading.Tasks.Task ContinuationPage_NotReusedForNewDocument_Async()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 4096;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
+
+        // Write a large document that spans multiple pages
+        byte[] largeDocument = new byte[5000];
+        for (int i = 0; i < largeDocument.Length; i++)
+        {
+            largeDocument[i] = (byte)'B';
+        }
+        DocumentLocation loc1 = await storage.WriteDocumentAsync(largeDocument);
+
+        // Write a small document - should NOT reuse continuation pages
+        byte[] smallDocument = Encoding.UTF8.GetBytes("Small async document");
+        DocumentLocation loc2 = await storage.WriteDocumentAsync(smallDocument);
+
+        // Verify the small document is on a different page than the continuation page
+        bool smallDocOnDifferentPage = loc2.PageId != loc1.PageId + 1;
+
+        // Verify both documents are readable and correct
+        byte[] read1 = await storage.ReadDocumentAsync(loc1.PageId, loc1.SlotIndex);
+        byte[] read2 = await storage.ReadDocumentAsync(loc2.PageId, loc2.SlotIndex);
+
+        pageIO.Dispose();
+
+        Assert.IsTrue(smallDocOnDifferentPage, $"Small document should not be on continuation page. loc1.PageId={loc1.PageId}, loc2.PageId={loc2.PageId}");
+        Assert.HasCount(largeDocument.Length, read1);
+        Assert.AreEqual("Small async document", Encoding.UTF8.GetString(read2));
+    }
 }

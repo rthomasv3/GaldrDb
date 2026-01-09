@@ -37,10 +37,8 @@ public class UniqueConstraintTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(UserMeta.TypeInfo);
-
             User user = new User { Name = "John", Email = "john@example.com", Department = "Engineering" };
-            int id = db.Insert(user, UserMeta.TypeInfo);
+            int id = db.Insert(user);
 
             Assert.AreEqual(1, id);
         }
@@ -54,16 +52,14 @@ public class UniqueConstraintTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(UserMeta.TypeInfo);
-
             User user1 = new User { Name = "John", Email = "john@example.com", Department = "Engineering" };
-            db.Insert(user1, UserMeta.TypeInfo);
+            db.Insert(user1);
 
             User user2 = new User { Name = "Jane", Email = "john@example.com", Department = "Marketing" };
 
             InvalidOperationException exception = Assert.ThrowsExactly<InvalidOperationException>(() =>
             {
-                db.Insert(user2, UserMeta.TypeInfo);
+                db.Insert(user2);
             });
 
             Assert.Contains("Unique constraint violation", exception.Message);
@@ -80,13 +76,11 @@ public class UniqueConstraintTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(UserMeta.TypeInfo);
-
             User user1 = new User { Name = "John", Email = "john@example.com", Department = "Engineering" };
-            int id1 = db.Insert(user1, UserMeta.TypeInfo);
+            int id1 = db.Insert(user1);
 
             User user2 = new User { Name = "Jane", Email = "jane@example.com", Department = "Engineering" };
-            int id2 = db.Insert(user2, UserMeta.TypeInfo);
+            int id2 = db.Insert(user2);
 
             Assert.AreEqual(1, id1);
             Assert.AreEqual(2, id2);
@@ -101,13 +95,11 @@ public class UniqueConstraintTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(UserMeta.TypeInfo);
-
             User user1 = new User { Name = "John", Email = "john@example.com", Department = "Engineering" };
-            int id1 = db.Insert(user1, UserMeta.TypeInfo);
+            int id1 = db.Insert(user1);
 
             User user2 = new User { Name = "Jane", Email = "jane@example.com", Department = "Engineering" };
-            int id2 = db.Insert(user2, UserMeta.TypeInfo);
+            int id2 = db.Insert(user2);
 
             Assert.AreEqual(1, id1);
             Assert.AreEqual(2, id2);
@@ -122,17 +114,15 @@ public class UniqueConstraintTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(UserMeta.TypeInfo);
-
             User user = new User { Name = "John", Email = "john@example.com", Department = "Engineering" };
-            int id = db.Insert(user, UserMeta.TypeInfo);
+            int id = db.Insert(user);
 
             user.Name = "John Updated";
-            bool updated = db.Update(user, UserMeta.TypeInfo);
+            bool updated = db.Update(user);
 
             Assert.IsTrue(updated);
 
-            User retrieved = db.GetById(id, UserMeta.TypeInfo);
+            User retrieved = db.GetById<User>(id);
             Assert.AreEqual("John Updated", retrieved.Name);
             Assert.AreEqual("john@example.com", retrieved.Email);
         }
@@ -146,19 +136,17 @@ public class UniqueConstraintTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(UserMeta.TypeInfo);
-
             User user1 = new User { Name = "John", Email = "john@example.com", Department = "Engineering" };
-            db.Insert(user1, UserMeta.TypeInfo);
+            db.Insert(user1);
 
             User user2 = new User { Name = "Jane", Email = "jane@example.com", Department = "Marketing" };
-            db.Insert(user2, UserMeta.TypeInfo);
+            db.Insert(user2);
 
             user2.Email = "john@example.com";
 
             InvalidOperationException exception = Assert.ThrowsExactly<InvalidOperationException>(() =>
             {
-                db.Update(user2, UserMeta.TypeInfo);
+                db.Update(user2);
             });
 
             Assert.Contains("Unique constraint violation", exception.Message);
@@ -173,17 +161,15 @@ public class UniqueConstraintTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(UserMeta.TypeInfo);
-
             User user = new User { Name = "John", Email = "john@example.com", Department = "Engineering" };
-            int id = db.Insert(user, UserMeta.TypeInfo);
+            int id = db.Insert(user);
 
             user.Email = "john.doe@example.com";
-            bool updated = db.Update(user, UserMeta.TypeInfo);
+            bool updated = db.Update(user);
 
             Assert.IsTrue(updated);
 
-            User retrieved = db.GetById(id, UserMeta.TypeInfo);
+            User retrieved = db.GetById<User>(id);
             Assert.AreEqual("john.doe@example.com", retrieved.Email);
         }
     }
@@ -196,19 +182,17 @@ public class UniqueConstraintTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(UserMeta.TypeInfo);
-
             User user1 = new User { Name = "John", Email = "john@example.com", Department = "Engineering" };
-            int id1 = db.Insert(user1, UserMeta.TypeInfo);
+            int id1 = db.Insert(user1);
 
-            db.Delete<User>(id1, UserMeta.TypeInfo);
+            db.Delete<User>(id1);
 
             User user2 = new User { Name = "New John", Email = "john@example.com", Department = "Marketing" };
-            int id2 = db.Insert(user2, UserMeta.TypeInfo);
+            int id2 = db.Insert(user2);
 
             Assert.AreEqual(2, id2);
 
-            User retrieved = db.GetById(id2, UserMeta.TypeInfo);
+            User retrieved = db.GetById<User>(id2);
             Assert.AreEqual("New John", retrieved.Name);
             Assert.AreEqual("john@example.com", retrieved.Email);
         }

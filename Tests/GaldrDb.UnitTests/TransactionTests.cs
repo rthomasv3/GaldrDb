@@ -207,8 +207,6 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             using (Transaction tx = db.BeginTransaction())
             {
                 tx.Commit();
@@ -264,12 +262,10 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             using (Transaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "Test", Age = 30, Email = "test@example.com" };
-                int id = tx.Insert(person, PersonMeta.TypeInfo);
+                int id = tx.Insert(person);
 
                 Assert.AreEqual(1, tx.WriteSetCount);
                 Assert.IsGreaterThan(0, id);
@@ -287,15 +283,13 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             using (Transaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "Test", Age = 30, Email = "test@example.com" };
-                int id = tx.Insert(person, PersonMeta.TypeInfo);
+                int id = tx.Insert(person);
 
                 // Read within same transaction should see the write
-                Person retrieved = tx.GetById<Person>(id, PersonMeta.TypeInfo);
+                Person retrieved = tx.GetById<Person>(id);
 
                 Assert.IsNotNull(retrieved);
                 Assert.AreEqual("Test", retrieved.Name);
@@ -316,18 +310,16 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             using (Transaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "Test", Age = 30, Email = "test@example.com" };
-                insertedId = tx.Insert(person, PersonMeta.TypeInfo);
+                insertedId = tx.Insert(person);
 
                 tx.Rollback();
             }
 
             // Document should not exist after rollback
-            Person retrieved = db.GetById<Person>(insertedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(insertedId);
             Assert.IsNull(retrieved);
         }
     }
@@ -342,18 +334,16 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             using (Transaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "Test", Age = 30, Email = "test@example.com" };
-                insertedId = tx.Insert(person, PersonMeta.TypeInfo);
+                insertedId = tx.Insert(person);
 
                 tx.Commit();
             }
 
             // Document should exist after commit
-            Person retrieved = db.GetById<Person>(insertedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(insertedId);
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("Test", retrieved.Name);
         }
@@ -369,17 +359,15 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             // Insert initial document
             Person person = new Person { Name = "Original", Age = 25, Email = "original@example.com" };
-            insertedId = db.Insert(person, PersonMeta.TypeInfo);
+            insertedId = db.Insert(person);
 
             // Update in transaction
             using (Transaction tx = db.BeginTransaction())
             {
                 Person updated = new Person { Id = insertedId, Name = "Updated", Age = 30, Email = "updated@example.com" };
-                bool result = tx.Update(updated, PersonMeta.TypeInfo);
+                bool result = tx.Update(updated);
 
                 Assert.IsTrue(result);
 
@@ -387,7 +375,7 @@ public class TransactionTests
             }
 
             // Verify update persisted
-            Person retrieved = db.GetById<Person>(insertedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(insertedId);
             Assert.AreEqual("Updated", retrieved.Name);
             Assert.AreEqual(30, retrieved.Age);
         }
@@ -403,28 +391,26 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             // Insert initial document
             Person person = new Person { Name = "ToDelete", Age = 25, Email = "delete@example.com" };
-            insertedId = db.Insert(person, PersonMeta.TypeInfo);
+            insertedId = db.Insert(person);
 
             // Delete in transaction
             using (Transaction tx = db.BeginTransaction())
             {
-                bool result = tx.Delete<Person>(insertedId, PersonMeta.TypeInfo);
+                bool result = tx.Delete<Person>(insertedId);
 
                 Assert.IsTrue(result);
 
                 // Read within transaction should return null
-                Person withinTx = tx.GetById<Person>(insertedId, PersonMeta.TypeInfo);
+                Person withinTx = tx.GetById<Person>(insertedId);
                 Assert.IsNull(withinTx);
 
                 tx.Commit();
             }
 
             // Verify delete persisted
-            Person retrieved = db.GetById<Person>(insertedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(insertedId);
             Assert.IsNull(retrieved);
         }
     }
@@ -441,18 +427,16 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             using (Transaction tx = db.BeginTransaction())
             {
                 Person person1 = new Person { Name = "Person1", Age = 25, Email = "p1@example.com" };
-                id1 = tx.Insert(person1, PersonMeta.TypeInfo);
+                id1 = tx.Insert(person1);
 
                 Person person2 = new Person { Name = "Person2", Age = 30, Email = "p2@example.com" };
-                id2 = tx.Insert(person2, PersonMeta.TypeInfo);
+                id2 = tx.Insert(person2);
 
                 Person person3 = new Person { Name = "Person3", Age = 35, Email = "p3@example.com" };
-                id3 = tx.Insert(person3, PersonMeta.TypeInfo);
+                id3 = tx.Insert(person3);
 
                 Assert.AreEqual(3, tx.WriteSetCount);
 
@@ -460,9 +444,9 @@ public class TransactionTests
             }
 
             // All should be persisted
-            Person r1 = db.GetById<Person>(id1, PersonMeta.TypeInfo);
-            Person r2 = db.GetById<Person>(id2, PersonMeta.TypeInfo);
-            Person r3 = db.GetById<Person>(id3, PersonMeta.TypeInfo);
+            Person r1 = db.GetById<Person>(id1);
+            Person r2 = db.GetById<Person>(id2);
+            Person r3 = db.GetById<Person>(id3);
 
             Assert.IsNotNull(r1);
             Assert.IsNotNull(r2);
@@ -482,8 +466,6 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             bool exceptionThrown = false;
 
             using (Transaction tx = db.BeginReadOnlyTransaction())
@@ -491,7 +473,7 @@ public class TransactionTests
                 try
                 {
                     Person person = new Person { Name = "Test", Age = 30, Email = "test@example.com" };
-                    tx.Insert(person, PersonMeta.TypeInfo);
+                    tx.Insert(person);
                 }
                 catch (InvalidOperationException)
                 {
@@ -513,14 +495,12 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Name = "Readable", Age = 25, Email = "read@example.com" };
-            insertedId = db.Insert(person, PersonMeta.TypeInfo);
+            insertedId = db.Insert(person);
 
             using (Transaction tx = db.BeginReadOnlyTransaction())
             {
-                Person retrieved = tx.GetById<Person>(insertedId, PersonMeta.TypeInfo);
+                Person retrieved = tx.GetById<Person>(insertedId);
 
                 Assert.IsNotNull(retrieved);
                 Assert.AreEqual("Readable", retrieved.Name);
@@ -542,20 +522,18 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             // Insert some initial data
             Person existing = new Person { Name = "Existing", Age = 25, Email = "existing@example.com" };
-            db.Insert(existing, PersonMeta.TypeInfo);
+            db.Insert(existing);
 
             using (Transaction tx = db.BeginTransaction())
             {
                 // Insert within transaction
                 Person newPerson = new Person { Name = "New", Age = 30, Email = "new@example.com" };
-                tx.Insert(newPerson, PersonMeta.TypeInfo);
+                tx.Insert(newPerson);
 
                 // Query should see both
-                List<Person> results = tx.Query<Person>(PersonMeta.TypeInfo).ToList();
+                List<Person> results = tx.Query<Person>().ToList();
 
                 Assert.HasCount(2, results);
 
@@ -563,7 +541,7 @@ public class TransactionTests
             }
 
             // After rollback, only original document remains
-            List<Person> afterRollback = db.Query<Person>(PersonMeta.TypeInfo).ToList();
+            List<Person> afterRollback = db.Query<Person>().ToList();
             Assert.HasCount(1, afterRollback);
         }
     }
@@ -576,19 +554,17 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Name = "Original", Age = 25, Email = "original@example.com" };
-            int id = db.Insert(person, PersonMeta.TypeInfo);
+            int id = db.Insert(person);
 
             using (Transaction tx = db.BeginTransaction())
             {
                 // Update within transaction
                 Person updated = new Person { Id = id, Name = "Updated", Age = 30, Email = "updated@example.com" };
-                tx.Update(updated, PersonMeta.TypeInfo);
+                tx.Update(updated);
 
                 // Query should see updated version
-                List<Person> results = tx.Query<Person>(PersonMeta.TypeInfo)
+                List<Person> results = tx.Query<Person>()
                     .Where(PersonMeta.Name, GaldrDbEngine.Query.FieldOp.Equals, "Updated")
                     .ToList();
 
@@ -608,20 +584,18 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person1 = new Person { Name = "Keep", Age = 25, Email = "keep@example.com" };
             Person person2 = new Person { Name = "Delete", Age = 30, Email = "delete@example.com" };
-            db.Insert(person1, PersonMeta.TypeInfo);
-            int deleteId = db.Insert(person2, PersonMeta.TypeInfo);
+            db.Insert(person1);
+            int deleteId = db.Insert(person2);
 
             using (Transaction tx = db.BeginTransaction())
             {
                 // Delete within transaction
-                tx.Delete<Person>(deleteId, PersonMeta.TypeInfo);
+                tx.Delete<Person>(deleteId);
 
                 // Query should not see deleted document
-                List<Person> results = tx.Query<Person>(PersonMeta.TypeInfo).ToList();
+                List<Person> results = tx.Query<Person>().ToList();
 
                 Assert.HasCount(1, results);
                 Assert.AreEqual("Keep", results[0].Name);
@@ -639,16 +613,14 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             using (Transaction tx = db.BeginTransaction())
             {
-                tx.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" }, PersonMeta.TypeInfo);
-                tx.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" }, PersonMeta.TypeInfo);
-                tx.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" }, PersonMeta.TypeInfo);
+                tx.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+                tx.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
+                tx.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
 
                 // Query with filter
-                List<Person> results = tx.Query<Person>(PersonMeta.TypeInfo)
+                List<Person> results = tx.Query<Person>()
                     .Where(PersonMeta.Name, GaldrDbEngine.Query.FieldOp.Equals, "Bob")
                     .ToList();
 
@@ -674,12 +646,10 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             using (Transaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "Persistent", Age = 40, Email = "persist@example.com" };
-                insertedId = tx.Insert(person, PersonMeta.TypeInfo);
+                insertedId = tx.Insert(person);
 
                 tx.Commit();
             }
@@ -687,7 +657,7 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
-            Person retrieved = db.GetById<Person>(insertedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(insertedId);
 
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("Persistent", retrieved.Name);
@@ -707,12 +677,10 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             using (Transaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "AsyncTest", Age = 30, Email = "async@example.com" };
-                int id = await tx.InsertAsync(person, PersonMeta.TypeInfo);
+                int id = await tx.InsertAsync(person);
 
                 Assert.AreEqual(1, tx.WriteSetCount);
                 Assert.IsGreaterThan(0, id);
@@ -730,14 +698,12 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             using (Transaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "AsyncRead", Age = 25, Email = "asyncread@example.com" };
-                int id = await tx.InsertAsync(person, PersonMeta.TypeInfo);
+                int id = await tx.InsertAsync(person);
 
-                Person retrieved = await tx.GetByIdAsync<Person>(id, PersonMeta.TypeInfo);
+                Person retrieved = await tx.GetByIdAsync<Person>(id);
 
                 Assert.IsNotNull(retrieved);
                 Assert.AreEqual("AsyncRead", retrieved.Name);
@@ -758,17 +724,15 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             using (Transaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "AsyncCommit", Age = 35, Email = "asynccommit@example.com" };
-                insertedId = await tx.InsertAsync(person, PersonMeta.TypeInfo);
+                insertedId = await tx.InsertAsync(person);
 
                 await tx.CommitAsync();
             }
 
-            Person retrieved = db.GetById<Person>(insertedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(insertedId);
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("AsyncCommit", retrieved.Name);
         }
@@ -784,22 +748,20 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Name = "OriginalAsync", Age = 25, Email = "originalasync@example.com" };
-            insertedId = db.Insert(person, PersonMeta.TypeInfo);
+            insertedId = db.Insert(person);
 
             using (Transaction tx = db.BeginTransaction())
             {
                 Person updated = new Person { Id = insertedId, Name = "UpdatedAsync", Age = 30, Email = "updatedasync@example.com" };
-                bool result = await tx.UpdateAsync(updated, PersonMeta.TypeInfo);
+                bool result = await tx.UpdateAsync(updated);
 
                 Assert.IsTrue(result);
 
                 await tx.CommitAsync();
             }
 
-            Person retrieved = db.GetById<Person>(insertedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(insertedId);
             Assert.AreEqual("UpdatedAsync", retrieved.Name);
             Assert.AreEqual(30, retrieved.Age);
         }
@@ -815,24 +777,22 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Name = "ToDeleteAsync", Age = 25, Email = "deleteasync@example.com" };
-            insertedId = db.Insert(person, PersonMeta.TypeInfo);
+            insertedId = db.Insert(person);
 
             using (Transaction tx = db.BeginTransaction())
             {
-                bool result = await tx.DeleteAsync<Person>(insertedId, PersonMeta.TypeInfo);
+                bool result = await tx.DeleteAsync<Person>(insertedId);
 
                 Assert.IsTrue(result);
 
-                Person withinTx = await tx.GetByIdAsync<Person>(insertedId, PersonMeta.TypeInfo);
+                Person withinTx = await tx.GetByIdAsync<Person>(insertedId);
                 Assert.IsNull(withinTx);
 
                 await tx.CommitAsync();
             }
 
-            Person retrieved = db.GetById<Person>(insertedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(insertedId);
             Assert.IsNull(retrieved);
         }
     }
@@ -849,27 +809,25 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             using (Transaction tx = db.BeginTransaction())
             {
                 Person person1 = new Person { Name = "AsyncPerson1", Age = 25, Email = "ap1@example.com" };
-                id1 = await tx.InsertAsync(person1, PersonMeta.TypeInfo);
+                id1 = await tx.InsertAsync(person1);
 
                 Person person2 = new Person { Name = "AsyncPerson2", Age = 30, Email = "ap2@example.com" };
-                id2 = await tx.InsertAsync(person2, PersonMeta.TypeInfo);
+                id2 = await tx.InsertAsync(person2);
 
                 Person person3 = new Person { Name = "AsyncPerson3", Age = 35, Email = "ap3@example.com" };
-                id3 = await tx.InsertAsync(person3, PersonMeta.TypeInfo);
+                id3 = await tx.InsertAsync(person3);
 
                 Assert.AreEqual(3, tx.WriteSetCount);
 
                 await tx.CommitAsync();
             }
 
-            Person r1 = db.GetById<Person>(id1, PersonMeta.TypeInfo);
-            Person r2 = db.GetById<Person>(id2, PersonMeta.TypeInfo);
-            Person r3 = db.GetById<Person>(id3, PersonMeta.TypeInfo);
+            Person r1 = db.GetById<Person>(id1);
+            Person r2 = db.GetById<Person>(id2);
+            Person r3 = db.GetById<Person>(id3);
 
             Assert.IsNotNull(r1);
             Assert.IsNotNull(r2);
@@ -889,14 +847,12 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Name = "DbAsyncInsert", Age = 40, Email = "dbasync@example.com" };
-            int id = await db.InsertAsync(person, PersonMeta.TypeInfo);
+            int id = await db.InsertAsync(person);
 
             Assert.IsGreaterThan(0, id);
 
-            Person retrieved = db.GetById<Person>(id, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(id);
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("DbAsyncInsert", retrieved.Name);
         }
@@ -910,12 +866,10 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Name = "DbAsyncGet", Age = 45, Email = "dbasyncget@example.com" };
-            int id = db.Insert(person, PersonMeta.TypeInfo);
+            int id = db.Insert(person);
 
-            Person retrieved = await db.GetByIdAsync<Person>(id, PersonMeta.TypeInfo);
+            Person retrieved = await db.GetByIdAsync<Person>(id);
 
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("DbAsyncGet", retrieved.Name);
@@ -931,17 +885,15 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Name = "DbAsyncUpdateOrig", Age = 50, Email = "dbasyncupdate@example.com" };
-            int id = db.Insert(person, PersonMeta.TypeInfo);
+            int id = db.Insert(person);
 
             Person updated = new Person { Id = id, Name = "DbAsyncUpdateNew", Age = 55, Email = "dbasyncupdatenew@example.com" };
-            bool result = await db.UpdateAsync(updated, PersonMeta.TypeInfo);
+            bool result = await db.UpdateAsync(updated);
 
             Assert.IsTrue(result);
 
-            Person retrieved = db.GetById<Person>(id, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(id);
             Assert.AreEqual("DbAsyncUpdateNew", retrieved.Name);
             Assert.AreEqual(55, retrieved.Age);
         }
@@ -955,16 +907,14 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Name = "DbAsyncDelete", Age = 60, Email = "dbasyncdelete@example.com" };
-            int id = db.Insert(person, PersonMeta.TypeInfo);
+            int id = db.Insert(person);
 
-            bool result = await db.DeleteAsync<Person>(id, PersonMeta.TypeInfo);
+            bool result = await db.DeleteAsync<Person>(id);
 
             Assert.IsTrue(result);
 
-            Person retrieved = db.GetById<Person>(id, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(id);
             Assert.IsNull(retrieved);
         }
     }
@@ -977,10 +927,8 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             Person person = new Person { Name = "GetDocAsync", Age = 65, Email = "getdocasync@example.com" };
-            int id = db.Insert(person, PersonMeta.TypeInfo);
+            int id = db.Insert(person);
 
             Person retrieved = await db.GetByIdAsync<Person>(id);
 

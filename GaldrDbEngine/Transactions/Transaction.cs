@@ -4,7 +4,6 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using GaldrDbEngine.MVCC;
-using GaldrDbEngine.Pages;
 using GaldrDbEngine.Query;
 using GaldrDbEngine.Storage;
 using GaldrJson;
@@ -62,33 +61,10 @@ public class Transaction : IDisposable
         get { return _writeSet.Count; }
     }
 
-    public T GetById<T>(int id)
-    {
-        return GetById(id, GaldrTypeRegistry.Get<T>());
-    }
-
-    public int Insert<T>(T document)
-    {
-        return Insert(document, GaldrTypeRegistry.Get<T>());
-    }
-
-    public bool Update<T>(T document)
-    {
-        return Update(document, GaldrTypeRegistry.Get<T>());
-    }
-
-    public bool Delete<T>(int id)
-    {
-        return Delete<T>(id, GaldrTypeRegistry.Get<T>());
-    }
-
     public QueryBuilder<T> Query<T>()
     {
-        return Query(GaldrTypeRegistry.Get<T>());
-    }
+        GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
 
-    public QueryBuilder<T> Query<T>(GaldrTypeInfo<T> typeInfo)
-    {
         EnsureActive();
 
         TransactionQueryExecutor<T> executor = new TransactionQueryExecutor<T>(
@@ -104,8 +80,10 @@ public class Transaction : IDisposable
         return queryBuilder;
     }
 
-    public T GetById<T>(int id, GaldrTypeInfo<T> typeInfo)
+    public T GetById<T>(int id)
     {
+        GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
+        
         EnsureActive();
 
         T result = default(T);
@@ -136,13 +114,14 @@ public class Transaction : IDisposable
         return result;
     }
 
-    public int Insert<T>(T document, GaldrTypeInfo<T> typeInfo)
+    public int Insert<T>(T document)
     {
+        GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
+
         EnsureActive();
         EnsureWritable();
 
         string collectionName = typeInfo.CollectionName;
-        _db.EnsureCollection(typeInfo);
 
         CollectionEntry collection = _db.GetCollection(collectionName);
         int currentId = typeInfo.IdGetter(document);
@@ -191,8 +170,10 @@ public class Transaction : IDisposable
         return assignedId;
     }
 
-    public bool Update<T>(T document, GaldrTypeInfo<T> typeInfo)
+    public bool Update<T>(T document)
     {
+        GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
+        
         EnsureActive();
         EnsureWritable();
 
@@ -204,7 +185,6 @@ public class Transaction : IDisposable
         }
 
         string collectionName = typeInfo.CollectionName;
-        _db.EnsureCollection(typeInfo);
 
         // Check for write-write conflict
         DocumentVersion latestVersion = _versionIndex.GetLatestVersion(collectionName, id);
@@ -233,7 +213,7 @@ public class Transaction : IDisposable
         }
         else
         {
-            T existing = _db.GetById(id, typeInfo);
+            T existing = _db.GetById<T>(id);
             if (existing != null)
             {
                 exists = true;
@@ -268,13 +248,14 @@ public class Transaction : IDisposable
         return true;
     }
 
-    public bool Delete<T>(int id, GaldrTypeInfo<T> typeInfo)
+    public bool Delete<T>(int id)
     {
+        GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
+        
         EnsureActive();
         EnsureWritable();
 
         string collectionName = typeInfo.CollectionName;
-        _db.EnsureCollection(typeInfo);
 
         // Check for write-write conflict
         DocumentVersion latestVersion = _versionIndex.GetLatestVersion(collectionName, id);
@@ -301,7 +282,7 @@ public class Transaction : IDisposable
         }
         else
         {
-            T existing = _db.GetById(id, typeInfo);
+            T existing = _db.GetById<T>(id);
             if (existing != null)
             {
                 exists = true;
@@ -444,26 +425,8 @@ public class Transaction : IDisposable
 
     public async Task<T> GetByIdAsync<T>(int id, CancellationToken cancellationToken = default)
     {
-        return await GetByIdAsync(id, GaldrTypeRegistry.Get<T>(), cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task<int> InsertAsync<T>(T document, CancellationToken cancellationToken = default)
-    {
-        return await InsertAsync(document, GaldrTypeRegistry.Get<T>(), cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task<bool> UpdateAsync<T>(T document, CancellationToken cancellationToken = default)
-    {
-        return await UpdateAsync(document, GaldrTypeRegistry.Get<T>(), cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task<bool> DeleteAsync<T>(int id, CancellationToken cancellationToken = default)
-    {
-        return await DeleteAsync<T>(id, GaldrTypeRegistry.Get<T>(), cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task<T> GetByIdAsync<T>(int id, GaldrTypeInfo<T> typeInfo, CancellationToken cancellationToken = default)
-    {
+        GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
+        
         EnsureActive();
 
         T result = default(T);
@@ -494,13 +457,14 @@ public class Transaction : IDisposable
         return result;
     }
 
-    public Task<int> InsertAsync<T>(T document, GaldrTypeInfo<T> typeInfo, CancellationToken cancellationToken = default)
+    public Task<int> InsertAsync<T>(T document, CancellationToken cancellationToken = default)
     {
+        GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
+        
         EnsureActive();
         EnsureWritable();
 
         string collectionName = typeInfo.CollectionName;
-        _db.EnsureCollection(typeInfo);
 
         CollectionEntry collection = _db.GetCollection(collectionName);
         int currentId = typeInfo.IdGetter(document);
@@ -549,8 +513,10 @@ public class Transaction : IDisposable
         return Task.FromResult(assignedId);
     }
 
-    public Task<bool> UpdateAsync<T>(T document, GaldrTypeInfo<T> typeInfo, CancellationToken cancellationToken = default)
+    public Task<bool> UpdateAsync<T>(T document, CancellationToken cancellationToken = default)
     {
+        GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
+        
         EnsureActive();
         EnsureWritable();
 
@@ -562,7 +528,6 @@ public class Transaction : IDisposable
         }
 
         string collectionName = typeInfo.CollectionName;
-        _db.EnsureCollection(typeInfo);
 
         // Check for write-write conflict
         DocumentVersion latestVersion = _versionIndex.GetLatestVersion(collectionName, id);
@@ -591,7 +556,7 @@ public class Transaction : IDisposable
         }
         else
         {
-            T existing = _db.GetById(id, typeInfo);
+            T existing = _db.GetById<T>(id);
             if (existing != null)
             {
                 exists = true;
@@ -626,13 +591,14 @@ public class Transaction : IDisposable
         return Task.FromResult(true);
     }
 
-    public Task<bool> DeleteAsync<T>(int id, GaldrTypeInfo<T> typeInfo, CancellationToken cancellationToken = default)
+    public Task<bool> DeleteAsync<T>(int id, CancellationToken cancellationToken = default)
     {
+        GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
+        
         EnsureActive();
         EnsureWritable();
 
         string collectionName = typeInfo.CollectionName;
-        _db.EnsureCollection(typeInfo);
 
         // Check for write-write conflict
         DocumentVersion latestVersion = _versionIndex.GetLatestVersion(collectionName, id);
@@ -659,7 +625,7 @@ public class Transaction : IDisposable
         }
         else
         {
-            T existing = _db.GetById(id, typeInfo);
+            T existing = _db.GetById<T>(id);
             if (existing != null)
             {
                 exists = true;

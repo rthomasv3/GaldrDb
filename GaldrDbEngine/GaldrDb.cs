@@ -148,12 +148,36 @@ public class GaldrDb : IDisposable
     public GarbageCollectionResult Vacuum()
     {
         EnsureGarbageCollector();
-        return _garbageCollector.Collect();
+        GarbageCollectionResult result = _garbageCollector.Collect();
+
+        if (result.VersionsCollected > 0)
+        {
+            ulong walTxId = _txManager.AllocateTxId().Value;
+            BeginWalTransaction(walTxId);
+
+            try
+            {
+                foreach (CollectableVersion collectable in result.CollectableVersions)
+                {
+                    _documentStorage.DeleteDocument(collectable.Location.PageId, collectable.Location.SlotIndex);
+                }
+
+                CommitWalTransaction();
+            }
+            catch
+            {
+                AbortWalTransaction();
+                throw;
+            }
+
+            _garbageCollector.UnlinkVersions(result.CollectableVersions);
+        }
+
+        return result;
     }
 
     public Task<GarbageCollectionResult> VacuumAsync(CancellationToken cancellationToken = default)
     {
-        // GC is primarily in-memory work on the VersionIndex, so we just wrap the sync version
         return Task.FromResult(Vacuum());
     }
 
@@ -203,15 +227,7 @@ public class GaldrDb : IDisposable
         return tx;
     }
 
-    internal void CreateCollection(string collectionName)
-    {
-        lock (_ddlLock)
-        {
-            CreateCollectionInternal(collectionName);
-        }
-    }
-
-    private void CreateCollectionInternal(string collectionName)
+    private void CreateCollection(string collectionName)
     {
         CollectionEntry existingCollection = _collectionsMetadata.FindCollection(collectionName);
         if (existingCollection != null)
@@ -219,7 +235,9 @@ public class GaldrDb : IDisposable
             throw new InvalidOperationException($"Collection '{collectionName}' already exists");
         }
 
-        BeginWalTransaction(0);
+        EnsureTransactionManager();
+        ulong walTxId = _txManager.AllocateTxId().Value;
+        BeginWalTransaction(walTxId);
 
         try
         {
@@ -256,102 +274,50 @@ public class GaldrDb : IDisposable
 
     #region Type-Safe CRUD Operations
 
-    public void EnsureCollection<T>()
-    {
-        EnsureCollection(GaldrTypeRegistry.Get<T>());
-    }
-
     public int Insert<T>(T document)
-    {
-        return Insert(document, GaldrTypeRegistry.Get<T>());
-    }
-
-    public T GetById<T>(int id)
-    {
-        return GetById(id, GaldrTypeRegistry.Get<T>());
-    }
-
-    public bool Update<T>(T document)
-    {
-        return Update(document, GaldrTypeRegistry.Get<T>());
-    }
-
-    public bool Delete<T>(int id)
-    {
-        return Delete<T>(id, GaldrTypeRegistry.Get<T>());
-    }
-
-    public QueryBuilder<T> Query<T>()
-    {
-        return Query(GaldrTypeRegistry.Get<T>());
-    }
-
-    public void EnsureCollection<T>(GaldrTypeInfo<T> typeInfo)
-    {
-        string collectionName = typeInfo.CollectionName;
-
-        lock (_ddlLock)
-        {
-            if (!_ensuredCollections.Contains(collectionName))
-            {
-                CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
-
-                if (collection == null)
-                {
-                    CreateCollectionInternal(collectionName);
-                    collection = _collectionsMetadata.FindCollection(collectionName);
-                }
-
-                EnsureIndexes(collection, typeInfo);
-                _ensuredCollections.Add(collectionName);
-            }
-        }
-    }
-
-    public int Insert<T>(T document, GaldrTypeInfo<T> typeInfo)
     {
         using (Transaction tx = BeginTransaction())
         {
-            int id = tx.Insert(document, typeInfo);
+            int id = tx.Insert<T>(document);
             tx.Commit();
             return id;
         }
     }
 
-    public T GetById<T>(int id, GaldrTypeInfo<T> typeInfo)
+    public T GetById<T>(int id)
     {
         using (Transaction tx = BeginReadOnlyTransaction())
         {
-            T result = tx.GetById(id, typeInfo);
+            T result = tx.GetById<T>(id);
             tx.Commit();
             return result;
         }
     }
 
-    public bool Update<T>(T document, GaldrTypeInfo<T> typeInfo)
+    public bool Update<T>(T document)
     {
         using (Transaction tx = BeginTransaction())
         {
-            bool result = tx.Update(document, typeInfo);
+            bool result = tx.Update<T>(document);
             tx.Commit();
             return result;
         }
     }
 
-    public bool Delete<T>(int id, GaldrTypeInfo<T> typeInfo)
+    public bool Delete<T>(int id)
     {
         using (Transaction tx = BeginTransaction())
         {
-            bool result = tx.Delete<T>(id, typeInfo);
+            bool result = tx.Delete<T>(id);
             tx.Commit();
             return result;
         }
     }
 
-    public QueryBuilder<T> Query<T>(GaldrTypeInfo<T> typeInfo)
+    public QueryBuilder<T> Query<T>()
     {
         Transaction tx = BeginReadOnlyTransaction();
-        QueryBuilder<T> innerQuery = tx.Query(typeInfo);
+        QueryBuilder<T> innerQuery = tx.Query<T>();
 
         // Wrap the executor to auto-dispose the transaction after query execution
         AutoDisposingQueryExecutor<T> autoDisposingExecutor = new AutoDisposingQueryExecutor<T>(
@@ -372,59 +338,39 @@ public class GaldrDb : IDisposable
 
     public async Task<int> InsertAsync<T>(T document, CancellationToken cancellationToken = default)
     {
-        return await InsertAsync(document, GaldrTypeRegistry.Get<T>(), cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task<T> GetByIdAsync<T>(int id, CancellationToken cancellationToken = default)
-    {
-        return await GetByIdAsync(id, GaldrTypeRegistry.Get<T>(), cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task<bool> UpdateAsync<T>(T document, CancellationToken cancellationToken = default)
-    {
-        return await UpdateAsync(document, GaldrTypeRegistry.Get<T>(), cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task<bool> DeleteAsync<T>(int id, CancellationToken cancellationToken = default)
-    {
-        return await DeleteAsync<T>(id, GaldrTypeRegistry.Get<T>(), cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task<int> InsertAsync<T>(T document, GaldrTypeInfo<T> typeInfo, CancellationToken cancellationToken = default)
-    {
         using (Transaction tx = BeginTransaction())
         {
-            int id = await tx.InsertAsync(document, typeInfo, cancellationToken).ConfigureAwait(false);
+            int id = await tx.InsertAsync<T>(document, cancellationToken).ConfigureAwait(false);
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
             return id;
         }
     }
 
-    public async Task<T> GetByIdAsync<T>(int id, GaldrTypeInfo<T> typeInfo, CancellationToken cancellationToken = default)
+    public async Task<T> GetByIdAsync<T>(int id, CancellationToken cancellationToken = default)
     {
         using (Transaction tx = BeginReadOnlyTransaction())
         {
-            T result = await tx.GetByIdAsync(id, typeInfo, cancellationToken).ConfigureAwait(false);
+            T result = await tx.GetByIdAsync<T>(id, cancellationToken).ConfigureAwait(false);
             tx.Commit();
             return result;
         }
     }
 
-    public async Task<bool> UpdateAsync<T>(T document, GaldrTypeInfo<T> typeInfo, CancellationToken cancellationToken = default)
+    public async Task<bool> UpdateAsync<T>(T document, CancellationToken cancellationToken = default)
     {
         using (Transaction tx = BeginTransaction())
         {
-            bool result = await tx.UpdateAsync(document, typeInfo, cancellationToken).ConfigureAwait(false);
+            bool result = await tx.UpdateAsync<T>(document, cancellationToken).ConfigureAwait(false);
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
             return result;
         }
     }
 
-    public async Task<bool> DeleteAsync<T>(int id, GaldrTypeInfo<T> typeInfo, CancellationToken cancellationToken = default)
+    public async Task<bool> DeleteAsync<T>(int id, CancellationToken cancellationToken = default)
     {
         using (Transaction tx = BeginTransaction())
         {
-            bool result = await tx.DeleteAsync<T>(id, typeInfo, cancellationToken).ConfigureAwait(false);
+            bool result = await tx.DeleteAsync<T>(id, cancellationToken).ConfigureAwait(false);
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
             return result;
         }
@@ -433,8 +379,8 @@ public class GaldrDb : IDisposable
     #endregion
 
     #region Index Operations
-
-    private void EnsureIndexes<T>(CollectionEntry collection, GaldrTypeInfo<T> typeInfo)
+    
+    private void EnsureIndexes(CollectionEntry collection, IGaldrTypeInfo typeInfo)
     {
         IReadOnlyList<string> indexedFieldNames = typeInfo.IndexedFieldNames;
         IReadOnlyList<string> uniqueIndexFieldNames = typeInfo.UniqueIndexFieldNames;
@@ -461,7 +407,9 @@ public class GaldrDb : IDisposable
 
         if (newIndexes.Count > 0)
         {
-            BeginWalTransaction(0);
+            EnsureTransactionManager();
+            ulong walTxId = _txManager.AllocateTxId().Value;
+            BeginWalTransaction(walTxId);
 
             byte[] rootBuffer = BufferPool.Rent(_options.PageSize);
             try
@@ -495,7 +443,7 @@ public class GaldrDb : IDisposable
             }
         }
     }
-
+    
     private void CheckUniqueConstraint(IndexDefinition indexDef, string fieldName, byte[] keyBytes)
     {
         int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
@@ -569,6 +517,8 @@ public class GaldrDb : IDisposable
 
         // Document storage uses the final _pageIO (WAL-wrapped if UseWal is true)
         _documentStorage = new DocumentStorage(_pageIO, _pageManager, _options.PageSize);
+
+        EnsureAllCollections();
     }
 
     private void OpenAndValidateFile()
@@ -614,6 +564,8 @@ public class GaldrDb : IDisposable
             // No WAL - still need to rebuild VersionIndex for MVCC reads to work
             RebuildVersionIndex(0);
         }
+
+        EnsureAllCollections();
     }
 
     private void SetupIO()
@@ -801,6 +753,38 @@ public class GaldrDb : IDisposable
         }
     }
 
+    private void EnsureAllCollections()
+    {
+        if (!GaldrTypeRegistry.IsInitialized)
+        {
+            return;
+        }
+
+        lock (_ddlLock)
+        {
+            foreach (IGaldrTypeInfo typeInfo in GaldrTypeRegistry.GetAll())
+            {
+                string collectionName = typeInfo.CollectionName;
+
+                if (_ensuredCollections.Contains(collectionName))
+                {
+                    continue;
+                }
+
+                CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+
+                if (collection == null)
+                {
+                    CreateCollection(collectionName);
+                    collection = _collectionsMetadata.FindCollection(collectionName);
+                }
+
+                EnsureIndexes(collection, typeInfo);
+                _ensuredCollections.Add(collectionName);
+            }
+        }
+    }
+
     internal void TryRunGarbageCollection()
     {
         if (!_options.AutoGarbageCollection)
@@ -808,14 +792,12 @@ public class GaldrDb : IDisposable
             return;
         }
 
-        EnsureGarbageCollector();
-
         long currentCommitCount = _txManager.CommitCount;
         long commitsSinceLastGC = currentCommitCount - _lastGCCommitCount;
 
         if (commitsSinceLastGC >= _options.GarbageCollectionThreshold)
         {
-            _garbageCollector.Collect();
+            Vacuum();
             _lastGCCommitCount = currentCommitCount;
         }
     }

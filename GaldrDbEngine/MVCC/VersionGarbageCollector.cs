@@ -18,14 +18,13 @@ public sealed class VersionGarbageCollector
     {
         TxId oldestSnapshot = _txManager.GetOldestActiveSnapshot();
 
-        // If no active transactions, use LastCommittedTxId as the cutoff
         if (oldestSnapshot == TxId.MaxValue)
         {
             oldestSnapshot = _txManager.LastCommittedTxId;
         }
 
-        int versionsCollected = 0;
         int documentsProcessed = 0;
+        List<CollectableVersion> allCollectableVersions = new List<CollectableVersion>();
 
         List<CollectionVersions> allCollections = _versionIndex.GetAllCollectionsForGC();
 
@@ -34,16 +33,32 @@ public sealed class VersionGarbageCollector
             foreach (DocumentVersionChain chain in collectionVersions.Chains)
             {
                 documentsProcessed++;
-                versionsCollected += CollectVersionChain(chain, oldestSnapshot);
+                List<CollectableVersion> chainCollectables = IdentifyCollectableVersions(chain, oldestSnapshot);
+                allCollectableVersions.AddRange(chainCollectables);
             }
         }
 
-        return new GarbageCollectionResult(versionsCollected, documentsProcessed);
+        return new GarbageCollectionResult(allCollectableVersions.Count, documentsProcessed, allCollectableVersions);
     }
 
-    private int CollectVersionChain(DocumentVersionChain chain, TxId oldestSnapshot)
+    public void UnlinkVersions(IReadOnlyList<CollectableVersion> collectableVersions)
     {
-        int collected = 0;
+        foreach (CollectableVersion collectable in collectableVersions)
+        {
+            if (collectable.Previous != null)
+            {
+                _versionIndex.UnlinkVersion(
+                    collectable.CollectionName,
+                    collectable.DocumentId,
+                    collectable.Previous,
+                    collectable.ToRemove);
+            }
+        }
+    }
+
+    private List<CollectableVersion> IdentifyCollectableVersions(DocumentVersionChain chain, TxId oldestSnapshot)
+    {
+        List<CollectableVersion> collectables = new List<CollectableVersion>();
         DocumentVersion current = chain.Head;
         DocumentVersion previous = null;
         bool foundVisibleVersion = false;
@@ -54,8 +69,6 @@ public sealed class VersionGarbageCollector
 
             if (foundVisibleVersion)
             {
-                // We've already found a version visible to oldestSnapshot
-                // This older version can be collected if it was superseded before oldestSnapshot
                 if (current.DeletedBy != TxId.MaxValue && current.DeletedBy < oldestSnapshot)
                 {
                     canCollect = true;
@@ -69,18 +82,19 @@ public sealed class VersionGarbageCollector
                 }
                 else if (current.DeletedBy != TxId.MaxValue && current.DeletedBy < oldestSnapshot)
                 {
-                    // This version was deleted before any active snapshot can see it
                     canCollect = true;
                 }
             }
 
             if (canCollect)
             {
-                if (previous != null)
-                {
-                    _versionIndex.UnlinkVersion(chain.CollectionName, chain.DocumentId, previous, current);
-                }
-                collected++;
+                CollectableVersion collectable = new CollectableVersion(
+                    chain.CollectionName,
+                    chain.DocumentId,
+                    previous,
+                    current,
+                    current.Location);
+                collectables.Add(collectable);
             }
             else
             {
@@ -90,6 +104,6 @@ public sealed class VersionGarbageCollector
             current = current.PreviousVersion;
         }
 
-        return collected;
+        return collectables;
     }
 }

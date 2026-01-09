@@ -45,7 +45,8 @@ public class DocumentStorage
                 _pageIO.ReadPage(pageId, pageBuffer);
                 DocumentPage page = null;
 
-                if (IsPageInitialized(pageBuffer))
+                bool wasInitialized = IsPageInitialized(pageBuffer);
+                if (wasInitialized)
                 {
                     page = DocumentPage.Deserialize(pageBuffer, _pageSize);
                 }
@@ -100,7 +101,9 @@ public class DocumentStorage
 
                     _pageIO.WritePage(pageId, pageBuffer);
 
-                    UpdateFSM(pageId, _pageSize - chunkSize);
+                    // Continuation pages are raw data buffers, not slotted pages.
+                    // Mark as no free space so they won't be found by FindOrAllocatePageForDocument.
+                    _pageManager.SetFreeSpaceLevel(pageId, FreeSpaceLevel.None);
 
                     offset += chunkSize;
                 }
@@ -360,7 +363,9 @@ public class DocumentStorage
 
                     await _pageIO.WritePageAsync(pageId, pageBuffer, cancellationToken).ConfigureAwait(false);
 
-                    UpdateFSM(pageId, _pageSize - chunkSize);
+                    // Continuation pages are raw data buffers, not slotted pages.
+                    // Mark as no free space so they won't be found by FindOrAllocatePageForDocument.
+                    _pageManager.SetFreeSpaceLevel(pageId, FreeSpaceLevel.None);
 
                     offset += chunkSize;
                 }

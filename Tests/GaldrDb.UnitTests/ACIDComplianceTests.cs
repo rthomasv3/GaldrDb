@@ -41,23 +41,23 @@ public class ACIDComplianceTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, new GaldrDbOptions()))
         {
-            int id = db.Insert(new Person { Name = "Original", Age = 30 }, PersonMeta.TypeInfo);
+            int id = db.Insert(new Person { Name = "Original", Age = 30 });
 
             using (Transaction tx = db.BeginTransaction())
             {
-                tx.Insert(new Person { Name = "ShouldNotExist", Age = 25 }, PersonMeta.TypeInfo);
+                tx.Insert(new Person { Name = "ShouldNotExist", Age = 25 });
 
                 Person updated = new Person { Id = id, Name = "ShouldNotUpdate", Age = 99 };
-                tx.Update(updated, PersonMeta.TypeInfo);
+                tx.Update(updated);
 
                 tx.Rollback();
             }
 
-            Person retrieved = db.GetById(id, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(id);
             Assert.AreEqual("Original", retrieved.Name);
             Assert.AreEqual(30, retrieved.Age);
 
-            List<Person> allPeople = db.Query(PersonMeta.TypeInfo).ToList();
+            List<Person> allPeople = db.Query<Person>().ToList();
             Assert.HasCount(1, allPeople);
         }
     }
@@ -69,13 +69,13 @@ public class ACIDComplianceTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, new GaldrDbOptions()))
         {
-            int id = db.Insert(new Person { Name = "Original", Age = 30 }, PersonMeta.TypeInfo);
+            int id = db.Insert(new Person { Name = "Original", Age = 30 });
 
             try
             {
                 using (Transaction tx = db.BeginTransaction())
                 {
-                    tx.Insert(new Person { Name = "Inserted", Age = 25 }, PersonMeta.TypeInfo);
+                    tx.Insert(new Person { Name = "Inserted", Age = 25 });
                     throw new InvalidOperationException("Simulated failure");
                 }
             }
@@ -84,7 +84,7 @@ public class ACIDComplianceTests
                 // Expected
             }
 
-            List<Person> allPeople = db.Query(PersonMeta.TypeInfo).ToList();
+            List<Person> allPeople = db.Query<Person>().ToList();
             Assert.HasCount(1, allPeople);
             Assert.AreEqual("Original", allPeople[0].Name);
         }
@@ -101,13 +101,13 @@ public class ACIDComplianceTests
             {
                 for (int i = 0; i < 100; i++)
                 {
-                    tx.Insert(new Person { Name = $"Person{i}", Age = 20 + i }, PersonMeta.TypeInfo);
+                    tx.Insert(new Person { Name = $"Person{i}", Age = 20 + i });
                 }
 
                 tx.Commit();
             }
 
-            List<Person> allPeople = db.Query(PersonMeta.TypeInfo).ToList();
+            List<Person> allPeople = db.Query<Person>().ToList();
             Assert.HasCount(100, allPeople);
         }
     }
@@ -123,19 +123,19 @@ public class ACIDComplianceTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, new GaldrDbOptions()))
         {
-            int id = db.Insert(new Person { Name = "Original", Age = 30 }, PersonMeta.TypeInfo);
+            int id = db.Insert(new Person { Name = "Original", Age = 30 });
 
             Transaction tx1 = db.BeginTransaction();
 
             using (Transaction tx2 = db.BeginTransaction())
             {
-                tx2.Update(new Person { Id = id, Name = "FromTx2", Age = 31 }, PersonMeta.TypeInfo);
+                tx2.Update(new Person { Id = id, Name = "FromTx2", Age = 31 });
                 tx2.Commit();
             }
 
             try
             {
-                tx1.Update(new Person { Id = id, Name = "FromTx1", Age = 32 }, PersonMeta.TypeInfo);
+                tx1.Update(new Person { Id = id, Name = "FromTx1", Age = 32 });
                 Assert.Fail("Expected WriteConflictException");
             }
             catch (WriteConflictException)
@@ -147,7 +147,7 @@ public class ACIDComplianceTests
                 tx1.Dispose();
             }
 
-            Person final = db.GetById(id, PersonMeta.TypeInfo);
+            Person final = db.GetById<Person>(id);
             Assert.AreEqual("FromTx2", final.Name);
             Assert.AreEqual(31, final.Age);
         }
@@ -164,7 +164,7 @@ public class ACIDComplianceTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, new GaldrDbOptions()))
         {
-            int id = db.Insert(new Person { Name = "Initial", Age = 0 }, PersonMeta.TypeInfo);
+            int id = db.Insert(new Person { Name = "Initial", Age = 0 });
 
             const int iterations = 50;
             List<Task> tasks = new List<Task>();
@@ -180,7 +180,7 @@ public class ACIDComplianceTests
                     {
                         using (Transaction readTx = db.BeginReadOnlyTransaction())
                         {
-                            Person p = readTx.GetById(id, PersonMeta.TypeInfo);
+                            Person p = readTx.GetById<Person>(id);
                             if (p != null && p.Name != "Initial" && !p.Name.StartsWith("Update"))
                             {
                                 lock (lockObj) { errors++; }
@@ -202,7 +202,7 @@ public class ACIDComplianceTests
                         {
                             using (Transaction writeTx = db.BeginTransaction())
                             {
-                                writeTx.Update(new Person { Id = id, Name = $"Update{updateIteration}", Age = updateIteration }, PersonMeta.TypeInfo);
+                                writeTx.Update(new Person { Id = id, Name = $"Update{updateIteration}", Age = updateIteration });
                                 writeTx.Commit();
                             }
                         }
@@ -226,20 +226,20 @@ public class ACIDComplianceTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, new GaldrDbOptions()))
         {
-            int id = db.Insert(new Person { Name = "Alice", Age = 30 }, PersonMeta.TypeInfo);
+            int id = db.Insert(new Person { Name = "Alice", Age = 30 });
 
             using (Transaction readTx = db.BeginReadOnlyTransaction())
             {
-                Person firstRead = readTx.GetById(id, PersonMeta.TypeInfo);
+                Person firstRead = readTx.GetById<Person>(id);
                 Assert.AreEqual("Alice", firstRead.Name);
 
                 using (Transaction writeTx = db.BeginTransaction())
                 {
-                    writeTx.Update(new Person { Id = id, Name = "Alice Updated", Age = 31 }, PersonMeta.TypeInfo);
+                    writeTx.Update(new Person { Id = id, Name = "Alice Updated", Age = 31 });
                     writeTx.Commit();
                 }
 
-                Person secondRead = readTx.GetById(id, PersonMeta.TypeInfo);
+                Person secondRead = readTx.GetById<Person>(id);
                 Assert.AreEqual("Alice", secondRead.Name);
                 Assert.AreEqual(firstRead.Age, secondRead.Age);
             }
@@ -262,14 +262,14 @@ public class ACIDComplianceTests
         {
             using (Transaction tx = db.BeginTransaction())
             {
-                insertedId = tx.Insert(new Person { Name = "Durable", Age = 42 }, PersonMeta.TypeInfo);
+                insertedId = tx.Insert(new Person { Name = "Durable", Age = 42 });
                 tx.Commit();
             }
         }
 
         using (GaldrDatabase db = GaldrDatabase.Open(dbPath, options))
         {
-            Person retrieved = db.GetById(insertedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(insertedId);
 
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("Durable", retrieved.Name);
@@ -291,7 +291,7 @@ public class ACIDComplianceTests
             {
                 using (Transaction tx = db.BeginTransaction())
                 {
-                    ids[i] = tx.Insert(new Person { Name = $"Person{i}", Age = 20 + i }, PersonMeta.TypeInfo);
+                    ids[i] = tx.Insert(new Person { Name = $"Person{i}", Age = 20 + i });
                     tx.Commit();
                 }
             }
@@ -301,7 +301,7 @@ public class ACIDComplianceTests
         {
             for (int i = 0; i < 10; i++)
             {
-                Person p = db.GetById(ids[i], PersonMeta.TypeInfo);
+                Person p = db.GetById<Person>(ids[i]);
                 Assert.IsNotNull(p, $"Person {i} should exist");
                 Assert.AreEqual($"Person{i}", p.Name);
             }
@@ -319,25 +319,25 @@ public class ACIDComplianceTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, options))
         {
-            id1 = db.Insert(new Person { Name = "ToUpdate", Age = 25 }, PersonMeta.TypeInfo);
-            id2 = db.Insert(new Person { Name = "ToDelete", Age = 30 }, PersonMeta.TypeInfo);
+            id1 = db.Insert(new Person { Name = "ToUpdate", Age = 25 });
+            id2 = db.Insert(new Person { Name = "ToDelete", Age = 30 });
 
             using (Transaction tx = db.BeginTransaction())
             {
-                tx.Update(new Person { Id = id1, Name = "Updated", Age = 26 }, PersonMeta.TypeInfo);
-                tx.Delete<Person>(id2, PersonMeta.TypeInfo);
+                tx.Update(new Person { Id = id1, Name = "Updated", Age = 26 });
+                tx.Delete<Person>(id2);
                 tx.Commit();
             }
         }
 
         using (GaldrDatabase db = GaldrDatabase.Open(dbPath, options))
         {
-            Person p1 = db.GetById(id1, PersonMeta.TypeInfo);
+            Person p1 = db.GetById<Person>(id1);
             Assert.IsNotNull(p1);
             Assert.AreEqual("Updated", p1.Name);
             Assert.AreEqual(26, p1.Age);
 
-            Person p2 = db.GetById(id2, PersonMeta.TypeInfo);
+            Person p2 = db.GetById<Person>(id2);
             Assert.IsNull(p2);
         }
     }
@@ -352,14 +352,14 @@ public class ACIDComplianceTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, options))
         {
-            insertedId = db.Insert(new Person { Name = "Checkpointed", Age = 35 }, PersonMeta.TypeInfo);
+            insertedId = db.Insert(new Person { Name = "Checkpointed", Age = 35 });
 
             await db.CheckpointAsync();
         }
 
         using (GaldrDatabase db = GaldrDatabase.Open(dbPath, options))
         {
-            Person retrieved = db.GetById(insertedId, PersonMeta.TypeInfo);
+            Person retrieved = db.GetById<Person>(insertedId);
 
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("Checkpointed", retrieved.Name);
@@ -377,20 +377,20 @@ public class ACIDComplianceTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, new GaldrDbOptions()))
         {
-            int id = db.Insert(new Person { Name = "Test", Age = 25 }, PersonMeta.TypeInfo);
+            int id = db.Insert(new Person { Name = "Test", Age = 25 });
 
             Transaction readTx = db.BeginReadOnlyTransaction();
-            Person readResult = readTx.GetById(id, PersonMeta.TypeInfo);
+            Person readResult = readTx.GetById<Person>(id);
 
             using (Transaction writeTx = db.BeginTransaction())
             {
-                writeTx.Update(new Person { Id = id, Name = "Updated", Age = 26 }, PersonMeta.TypeInfo);
+                writeTx.Update(new Person { Id = id, Name = "Updated", Age = 26 });
                 writeTx.Commit();
             }
 
             readTx.Dispose();
 
-            Person finalResult = db.GetById(id, PersonMeta.TypeInfo);
+            Person finalResult = db.GetById<Person>(id);
             Assert.AreEqual("Updated", finalResult.Name);
         }
     }
@@ -405,7 +405,7 @@ public class ACIDComplianceTests
             int[] ids = new int[10];
             for (int i = 0; i < 10; i++)
             {
-                ids[i] = db.Insert(new Person { Name = $"Person{i}", Age = 20 + i }, PersonMeta.TypeInfo);
+                ids[i] = db.Insert(new Person { Name = $"Person{i}", Age = 20 + i });
             }
 
             List<Task> tasks = new List<Task>();
@@ -419,7 +419,7 @@ public class ACIDComplianceTests
                 {
                     using (Transaction tx = db.BeginTransaction())
                     {
-                        tx.Update(new Person { Id = ids[idx], Name = $"Updated{idx}", Age = 100 + idx }, PersonMeta.TypeInfo);
+                        tx.Update(new Person { Id = ids[idx], Name = $"Updated{idx}", Age = 100 + idx });
                         tx.Commit();
                         lock (lockObj) { successCount++; }
                     }
@@ -432,7 +432,7 @@ public class ACIDComplianceTests
 
             for (int i = 0; i < 10; i++)
             {
-                Person p = db.GetById(ids[i], PersonMeta.TypeInfo);
+                Person p = db.GetById<Person>(ids[i]);
                 Assert.AreEqual($"Updated{i}", p.Name);
             }
         }
@@ -445,7 +445,7 @@ public class ACIDComplianceTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, new GaldrDbOptions()))
         {
-            int id = db.Insert(new Person { Name = "Original", Age = 25 }, PersonMeta.TypeInfo);
+            int id = db.Insert(new Person { Name = "Original", Age = 25 });
 
             List<Task> tasks = new List<Task>();
             int successCount = 0;
@@ -461,7 +461,7 @@ public class ACIDComplianceTests
                     {
                         using (Transaction tx = db.BeginTransaction())
                         {
-                            tx.Update(new Person { Id = id, Name = $"Writer{iteration}", Age = 100 + iteration }, PersonMeta.TypeInfo);
+                            tx.Update(new Person { Id = id, Name = $"Writer{iteration}", Age = 100 + iteration });
                             tx.Commit();
                             lock (lockObj) { successCount++; }
                         }
@@ -491,14 +491,12 @@ public class ACIDComplianceTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, new GaldrDbOptions()))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             using (Transaction tx = db.BeginTransaction())
             {
-                int id = await tx.InsertAsync(new Person { Name = "AsyncPerson", Age = 30 }, PersonMeta.TypeInfo);
+                int id = await tx.InsertAsync(new Person { Name = "AsyncPerson", Age = 30 });
                 await tx.CommitAsync();
 
-                Person retrieved = await db.GetByIdAsync(id, PersonMeta.TypeInfo);
+                Person retrieved = await db.GetByIdAsync<Person>(id);
                 Assert.IsNotNull(retrieved);
                 Assert.AreEqual("AsyncPerson", retrieved.Name);
             }
@@ -512,28 +510,26 @@ public class ACIDComplianceTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, new GaldrDbOptions()))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
-            int id = db.Insert(new Person { Name = "Original", Age = 25 }, PersonMeta.TypeInfo);
+            int id = db.Insert(new Person { Name = "Original", Age = 25 });
 
             using (Transaction tx = db.BeginTransaction())
             {
-                bool updated = await tx.UpdateAsync(new Person { Id = id, Name = "Updated", Age = 26 }, PersonMeta.TypeInfo);
+                bool updated = await tx.UpdateAsync(new Person { Id = id, Name = "Updated", Age = 26 });
                 Assert.IsTrue(updated);
                 await tx.CommitAsync();
             }
 
-            Person afterUpdate = db.GetById(id, PersonMeta.TypeInfo);
+            Person afterUpdate = db.GetById<Person>(id);
             Assert.AreEqual("Updated", afterUpdate.Name);
 
             using (Transaction tx = db.BeginTransaction())
             {
-                bool deleted = await tx.DeleteAsync<Person>(id, PersonMeta.TypeInfo);
+                bool deleted = await tx.DeleteAsync<Person>(id);
                 Assert.IsTrue(deleted);
                 await tx.CommitAsync();
             }
 
-            Person afterDelete = db.GetById(id, PersonMeta.TypeInfo);
+            Person afterDelete = db.GetById<Person>(id);
             Assert.IsNull(afterDelete);
         }
     }
@@ -548,18 +544,16 @@ public class ACIDComplianceTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, options))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             using (Transaction tx = db.BeginTransaction())
             {
-                insertedId = await tx.InsertAsync(new Person { Name = "AsyncDurable", Age = 42 }, PersonMeta.TypeInfo);
+                insertedId = await tx.InsertAsync(new Person { Name = "AsyncDurable", Age = 42 });
                 await tx.CommitAsync();
             }
         }
 
         using (GaldrDatabase db = GaldrDatabase.Open(dbPath, options))
         {
-            Person retrieved = await db.GetByIdAsync(insertedId, PersonMeta.TypeInfo);
+            Person retrieved = await db.GetByIdAsync<Person>(insertedId);
 
             Assert.IsNotNull(retrieved);
             Assert.AreEqual("AsyncDurable", retrieved.Name);
@@ -574,12 +568,10 @@ public class ACIDComplianceTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, new GaldrDbOptions()))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
             int[] ids = new int[10];
             for (int i = 0; i < 10; i++)
             {
-                ids[i] = db.Insert(new Person { Name = $"Person{i}", Age = 20 + i }, PersonMeta.TypeInfo);
+                ids[i] = db.Insert(new Person { Name = $"Person{i}", Age = 20 + i });
             }
 
             List<Task> tasks = new List<Task>();
@@ -593,7 +585,7 @@ public class ACIDComplianceTests
                 {
                     using (Transaction tx = db.BeginTransaction())
                     {
-                        await tx.UpdateAsync(new Person { Id = ids[idx], Name = $"AsyncUpdated{idx}", Age = 100 + idx }, PersonMeta.TypeInfo);
+                        await tx.UpdateAsync(new Person { Id = ids[idx], Name = $"AsyncUpdated{idx}", Age = 100 + idx });
                         await tx.CommitAsync();
                         lock (lockObj) { successCount++; }
                     }
@@ -606,7 +598,7 @@ public class ACIDComplianceTests
 
             for (int i = 0; i < 10; i++)
             {
-                Person p = await db.GetByIdAsync(ids[i], PersonMeta.TypeInfo);
+                Person p = await db.GetByIdAsync<Person>(ids[i]);
                 Assert.AreEqual($"AsyncUpdated{i}", p.Name);
             }
         }
@@ -619,21 +611,19 @@ public class ACIDComplianceTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, new GaldrDbOptions()))
         {
-            db.EnsureCollection(PersonMeta.TypeInfo);
-
-            int id = db.Insert(new Person { Name = "Original", Age = 30 }, PersonMeta.TypeInfo);
+            int id = db.Insert(new Person { Name = "Original", Age = 30 });
 
             Transaction tx1 = db.BeginTransaction();
 
             using (Transaction tx2 = db.BeginTransaction())
             {
-                await tx2.UpdateAsync(new Person { Id = id, Name = "FromTx2", Age = 31 }, PersonMeta.TypeInfo);
+                await tx2.UpdateAsync(new Person { Id = id, Name = "FromTx2", Age = 31 });
                 await tx2.CommitAsync();
             }
 
             await Assert.ThrowsExactlyAsync<WriteConflictException>(async () =>
             {
-                await tx1.UpdateAsync(new Person { Id = id, Name = "FromTx1", Age = 32 }, PersonMeta.TypeInfo);
+                await tx1.UpdateAsync(new Person { Id = id, Name = "FromTx1", Age = 32 });
             });
 
             tx1.Dispose();

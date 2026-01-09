@@ -8,4 +8,5 @@ public interface IGaldrTypeInfo
     Type DocumentType { get; }
     string CollectionName { get; }
     IReadOnlyList<string> IndexedFieldNames { get; }
+    IReadOnlyList<string> UniqueIndexFieldNames { get; }
 }
