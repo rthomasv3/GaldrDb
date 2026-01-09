@@ -213,39 +213,46 @@ public class Transaction : IDisposable
         }
         else
         {
-            T existing = _db.GetById<T>(id);
-            if (existing != null)
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+
+            if (visibleVersion != null)
             {
                 exists = true;
-                oldIndexFields = ExtractIndexFields(existing, typeInfo);
+
+                // Only read document if there are indexes to clean up
+                if (typeInfo.IndexedFieldNames.Count > 0)
+                {
+                    byte[] docBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
+                    string json = Encoding.UTF8.GetString(docBytes);
+                    T existing = _jsonSerializer.Deserialize<T>(json, _jsonOptions);
+                    oldIndexFields = ExtractIndexFields(existing, typeInfo);
+                }
             }
         }
 
-        if (!exists)
+        if (exists)
         {
-            return false;
+            string json = _jsonSerializer.Serialize(document, _jsonOptions);
+            byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
+
+            IReadOnlyList<IndexFieldEntry> newIndexFields = ExtractIndexFields(document, typeInfo);
+
+            WriteSetEntry entry = new WriteSetEntry
+            {
+                Operation = WriteOperation.Update,
+                CollectionName = collectionName,
+                DocumentId = id,
+                SerializedData = jsonBytes,
+                PreviousLocation = previousLocation,
+                NewLocation = null,
+                IndexFields = newIndexFields,
+                OldIndexFields = oldIndexFields
+            };
+
+            _writeSet[(collectionName, id)] = entry;
         }
 
-        string json = _jsonSerializer.Serialize(document, _jsonOptions);
-        byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
-
-        IReadOnlyList<IndexFieldEntry> newIndexFields = ExtractIndexFields(document, typeInfo);
-
-        WriteSetEntry entry = new WriteSetEntry
-        {
-            Operation = WriteOperation.Update,
-            CollectionName = collectionName,
-            DocumentId = id,
-            SerializedData = jsonBytes,
-            PreviousLocation = previousLocation,
-            NewLocation = null,
-            IndexFields = newIndexFields,
-            OldIndexFields = oldIndexFields
-        };
-
-        _writeSet[(collectionName, id)] = entry;
-
-        return true;
+        return exists;
     }
 
     public bool Delete<T>(int id)
@@ -282,34 +289,41 @@ public class Transaction : IDisposable
         }
         else
         {
-            T existing = _db.GetById<T>(id);
-            if (existing != null)
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+            
+            if (visibleVersion != null)
             {
                 exists = true;
-                oldIndexFields = ExtractIndexFields(existing, typeInfo);
+
+                // Only read document if there are indexes to clean up
+                if (typeInfo.IndexedFieldNames.Count > 0)
+                {
+                    byte[] docBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
+                    string json = Encoding.UTF8.GetString(docBytes);
+                    T existing = _jsonSerializer.Deserialize<T>(json, _jsonOptions);
+                    oldIndexFields = ExtractIndexFields(existing, typeInfo);
+                }
             }
         }
 
-        if (!exists)
+        if (exists)
         {
-            return false;
+            WriteSetEntry entry = new WriteSetEntry
+            {
+                Operation = WriteOperation.Delete,
+                CollectionName = collectionName,
+                DocumentId = id,
+                SerializedData = null,
+                PreviousLocation = null,
+                NewLocation = null,
+                IndexFields = null,
+                OldIndexFields = oldIndexFields
+            };
+
+            _writeSet[(collectionName, id)] = entry;
         }
 
-        WriteSetEntry entry = new WriteSetEntry
-        {
-            Operation = WriteOperation.Delete,
-            CollectionName = collectionName,
-            DocumentId = id,
-            SerializedData = null,
-            PreviousLocation = null,
-            NewLocation = null,
-            IndexFields = null,
-            OldIndexFields = oldIndexFields
-        };
-
-        _writeSet[(collectionName, id)] = entry;
-
-        return true;
+        return exists;
     }
 
     public void Commit()
@@ -513,10 +527,10 @@ public class Transaction : IDisposable
         return Task.FromResult(assignedId);
     }
 
-    public Task<bool> UpdateAsync<T>(T document, CancellationToken cancellationToken = default)
+    public async Task<bool> UpdateAsync<T>(T document, CancellationToken cancellationToken = default)
     {
         GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
-        
+
         EnsureActive();
         EnsureWritable();
 
@@ -556,45 +570,52 @@ public class Transaction : IDisposable
         }
         else
         {
-            T existing = _db.GetById<T>(id);
-            if (existing != null)
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+
+            if (visibleVersion != null)
             {
                 exists = true;
-                oldIndexFields = ExtractIndexFields(existing, typeInfo);
+
+                // Only read document if there are indexes to clean up
+                if (typeInfo.IndexedFieldNames.Count > 0)
+                {
+                    byte[] docBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
+                    string json = Encoding.UTF8.GetString(docBytes);
+                    T existing = _jsonSerializer.Deserialize<T>(json, _jsonOptions);
+                    oldIndexFields = ExtractIndexFields(existing, typeInfo);
+                }
             }
         }
 
-        if (!exists)
+        if (exists)
         {
-            return Task.FromResult(false);
+            string json = _jsonSerializer.Serialize(document, _jsonOptions);
+            byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
+
+            IReadOnlyList<IndexFieldEntry> newIndexFields = ExtractIndexFields(document, typeInfo);
+
+            WriteSetEntry entry = new WriteSetEntry
+            {
+                Operation = WriteOperation.Update,
+                CollectionName = collectionName,
+                DocumentId = id,
+                SerializedData = jsonBytes,
+                PreviousLocation = previousLocation,
+                NewLocation = null,
+                IndexFields = newIndexFields,
+                OldIndexFields = oldIndexFields
+            };
+
+            _writeSet[(collectionName, id)] = entry;
         }
 
-        string json = _jsonSerializer.Serialize(document, _jsonOptions);
-        byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
-
-        IReadOnlyList<IndexFieldEntry> newIndexFields = ExtractIndexFields(document, typeInfo);
-
-        WriteSetEntry entry = new WriteSetEntry
-        {
-            Operation = WriteOperation.Update,
-            CollectionName = collectionName,
-            DocumentId = id,
-            SerializedData = jsonBytes,
-            PreviousLocation = previousLocation,
-            NewLocation = null,
-            IndexFields = newIndexFields,
-            OldIndexFields = oldIndexFields
-        };
-
-        _writeSet[(collectionName, id)] = entry;
-
-        return Task.FromResult(true);
+        return exists;
     }
 
-    public Task<bool> DeleteAsync<T>(int id, CancellationToken cancellationToken = default)
+    public async Task<bool> DeleteAsync<T>(int id, CancellationToken cancellationToken = default)
     {
         GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
-        
+
         EnsureActive();
         EnsureWritable();
 
@@ -625,34 +646,41 @@ public class Transaction : IDisposable
         }
         else
         {
-            T existing = _db.GetById<T>(id);
-            if (existing != null)
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+            
+            if (visibleVersion != null)
             {
                 exists = true;
-                oldIndexFields = ExtractIndexFields(existing, typeInfo);
+
+                // Only read document if there are indexes to clean up
+                if (typeInfo.IndexedFieldNames.Count > 0)
+                {
+                    byte[] docBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
+                    string json = Encoding.UTF8.GetString(docBytes);
+                    T existing = _jsonSerializer.Deserialize<T>(json, _jsonOptions);
+                    oldIndexFields = ExtractIndexFields(existing, typeInfo);
+                }
             }
         }
 
-        if (!exists)
+        if (exists)
         {
-            return Task.FromResult(false);
+            WriteSetEntry entry = new WriteSetEntry
+            {
+                Operation = WriteOperation.Delete,
+                CollectionName = collectionName,
+                DocumentId = id,
+                SerializedData = null,
+                PreviousLocation = null,
+                NewLocation = null,
+                IndexFields = null,
+                OldIndexFields = oldIndexFields
+            };
+
+            _writeSet[(collectionName, id)] = entry;
         }
 
-        WriteSetEntry entry = new WriteSetEntry
-        {
-            Operation = WriteOperation.Delete,
-            CollectionName = collectionName,
-            DocumentId = id,
-            SerializedData = null,
-            PreviousLocation = null,
-            NewLocation = null,
-            IndexFields = null,
-            OldIndexFields = oldIndexFields
-        };
-
-        _writeSet[(collectionName, id)] = entry;
-
-        return Task.FromResult(true);
+        return exists;
     }
 
     public async Task CommitAsync(CancellationToken cancellationToken = default)

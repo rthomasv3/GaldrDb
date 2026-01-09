@@ -69,7 +69,8 @@ public sealed class VersionGarbageCollector
 
             if (foundVisibleVersion)
             {
-                if (current.DeletedBy != TxId.MaxValue && current.DeletedBy < oldestSnapshot)
+                // Version was superseded - collect if deleted at or before oldest snapshot
+                if (current.DeletedBy != TxId.MaxValue && current.DeletedBy <= oldestSnapshot)
                 {
                     canCollect = true;
                 }
@@ -80,8 +81,9 @@ public sealed class VersionGarbageCollector
                 {
                     foundVisibleVersion = true;
                 }
-                else if (current.DeletedBy != TxId.MaxValue && current.DeletedBy < oldestSnapshot)
+                else if (current.DeletedBy != TxId.MaxValue && current.DeletedBy <= oldestSnapshot)
                 {
+                    // Version is not visible to oldest snapshot - safe to collect
                     canCollect = true;
                 }
             }

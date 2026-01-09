@@ -469,4 +469,38 @@ public class GarbageCollectionTests
             Assert.StartsWith("yyyyy", second.Email);
         }
     }
+
+    [TestMethod]
+    public void Vacuum_InsertAndUpdateSameTransaction_NothingToCollect()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true, AutoGarbageCollection = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            // Insert and update in the same transaction - only one version should be created
+            using (Transaction tx = db.BeginTransaction())
+            {
+                Person person = new Person { Name = "Original", Age = 25, Email = "test@example.com" };
+                int id = tx.Insert(person);
+
+                // Update in the same transaction - this overwrites the write set entry
+                person.Id = id;
+                person.Name = "Updated";
+                tx.Update(person);
+
+                tx.Commit();
+            }
+
+            // Vacuum should find nothing to collect since only one version exists
+            GarbageCollectionResult result = db.Vacuum();
+
+            Assert.AreEqual(0, result.VersionsCollected);
+
+            // Verify the document has the updated value
+            Person retrieved = db.GetById<Person>(1);
+            Assert.IsNotNull(retrieved);
+            Assert.AreEqual("Updated", retrieved.Name);
+        }
+    }
 }
