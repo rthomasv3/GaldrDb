@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using GaldrDbEngine.Storage;
 using GaldrDbEngine.Utilities;
@@ -27,17 +28,21 @@ public class BTreeNode
         NodeType = nodeType;
         KeyCount = 0;
         NextLeaf = 0;
-        Keys = new List<int>();
+        // Pre-allocate capacity to avoid list resizing during operations
+        // Max keys per node = order - 1
+        Keys = new List<int>(order - 1);
 
         if (nodeType == BTreeNodeType.Internal)
         {
-            ChildPageIds = new List<int>();
+            // Internal nodes have one more child pointer than keys
+            ChildPageIds = new List<int>(order);
             LeafValues = null;
         }
         else
         {
             ChildPageIds = null;
-            LeafValues = new List<DocumentLocation>();
+            // Leaf nodes have same number of values as keys
+            LeafValues = new List<DocumentLocation>(order - 1);
         }
     }
 
@@ -51,9 +56,11 @@ public class BTreeNode
         return KeyCount < _order - 1;
     }
 
-    public byte[] Serialize()
+    public void SerializeTo(byte[] buffer)
     {
-        byte[] buffer = new byte[_pageSize];
+        // Clear the buffer first to ensure clean state
+        Array.Clear(buffer, 0, _pageSize);
+
         int offset = 0;
 
         buffer[offset] = PageType;
@@ -93,8 +100,6 @@ public class BTreeNode
                 offset += 4;
             }
         }
-
-        return buffer;
     }
 
     public static BTreeNode Deserialize(byte[] buffer, int pageSize, int order)

@@ -227,8 +227,16 @@ public class GaldrDb : IDisposable
 
             int order = CalculateBTreeOrder(_options.PageSize);
             BTreeNode rootNode = new BTreeNode(_options.PageSize, order, BTreeNodeType.Leaf);
-            byte[] rootBytes = rootNode.Serialize();
-            _pageIO.WritePage(rootPageId, rootBytes);
+            byte[] rootBuffer = BufferPool.Rent(_options.PageSize);
+            try
+            {
+                rootNode.SerializeTo(rootBuffer);
+                _pageIO.WritePage(rootPageId, rootBuffer);
+            }
+            finally
+            {
+                BufferPool.Return(rootBuffer);
+            }
 
             _collectionsMetadata.AddCollection(collectionName, rootPageId);
             _collectionsMetadata.WriteToDisk();
@@ -455,6 +463,7 @@ public class GaldrDb : IDisposable
         {
             BeginWalTransaction(0);
 
+            byte[] rootBuffer = BufferPool.Rent(_options.PageSize);
             try
             {
                 foreach (IndexDefinition newIndex in newIndexes)
@@ -462,8 +471,9 @@ public class GaldrDb : IDisposable
                     int rootPageId = _pageManager.AllocatePage();
                     int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
                     SecondaryIndexNode rootNode = new SecondaryIndexNode(_options.PageSize, maxKeys, BTreeNodeType.Leaf);
-                    byte[] rootBytes = rootNode.Serialize();
-                    _pageIO.WritePage(rootPageId, rootBytes);
+
+                    rootNode.SerializeTo(rootBuffer);
+                    _pageIO.WritePage(rootPageId, rootBuffer);
 
                     newIndex.RootPageId = rootPageId;
                     collection.Indexes.Add(newIndex);
@@ -478,6 +488,10 @@ public class GaldrDb : IDisposable
             {
                 AbortWalTransaction();
                 throw;
+            }
+            finally
+            {
+                BufferPool.Return(rootBuffer);
             }
         }
     }

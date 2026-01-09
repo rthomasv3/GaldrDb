@@ -1,8 +1,10 @@
 using System;
 using System.IO;
+using System.Text;
 using GaldrDb.UnitTests.TestModels;
 using GaldrDbEngine;
 using GaldrDbEngine.Generated;
+using GaldrDbEngine.IO;
 using GaldrDbEngine.Pages;
 using GaldrDbEngine.Storage;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -60,7 +62,8 @@ public class SecondaryIndexNodeTests
         int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(pageSize);
 
         SecondaryIndexNode node = new SecondaryIndexNode(pageSize, maxKeys, BTreeNodeType.Leaf);
-        byte[] buffer = node.Serialize();
+        byte[] buffer = new byte[pageSize];
+        node.SerializeTo(buffer);
 
         SecondaryIndexNode deserialized = SecondaryIndexNode.Deserialize(buffer, pageSize);
 
@@ -74,7 +77,8 @@ public class SecondaryIndexNodeTests
         int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(pageSize);
 
         SecondaryIndexNode node = new SecondaryIndexNode(pageSize, maxKeys, BTreeNodeType.Leaf);
-        byte[] buffer = node.Serialize();
+        byte[] buffer = new byte[pageSize];
+        node.SerializeTo(buffer);
 
         SecondaryIndexNode deserialized = SecondaryIndexNode.Deserialize(buffer, pageSize);
 
@@ -88,7 +92,8 @@ public class SecondaryIndexNodeTests
         int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(pageSize);
 
         SecondaryIndexNode node = new SecondaryIndexNode(pageSize, maxKeys, BTreeNodeType.Leaf);
-        byte[] buffer = node.Serialize();
+        byte[] buffer = new byte[pageSize];
+        node.SerializeTo(buffer);
 
         ushort writtenMaxKeys = (ushort)(buffer[8] | (buffer[9] << 8));
 
@@ -122,10 +127,11 @@ public class SecondaryIndexNodeTests
         int pageSize = 8192;
         int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(pageSize);
 
-        GaldrDbEngine.IO.StandardPageIO pageIO = new GaldrDbEngine.IO.StandardPageIO(filePath, pageSize, true);
+        StandardPageIO pageIO = new StandardPageIO(filePath, pageSize, true);
 
         SecondaryIndexNode node = new SecondaryIndexNode(pageSize, maxKeys, BTreeNodeType.Leaf);
-        byte[] writeBuffer = node.Serialize();
+        byte[] writeBuffer = new byte[pageSize];
+        node.SerializeTo(writeBuffer);
 
         pageIO.WritePage(0, writeBuffer);
 
@@ -148,18 +154,19 @@ public class SecondaryIndexNodeTests
         int pageSize = 8192;
         int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(pageSize);
 
-        GaldrDbEngine.IO.StandardPageIO pageIO = new GaldrDbEngine.IO.StandardPageIO(filePath, pageSize, true);
-        GaldrDbEngine.Storage.PageManager pageManager = new GaldrDbEngine.Storage.PageManager(pageIO, pageSize);
+        StandardPageIO pageIO = new StandardPageIO(filePath, pageSize, true);
+        PageManager pageManager = new PageManager(pageIO, pageSize);
         pageManager.Initialize();
 
         int rootPageId = pageManager.AllocatePage();
         SecondaryIndexNode rootNode = new SecondaryIndexNode(pageSize, maxKeys, BTreeNodeType.Leaf);
-        byte[] rootBytes = rootNode.Serialize();
-        pageIO.WritePage(rootPageId, rootBytes);
+        byte[] rootBuffer = new byte[pageSize];
+        rootNode.SerializeTo(rootBuffer);
+        pageIO.WritePage(rootPageId, rootBuffer);
 
         SecondaryIndexBTree tree = new SecondaryIndexBTree(pageIO, pageManager, rootPageId, pageSize, maxKeys);
 
-        byte[] key = System.Text.Encoding.UTF8.GetBytes("TestKey");
+        byte[] key = Encoding.UTF8.GetBytes("TestKey");
         byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(key, 1);
         DocumentLocation location = new DocumentLocation(10, 0);
 
@@ -181,14 +188,15 @@ public class SecondaryIndexNodeTests
         int pageSize = 8192;
         int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(pageSize);
 
-        GaldrDbEngine.IO.StandardPageIO pageIO = new GaldrDbEngine.IO.StandardPageIO(filePath, pageSize, true);
-        GaldrDbEngine.Storage.PageManager pageManager = new GaldrDbEngine.Storage.PageManager(pageIO, pageSize);
+        StandardPageIO pageIO = new StandardPageIO(filePath, pageSize, true);
+        PageManager pageManager = new PageManager(pageIO, pageSize);
         pageManager.Initialize();
 
         int rootPageId = pageManager.AllocatePage();
         SecondaryIndexNode rootNode = new SecondaryIndexNode(pageSize, maxKeys, BTreeNodeType.Leaf);
-        byte[] rootBytes = rootNode.Serialize();
-        pageIO.WritePage(rootPageId, rootBytes);
+        byte[] rootBuffer = new byte[pageSize];
+        rootNode.SerializeTo(rootBuffer);
+        pageIO.WritePage(rootPageId, rootBuffer);
 
         byte[] readBuffer = new byte[pageSize];
         pageIO.ReadPage(rootPageId, readBuffer);

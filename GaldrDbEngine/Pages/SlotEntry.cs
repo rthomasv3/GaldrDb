@@ -24,11 +24,9 @@ public struct SlotEntry
         return result;
     }
 
-    public byte[] Serialize()
+    public void SerializeTo(byte[] buffer, int startOffset)
     {
-        int serializedSize = GetSerializedSize();
-        byte[] buffer = new byte[serializedSize];
-        int offset = 0;
+        int offset = startOffset;
 
         BinaryHelper.WriteInt32LE(buffer, offset, PageCount);
         offset += 4;
@@ -49,11 +47,6 @@ public struct SlotEntry
         offset += 4;
 
         BinaryHelper.WriteInt32LE(buffer, offset, Length);
-        offset += 4;
-
-        byte[] result = buffer;
-
-        return result;
     }
 
     public static SlotEntry Deserialize(byte[] buffer, int startOffset)

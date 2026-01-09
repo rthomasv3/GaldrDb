@@ -28,17 +28,20 @@ public class SecondaryIndexNode
         NodeType = nodeType;
         KeyCount = 0;
         NextLeaf = 0;
-        Keys = new List<byte[]>();
+        // Pre-allocate capacity to avoid list resizing during operations
+        Keys = new List<byte[]>(maxKeys);
 
         if (nodeType == BTreeNodeType.Internal)
         {
-            ChildPageIds = new List<int>();
+            // Internal nodes have one more child pointer than keys
+            ChildPageIds = new List<int>(maxKeys + 1);
             LeafValues = null;
         }
         else
         {
             ChildPageIds = null;
-            LeafValues = new List<DocumentLocation>();
+            // Leaf nodes have same number of values as keys
+            LeafValues = new List<DocumentLocation>(maxKeys);
         }
     }
 
@@ -47,9 +50,11 @@ public class SecondaryIndexNode
         return KeyCount >= _maxKeys;
     }
 
-    public byte[] Serialize()
+    public void SerializeTo(byte[] buffer)
     {
-        byte[] buffer = new byte[_pageSize];
+        // Clear the buffer first to ensure clean state
+        Array.Clear(buffer, 0, _pageSize);
+
         int offset = 0;
 
         buffer[offset] = PageType;
@@ -94,8 +99,6 @@ public class SecondaryIndexNode
                 offset += 4;
             }
         }
-
-        return buffer;
     }
 
     public static SecondaryIndexNode Deserialize(byte[] buffer, int pageSize)

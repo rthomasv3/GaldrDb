@@ -44,8 +44,8 @@ public class BTree
                 BTreeNode newRoot = new BTreeNode(_pageSize, _order, BTreeNodeType.Internal);
                 newRoot.ChildPageIds.Add(_rootPageId);
 
-                byte[] newRootBytes = newRoot.Serialize();
-                _pageIO.WritePage(newRootPageId, newRootBytes);
+                newRoot.SerializeTo(rootBuffer);
+                _pageIO.WritePage(newRootPageId, rootBuffer);
 
                 SplitChild(newRootPageId, 0, _rootPageId);
                 _rootPageId = newRootPageId;
@@ -136,8 +136,8 @@ public class BTree
                     node.LeafValues.RemoveAt(i);
                     node.KeyCount--;
 
-                    byte[] nodeBytes = node.Serialize();
-                    _pageIO.WritePage(pageId, nodeBytes);
+                    node.SerializeTo(buffer);
+                    _pageIO.WritePage(pageId, buffer);
 
                     result = true;
                 }
@@ -217,8 +217,8 @@ public class BTree
                 node.LeafValues[i + 1] = location;
                 node.KeyCount++;
 
-                byte[] nodeBytes = node.Serialize();
-                _pageIO.WritePage(pageId, nodeBytes);
+                node.SerializeTo(buffer);
+                _pageIO.WritePage(pageId, buffer);
             }
             else
             {
@@ -331,14 +331,14 @@ public class BTree
             parent.Keys.Insert(index, keyToPromote);
             parent.KeyCount++;
 
-            byte[] fullChildBytes = fullChild.Serialize();
-            _pageIO.WritePage(childPageId, fullChildBytes);
+            fullChild.SerializeTo(childBuffer);
+            _pageIO.WritePage(childPageId, childBuffer);
 
-            byte[] newChildBytes = newChild.Serialize();
-            _pageIO.WritePage(newChildPageId, newChildBytes);
+            newChild.SerializeTo(childBuffer);
+            _pageIO.WritePage(newChildPageId, childBuffer);
 
-            byte[] parentBytes = parent.Serialize();
-            _pageIO.WritePage(parentPageId, parentBytes);
+            parent.SerializeTo(parentBuffer);
+            _pageIO.WritePage(parentPageId, parentBuffer);
         }
         finally
         {
@@ -367,8 +367,8 @@ public class BTree
                 BTreeNode newRoot = new BTreeNode(_pageSize, _order, BTreeNodeType.Internal);
                 newRoot.ChildPageIds.Add(_rootPageId);
 
-                byte[] newRootBytes = newRoot.Serialize();
-                await _pageIO.WritePageAsync(newRootPageId, newRootBytes, cancellationToken).ConfigureAwait(false);
+                newRoot.SerializeTo(rootBuffer);
+                await _pageIO.WritePageAsync(newRootPageId, rootBuffer, cancellationToken).ConfigureAwait(false);
 
                 await SplitChildAsync(newRootPageId, 0, _rootPageId, cancellationToken).ConfigureAwait(false);
                 _rootPageId = newRootPageId;
@@ -454,8 +454,8 @@ public class BTree
                 node.LeafValues[i + 1] = location;
                 node.KeyCount++;
 
-                byte[] nodeBytes = node.Serialize();
-                await _pageIO.WritePageAsync(pageId, nodeBytes, cancellationToken).ConfigureAwait(false);
+                node.SerializeTo(buffer);
+                await _pageIO.WritePageAsync(pageId, buffer, cancellationToken).ConfigureAwait(false);
             }
             else
             {
@@ -568,14 +568,14 @@ public class BTree
             parent.Keys.Insert(index, keyToPromote);
             parent.KeyCount++;
 
-            byte[] fullChildBytes = fullChild.Serialize();
-            await _pageIO.WritePageAsync(childPageId, fullChildBytes, cancellationToken).ConfigureAwait(false);
+            fullChild.SerializeTo(childBuffer);
+            await _pageIO.WritePageAsync(childPageId, childBuffer, cancellationToken).ConfigureAwait(false);
 
-            byte[] newChildBytes = newChild.Serialize();
-            await _pageIO.WritePageAsync(newChildPageId, newChildBytes, cancellationToken).ConfigureAwait(false);
+            newChild.SerializeTo(childBuffer);
+            await _pageIO.WritePageAsync(newChildPageId, childBuffer, cancellationToken).ConfigureAwait(false);
 
-            byte[] parentBytes = parent.Serialize();
-            await _pageIO.WritePageAsync(parentPageId, parentBytes, cancellationToken).ConfigureAwait(false);
+            parent.SerializeTo(parentBuffer);
+            await _pageIO.WritePageAsync(parentPageId, parentBuffer, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -608,8 +608,8 @@ public class BTree
                     node.LeafValues.RemoveAt(i);
                     node.KeyCount--;
 
-                    byte[] nodeBytes = node.Serialize();
-                    await _pageIO.WritePageAsync(pageId, nodeBytes, cancellationToken).ConfigureAwait(false);
+                    node.SerializeTo(buffer);
+                    await _pageIO.WritePageAsync(pageId, buffer, cancellationToken).ConfigureAwait(false);
 
                     result = true;
                 }

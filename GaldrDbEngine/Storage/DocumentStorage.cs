@@ -56,8 +56,8 @@ public class DocumentStorage
 
                 int slotIndex = page.AddDocument(documentBytes, pageIds, documentSize);
 
-                byte[] serializedPage = page.Serialize();
-                _pageIO.WritePage(pageId, serializedPage);
+                page.SerializeTo(pageBuffer);
+                _pageIO.WritePage(pageId, pageBuffer);
 
                 UpdateFSM(pageId, page.GetFreeSpaceBytes());
 
@@ -76,44 +76,41 @@ public class DocumentStorage
             int offset = 0;
             int firstPageDataSize = Math.Min(documentSize, usablePageSize);
 
-            byte[] firstPageData = new byte[firstPageDataSize];
-            Array.Copy(documentBytes, 0, firstPageData, 0, firstPageDataSize);
-
             DocumentPage firstPage = DocumentPage.CreateNew(_pageSize);
-            int slotIndexResult = firstPage.AddDocument(firstPageData, pageIds, documentSize);
+            int slotIndexResult = firstPage.AddDocument(documentBytes.AsSpan(0, firstPageDataSize), pageIds, documentSize);
 
-            byte[] firstPageBytes = firstPage.Serialize();
-            _pageIO.WritePage(firstPageId, firstPageBytes);
-
-            UpdateFSM(firstPageId, firstPage.GetFreeSpaceBytes());
-
-            offset += firstPageDataSize;
-
-            byte[] continuationBuffer = BufferPool.Rent(_pageSize);
+            byte[] pageBuffer = BufferPool.Rent(_pageSize);
             try
             {
+                firstPage.SerializeTo(pageBuffer);
+                _pageIO.WritePage(firstPageId, pageBuffer);
+
+                UpdateFSM(firstPageId, firstPage.GetFreeSpaceBytes());
+
+                offset += firstPageDataSize;
+
                 for (int i = 1; i < pagesNeeded; i++)
                 {
                     int pageId = pageIds[i];
                     int remainingSize = documentSize - offset;
                     int chunkSize = Math.Min(remainingSize, _pageSize);
 
-                    Array.Clear(continuationBuffer, 0, _pageSize);
-                    Array.Copy(documentBytes, offset, continuationBuffer, 0, chunkSize);
+                    Array.Clear(pageBuffer, 0, _pageSize);
+                    Array.Copy(documentBytes, offset, pageBuffer, 0, chunkSize);
 
-                    _pageIO.WritePage(pageId, continuationBuffer);
+                    _pageIO.WritePage(pageId, pageBuffer);
 
                     UpdateFSM(pageId, _pageSize - chunkSize);
 
                     offset += chunkSize;
                 }
+
+                result = new DocumentLocation(firstPageId, slotIndexResult);
             }
             finally
             {
-                BufferPool.Return(continuationBuffer);
+                BufferPool.Return(pageBuffer);
             }
-
-            result = new DocumentLocation(firstPageId, slotIndexResult);
         }
 
         return result;
@@ -208,8 +205,8 @@ public class DocumentStorage
                 Length = 0
             };
 
-            byte[] serializedPage = page.Serialize();
-            _pageIO.WritePage(pageId, serializedPage);
+            page.SerializeTo(pageBuffer);
+            _pageIO.WritePage(pageId, pageBuffer);
 
             UpdateFSM(pageId, page.GetFreeSpaceBytes());
         }
@@ -319,8 +316,8 @@ public class DocumentStorage
 
                 int slotIndex = page.AddDocument(documentBytes, pageIds, documentSize);
 
-                byte[] serializedPage = page.Serialize();
-                await _pageIO.WritePageAsync(pageId, serializedPage, cancellationToken).ConfigureAwait(false);
+                page.SerializeTo(pageBuffer);
+                await _pageIO.WritePageAsync(pageId, pageBuffer, cancellationToken).ConfigureAwait(false);
 
                 UpdateFSM(pageId, page.GetFreeSpaceBytes());
 
@@ -339,44 +336,41 @@ public class DocumentStorage
             int offset = 0;
             int firstPageDataSize = Math.Min(documentSize, usablePageSize);
 
-            byte[] firstPageData = new byte[firstPageDataSize];
-            Array.Copy(documentBytes, 0, firstPageData, 0, firstPageDataSize);
-
             DocumentPage firstPage = DocumentPage.CreateNew(_pageSize);
-            int slotIndexResult = firstPage.AddDocument(firstPageData, pageIds, documentSize);
+            int slotIndexResult = firstPage.AddDocument(documentBytes.AsSpan(0, firstPageDataSize), pageIds, documentSize);
 
-            byte[] firstPageBytes = firstPage.Serialize();
-            await _pageIO.WritePageAsync(firstPageId, firstPageBytes, cancellationToken).ConfigureAwait(false);
-
-            UpdateFSM(firstPageId, firstPage.GetFreeSpaceBytes());
-
-            offset += firstPageDataSize;
-
-            byte[] continuationBuffer = BufferPool.Rent(_pageSize);
+            byte[] pageBuffer = BufferPool.Rent(_pageSize);
             try
             {
+                firstPage.SerializeTo(pageBuffer);
+                await _pageIO.WritePageAsync(firstPageId, pageBuffer, cancellationToken).ConfigureAwait(false);
+
+                UpdateFSM(firstPageId, firstPage.GetFreeSpaceBytes());
+
+                offset += firstPageDataSize;
+
                 for (int i = 1; i < pagesNeeded; i++)
                 {
                     int pageId = pageIds[i];
                     int remainingSize = documentSize - offset;
                     int chunkSize = Math.Min(remainingSize, _pageSize);
 
-                    Array.Clear(continuationBuffer, 0, _pageSize);
-                    Array.Copy(documentBytes, offset, continuationBuffer, 0, chunkSize);
+                    Array.Clear(pageBuffer, 0, _pageSize);
+                    Array.Copy(documentBytes, offset, pageBuffer, 0, chunkSize);
 
-                    await _pageIO.WritePageAsync(pageId, continuationBuffer, cancellationToken).ConfigureAwait(false);
+                    await _pageIO.WritePageAsync(pageId, pageBuffer, cancellationToken).ConfigureAwait(false);
 
                     UpdateFSM(pageId, _pageSize - chunkSize);
 
                     offset += chunkSize;
                 }
+
+                result = new DocumentLocation(firstPageId, slotIndexResult);
             }
             finally
             {
-                BufferPool.Return(continuationBuffer);
+                BufferPool.Return(pageBuffer);
             }
-
-            result = new DocumentLocation(firstPageId, slotIndexResult);
         }
 
         return result;

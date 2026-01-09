@@ -42,8 +42,8 @@ public class SecondaryIndexBTree
                 SecondaryIndexNode newRoot = new SecondaryIndexNode(_pageSize, _maxKeys, BTreeNodeType.Internal);
                 newRoot.ChildPageIds.Add(_rootPageId);
 
-                byte[] newRootBytes = newRoot.Serialize();
-                _pageIO.WritePage(newRootPageId, newRootBytes);
+                newRoot.SerializeTo(rootBuffer);
+                _pageIO.WritePage(newRootPageId, rootBuffer);
 
                 SplitChild(newRootPageId, 0, _rootPageId);
                 _rootPageId = newRootPageId;
@@ -265,8 +265,8 @@ public class SecondaryIndexBTree
                     node.LeafValues.RemoveAt(i);
                     node.KeyCount--;
 
-                    byte[] nodeBytes = node.Serialize();
-                    _pageIO.WritePage(pageId, nodeBytes);
+                    node.SerializeTo(buffer);
+                    _pageIO.WritePage(pageId, buffer);
 
                     result = true;
                 }
@@ -310,8 +310,8 @@ public class SecondaryIndexBTree
                 node.LeafValues[i + 1] = location;
                 node.KeyCount++;
 
-                byte[] nodeBytes = node.Serialize();
-                _pageIO.WritePage(pageId, nodeBytes);
+                node.SerializeTo(buffer);
+                _pageIO.WritePage(pageId, buffer);
             }
             else
             {
@@ -424,14 +424,14 @@ public class SecondaryIndexBTree
             parent.Keys.Insert(index, keyToPromote);
             parent.KeyCount++;
 
-            byte[] fullChildBytes = fullChild.Serialize();
-            _pageIO.WritePage(childPageId, fullChildBytes);
+            fullChild.SerializeTo(childBuffer);
+            _pageIO.WritePage(childPageId, childBuffer);
 
-            byte[] newChildBytes = newChild.Serialize();
-            _pageIO.WritePage(newChildPageId, newChildBytes);
+            newChild.SerializeTo(childBuffer);
+            _pageIO.WritePage(newChildPageId, childBuffer);
 
-            byte[] parentBytes = parent.Serialize();
-            _pageIO.WritePage(parentPageId, parentBytes);
+            parent.SerializeTo(parentBuffer);
+            _pageIO.WritePage(parentPageId, parentBuffer);
         }
         finally
         {

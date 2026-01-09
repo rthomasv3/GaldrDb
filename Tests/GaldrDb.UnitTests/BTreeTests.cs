@@ -3,6 +3,7 @@ using System.IO;
 using GaldrDbEngine.IO;
 using GaldrDbEngine.Pages;
 using GaldrDbEngine.Storage;
+using GaldrDbEngine.Utilities;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace GaldrDb.UnitTests;
@@ -38,9 +39,9 @@ public class BTreeTests
         int rootPageId = pageManager.AllocatePage();
 
         BTreeNode rootNode = new BTreeNode(pageSize, order, BTreeNodeType.Leaf);
-        byte[] rootBytes = rootNode.Serialize();
-        pageIO.WritePage(rootPageId, rootBytes);
-
+        byte[] rootBuffer = new byte[pageSize];
+        rootNode.SerializeTo(rootBuffer);
+        pageIO.WritePage(rootPageId, rootBuffer);
         pageIO.Flush();
 
         BTree btree = new BTree(pageIO, pageManager, rootPageId, pageSize, order);

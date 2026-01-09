@@ -49,7 +49,7 @@ public class DocumentPage
         return result;
     }
 
-    public int AddDocument(byte[] documentData, int[] pageIds, int totalSize)
+    public int AddDocument(ReadOnlySpan<byte> documentData, int[] pageIds, int totalSize)
     {
         int slotIndex = SlotCount;
         int dataLength = documentData.Length;
@@ -66,7 +66,7 @@ public class DocumentPage
         Slots.Add(entry);
         SlotCount++;
 
-        Array.Copy(documentData, 0, PageData, entry.Offset, dataLength);
+        documentData.CopyTo(PageData.AsSpan(entry.Offset, dataLength));
 
         FreeSpaceEnd = (ushort)(entry.Offset);
         FreeSpaceOffset = (ushort)(FreeSpaceOffset + entry.GetSerializedSize());
@@ -101,9 +101,11 @@ public class DocumentPage
         return result;
     }
 
-    public byte[] Serialize()
+    public void SerializeTo(byte[] buffer)
     {
-        byte[] buffer = new byte[_pageSize];
+        // Clear the buffer first to ensure clean state
+        Array.Clear(buffer, 0, _pageSize);
+
         int offset = 0;
 
         buffer[offset] = PageType;
@@ -126,19 +128,14 @@ public class DocumentPage
 
         for (int i = 0; i < Slots.Count; i++)
         {
-            byte[] slotBytes = Slots[i].Serialize();
-            Array.Copy(slotBytes, 0, buffer, offset, slotBytes.Length);
-            offset += slotBytes.Length;
+            Slots[i].SerializeTo(buffer, offset);
+            offset += Slots[i].GetSerializedSize();
         }
 
         if (PageData != null)
         {
             Array.Copy(PageData, FreeSpaceEnd, buffer, FreeSpaceEnd, _pageSize - FreeSpaceEnd);
         }
-
-        byte[] result = buffer;
-
-        return result;
     }
 
     public static DocumentPage Deserialize(byte[] buffer, int pageSize)
@@ -146,7 +143,6 @@ public class DocumentPage
         DocumentPage page = new DocumentPage();
         page._pageSize = pageSize;
         page.PageData = new byte[pageSize];
-        page.Slots = new List<SlotEntry>();
 
         int offset = 0;
 
@@ -167,6 +163,9 @@ public class DocumentPage
 
         page.Crc = BinaryHelper.ReadUInt32LE(buffer, offset);
         offset += 4;
+
+        // Pre-allocate list with known capacity
+        page.Slots = new List<SlotEntry>(page.SlotCount);
 
         for (int i = 0; i < page.SlotCount; i++)
         {
