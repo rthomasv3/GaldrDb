@@ -20,7 +20,8 @@ public class WalPageIO : IPageIO
     private ulong _activeTxId;
     private bool _inTransaction;
     private List<PendingPageWrite> _pendingWrites;
-    
+    private List<byte[]> _rentedBuffers;
+
     private bool _disposed;
 
     public WalPageIO(IPageIO innerPageIO, WriteAheadLog wal, int pageSize)
@@ -33,6 +34,7 @@ public class WalPageIO : IPageIO
         _activeTxId = 0;
         _inTransaction = false;
         _pendingWrites = new List<PendingPageWrite>();
+        _rentedBuffers = new List<byte[]>();
         _disposed = false;
     }
 
@@ -53,6 +55,7 @@ public class WalPageIO : IPageIO
             _activeTxId = txId;
             _inTransaction = true;
             _pendingWrites.Clear();
+            _rentedBuffers.Clear();
         }
     }
 
@@ -75,12 +78,20 @@ public class WalPageIO : IPageIO
                 _wal.WriteFrame(_activeTxId, write.PageId, write.PageType, write.Data, flags);
 
                 // Update cache with committed data
+                // Return old buffer to pool if this page was already in cache
+                if (_walPageCache.TryGetValue(write.PageId, out byte[] oldBuffer))
+                {
+                    BufferPool.Return(oldBuffer);
+                }
                 _walPageCache[write.PageId] = write.Data;
             }
 
             // Ensure WAL is fsynced to disk before acknowledging commit
             _wal.Flush();
 
+            // Buffers moved to cache - clear tracking but don't return to pool
+            // They'll be returned during Checkpoint
+            _rentedBuffers.Clear();
             _pendingWrites.Clear();
             _inTransaction = false;
             _activeTxId = 0;
@@ -93,6 +104,12 @@ public class WalPageIO : IPageIO
     {
         lock (_txLock)
         {
+            // Return all rented buffers to pool
+            foreach (byte[] buffer in _rentedBuffers)
+            {
+                BufferPool.Return(buffer);
+            }
+            _rentedBuffers.Clear();
             _pendingWrites.Clear();
             _inTransaction = false;
             _activeTxId = 0;
@@ -143,7 +160,8 @@ public class WalPageIO : IPageIO
 
     public void WritePage(int pageId, ReadOnlySpan<byte> data)
     {
-        byte[] pageData = data.ToArray();
+        byte[] pageData = BufferPool.Rent(_pageSize);
+        data.CopyTo(pageData);
         byte pageType = DeterminePageType(pageData);
 
         lock (_txLock)
@@ -152,11 +170,16 @@ public class WalPageIO : IPageIO
             {
                 // Buffer the write for later commit
                 _pendingWrites.Add(new PendingPageWrite(pageId, pageData, pageType));
+                _rentedBuffers.Add(pageData);
             }
             else
             {
                 // No active transaction - write directly with auto-commit
-                // This is for non-transactional operations (e.g., initialization)
+                // Return old buffer to pool if this page was already in cache
+                if (_walPageCache.TryGetValue(pageId, out byte[] oldBuffer))
+                {
+                    BufferPool.Return(oldBuffer);
+                }
                 _wal.WriteFrame(0, pageId, pageType, pageData, WalFrameFlags.Commit);
                 _walPageCache[pageId] = pageData;
             }
@@ -249,7 +272,11 @@ public class WalPageIO : IPageIO
 
             _innerPageIO.Flush();
 
-            // Clear the cache after checkpoint
+            // Return all cached buffers to pool before clearing
+            foreach (KeyValuePair<int, byte[]> entry in _walPageCache)
+            {
+                BufferPool.Return(entry.Value);
+            }
             _walPageCache.Clear();
 
             // Truncate the WAL
@@ -284,9 +311,11 @@ public class WalPageIO : IPageIO
         lock (_txLock)
         {
             // Clear only the pages we wrote (new pages might have been added)
+            // and return their buffers to the pool
             foreach (KeyValuePair<int, byte[]> entry in pagesToWrite)
             {
                 _walPageCache.Remove(entry.Key);
+                BufferPool.Return(entry.Value);
             }
 
             // Truncate the WAL

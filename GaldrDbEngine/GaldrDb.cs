@@ -118,6 +118,12 @@ public class GaldrDb : IDisposable
             _wal = null;
         }
 
+        if (_documentStorage != null)
+        {
+            _documentStorage.Dispose();
+            _documentStorage = null;
+        }
+
         if (_basePageIO != null)
         {
             _basePageIO.Close();

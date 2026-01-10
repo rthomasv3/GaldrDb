@@ -7,17 +7,20 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Storage;
 
-public class DocumentStorage
+public class DocumentStorage : IDisposable
 {
     private readonly IPageIO _pageIO;
     private readonly PageManager _pageManager;
     private readonly int _pageSize;
+    private readonly ThreadLocal<DocumentPage> _reusablePage;
+    private bool _disposed;
 
     public DocumentStorage(IPageIO pageIO, PageManager pageManager, int pageSize)
     {
         _pageIO = pageIO;
         _pageManager = pageManager;
         _pageSize = pageSize;
+        _reusablePage = new ThreadLocal<DocumentPage>(() => new DocumentPage());
     }
 
     public DocumentLocation WriteDocument(byte[] documentBytes)
@@ -43,24 +46,23 @@ public class DocumentStorage
             try
             {
                 _pageIO.ReadPage(pageId, pageBuffer);
-                DocumentPage page = null;
 
                 bool wasInitialized = IsPageInitialized(pageBuffer);
                 if (wasInitialized)
                 {
-                    page = DocumentPage.Deserialize(pageBuffer, _pageSize);
+                    DocumentPage.DeserializeTo(pageBuffer, _reusablePage.Value, _pageSize);
                 }
                 else
                 {
-                    page = DocumentPage.CreateNew(_pageSize);
+                    _reusablePage.Value.Reset(_pageSize);
                 }
 
-                int slotIndex = page.AddDocument(documentBytes, pageIds, documentSize);
+                int slotIndex = _reusablePage.Value.AddDocument(documentBytes, pageIds, documentSize);
 
-                page.SerializeTo(pageBuffer);
+                _reusablePage.Value.SerializeTo(pageBuffer);
                 _pageIO.WritePage(pageId, pageBuffer);
 
-                UpdateFSM(pageId, page.GetFreeSpaceBytes());
+                UpdateFSM(pageId, _reusablePage.Value.GetFreeSpaceBytes());
 
                 result = new DocumentLocation(pageId, slotIndex);
             }
@@ -77,16 +79,16 @@ public class DocumentStorage
             int offset = 0;
             int firstPageDataSize = Math.Min(documentSize, usablePageSize);
 
-            DocumentPage firstPage = DocumentPage.CreateNew(_pageSize);
-            int slotIndexResult = firstPage.AddDocument(documentBytes.AsSpan(0, firstPageDataSize), pageIds, documentSize);
+            _reusablePage.Value.Reset(_pageSize);
+            int slotIndexResult = _reusablePage.Value.AddDocument(documentBytes.AsSpan(0, firstPageDataSize), pageIds, documentSize);
 
             byte[] pageBuffer = BufferPool.Rent(_pageSize);
             try
             {
-                firstPage.SerializeTo(pageBuffer);
+                _reusablePage.Value.SerializeTo(pageBuffer);
                 _pageIO.WritePage(firstPageId, pageBuffer);
 
-                UpdateFSM(firstPageId, firstPage.GetFreeSpaceBytes());
+                UpdateFSM(firstPageId, _reusablePage.Value.GetFreeSpaceBytes());
 
                 offset += firstPageDataSize;
 
@@ -126,14 +128,14 @@ public class DocumentStorage
         try
         {
             _pageIO.ReadPage(pageId, pageBuffer);
-            DocumentPage page = DocumentPage.Deserialize(pageBuffer, _pageSize);
+            DocumentPage.DeserializeTo(pageBuffer, _reusablePage.Value, _pageSize);
 
-            if (slotIndex < 0 || slotIndex >= page.SlotCount)
+            if (slotIndex < 0 || slotIndex >= _reusablePage.Value.SlotCount)
             {
                 throw new ArgumentOutOfRangeException(nameof(slotIndex));
             }
 
-            SlotEntry entry = page.Slots[slotIndex];
+            SlotEntry entry = _reusablePage.Value.Slots[slotIndex];
 
             if (entry.PageCount == 0 || entry.TotalSize == 0)
             {
@@ -142,14 +144,14 @@ public class DocumentStorage
 
             if (entry.PageCount == 1)
             {
-                result = page.GetDocumentData(slotIndex);
+                result = _reusablePage.Value.GetDocumentData(slotIndex);
             }
             else
             {
                 byte[] fullDocument = new byte[entry.TotalSize];
                 int offset = 0;
 
-                byte[] firstPageData = page.GetDocumentData(slotIndex);
+                byte[] firstPageData = _reusablePage.Value.GetDocumentData(slotIndex);
                 Array.Copy(firstPageData, 0, fullDocument, offset, firstPageData.Length);
                 offset += firstPageData.Length;
 
@@ -181,14 +183,14 @@ public class DocumentStorage
         try
         {
             _pageIO.ReadPage(pageId, pageBuffer);
-            DocumentPage page = DocumentPage.Deserialize(pageBuffer, _pageSize);
+            DocumentPage.DeserializeTo(pageBuffer, _reusablePage.Value, _pageSize);
 
-            if (slotIndex < 0 || slotIndex >= page.SlotCount)
+            if (slotIndex < 0 || slotIndex >= _reusablePage.Value.SlotCount)
             {
                 throw new ArgumentOutOfRangeException(nameof(slotIndex));
             }
 
-            SlotEntry entry = page.Slots[slotIndex];
+            SlotEntry entry = _reusablePage.Value.Slots[slotIndex];
 
             if (entry.PageCount > 1)
             {
@@ -199,7 +201,7 @@ public class DocumentStorage
                 }
             }
 
-            page.Slots[slotIndex] = new SlotEntry
+            _reusablePage.Value.Slots[slotIndex] = new SlotEntry
             {
                 PageCount = 0,
                 PageIds = null,
@@ -208,10 +210,10 @@ public class DocumentStorage
                 Length = 0
             };
 
-            page.SerializeTo(pageBuffer);
+            _reusablePage.Value.SerializeTo(pageBuffer);
             _pageIO.WritePage(pageId, pageBuffer);
 
-            UpdateFSM(pageId, page.GetFreeSpaceBytes());
+            UpdateFSM(pageId, _reusablePage.Value.GetFreeSpaceBytes());
         }
         finally
         {
@@ -306,23 +308,22 @@ public class DocumentStorage
             try
             {
                 await _pageIO.ReadPageAsync(pageId, pageBuffer, cancellationToken).ConfigureAwait(false);
-                DocumentPage page = null;
 
                 if (IsPageInitialized(pageBuffer))
                 {
-                    page = DocumentPage.Deserialize(pageBuffer, _pageSize);
+                    DocumentPage.DeserializeTo(pageBuffer, _reusablePage.Value, _pageSize);
                 }
                 else
                 {
-                    page = DocumentPage.CreateNew(_pageSize);
+                    _reusablePage.Value.Reset(_pageSize);
                 }
 
-                int slotIndex = page.AddDocument(documentBytes, pageIds, documentSize);
+                int slotIndex = _reusablePage.Value.AddDocument(documentBytes, pageIds, documentSize);
 
-                page.SerializeTo(pageBuffer);
+                _reusablePage.Value.SerializeTo(pageBuffer);
                 await _pageIO.WritePageAsync(pageId, pageBuffer, cancellationToken).ConfigureAwait(false);
 
-                UpdateFSM(pageId, page.GetFreeSpaceBytes());
+                UpdateFSM(pageId, _reusablePage.Value.GetFreeSpaceBytes());
 
                 result = new DocumentLocation(pageId, slotIndex);
             }
@@ -339,16 +340,16 @@ public class DocumentStorage
             int offset = 0;
             int firstPageDataSize = Math.Min(documentSize, usablePageSize);
 
-            DocumentPage firstPage = DocumentPage.CreateNew(_pageSize);
-            int slotIndexResult = firstPage.AddDocument(documentBytes.AsSpan(0, firstPageDataSize), pageIds, documentSize);
+            _reusablePage.Value.Reset(_pageSize);
+            int slotIndexResult = _reusablePage.Value.AddDocument(documentBytes.AsSpan(0, firstPageDataSize), pageIds, documentSize);
 
             byte[] pageBuffer = BufferPool.Rent(_pageSize);
             try
             {
-                firstPage.SerializeTo(pageBuffer);
+                _reusablePage.Value.SerializeTo(pageBuffer);
                 await _pageIO.WritePageAsync(firstPageId, pageBuffer, cancellationToken).ConfigureAwait(false);
 
-                UpdateFSM(firstPageId, firstPage.GetFreeSpaceBytes());
+                UpdateFSM(firstPageId, _reusablePage.Value.GetFreeSpaceBytes());
 
                 offset += firstPageDataSize;
 
@@ -388,14 +389,14 @@ public class DocumentStorage
         try
         {
             await _pageIO.ReadPageAsync(pageId, pageBuffer, cancellationToken).ConfigureAwait(false);
-            DocumentPage page = DocumentPage.Deserialize(pageBuffer, _pageSize);
+            DocumentPage.DeserializeTo(pageBuffer, _reusablePage.Value, _pageSize);
 
-            if (slotIndex < 0 || slotIndex >= page.SlotCount)
+            if (slotIndex < 0 || slotIndex >= _reusablePage.Value.SlotCount)
             {
                 throw new ArgumentOutOfRangeException(nameof(slotIndex));
             }
 
-            SlotEntry entry = page.Slots[slotIndex];
+            SlotEntry entry = _reusablePage.Value.Slots[slotIndex];
 
             if (entry.PageCount == 0 || entry.TotalSize == 0)
             {
@@ -404,14 +405,14 @@ public class DocumentStorage
 
             if (entry.PageCount == 1)
             {
-                result = page.GetDocumentData(slotIndex);
+                result = _reusablePage.Value.GetDocumentData(slotIndex);
             }
             else
             {
                 byte[] fullDocument = new byte[entry.TotalSize];
                 int offset = 0;
 
-                byte[] firstPageData = page.GetDocumentData(slotIndex);
+                byte[] firstPageData = _reusablePage.Value.GetDocumentData(slotIndex);
                 Array.Copy(firstPageData, 0, fullDocument, offset, firstPageData.Length);
                 offset += firstPageData.Length;
 
@@ -435,5 +436,14 @@ public class DocumentStorage
         }
 
         return result;
+    }
+
+    public void Dispose()
+    {
+        if (!_disposed)
+        {
+            _reusablePage.Dispose();
+            _disposed = true;
+        }
     }
 }

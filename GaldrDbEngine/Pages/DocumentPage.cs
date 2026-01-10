@@ -138,11 +138,25 @@ public class DocumentPage
         }
     }
 
-    public static DocumentPage Deserialize(byte[] buffer, int pageSize)
+    public static void DeserializeTo(byte[] buffer, DocumentPage page, int pageSize)
     {
-        DocumentPage page = new DocumentPage();
         page._pageSize = pageSize;
-        page.PageData = new byte[pageSize];
+
+        // Ensure PageData is allocated and correct size
+        if (page.PageData == null || page.PageData.Length < pageSize)
+        {
+            page.PageData = new byte[pageSize];
+        }
+
+        // Ensure Slots list exists
+        if (page.Slots == null)
+        {
+            page.Slots = new List<SlotEntry>();
+        }
+        else
+        {
+            page.Slots.Clear();
+        }
 
         int offset = 0;
 
@@ -164,9 +178,6 @@ public class DocumentPage
         page.Crc = BinaryHelper.ReadUInt32LE(buffer, offset);
         offset += 4;
 
-        // Pre-allocate list with known capacity
-        page.Slots = new List<SlotEntry>(page.SlotCount);
-
         for (int i = 0; i < page.SlotCount; i++)
         {
             SlotEntry entry = SlotEntry.Deserialize(buffer, offset);
@@ -175,9 +186,34 @@ public class DocumentPage
         }
 
         Array.Copy(buffer, 0, page.PageData, 0, pageSize);
+    }
 
-        DocumentPage result = page;
+    public void Reset(int pageSize)
+    {
+        _pageSize = pageSize;
+        PageType = PageConstants.PAGE_TYPE_DOCUMENT;
+        Flags = 0;
+        SlotCount = 0;
+        FreeSpaceOffset = (ushort)HEADER_SIZE;
+        FreeSpaceEnd = (ushort)pageSize;
+        Crc = 0;
 
-        return result;
+        if (Slots == null)
+        {
+            Slots = new List<SlotEntry>();
+        }
+        else
+        {
+            Slots.Clear();
+        }
+
+        if (PageData == null || PageData.Length < pageSize)
+        {
+            PageData = new byte[pageSize];
+        }
+        else
+        {
+            Array.Clear(PageData, 0, pageSize);
+        }
     }
 }
