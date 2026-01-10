@@ -65,7 +65,8 @@ public class SecondaryIndexNodeTests
         byte[] buffer = new byte[pageSize];
         node.SerializeTo(buffer);
 
-        SecondaryIndexNode deserialized = SecondaryIndexNode.Deserialize(buffer, pageSize);
+        SecondaryIndexNode deserialized = new SecondaryIndexNode(pageSize, maxKeys, BTreeNodeType.Leaf);
+        SecondaryIndexNode.DeserializeTo(buffer, deserialized);
 
         Assert.AreEqual(0, deserialized.KeyCount);
     }
@@ -80,7 +81,8 @@ public class SecondaryIndexNodeTests
         byte[] buffer = new byte[pageSize];
         node.SerializeTo(buffer);
 
-        SecondaryIndexNode deserialized = SecondaryIndexNode.Deserialize(buffer, pageSize);
+        SecondaryIndexNode deserialized = new SecondaryIndexNode(pageSize, maxKeys, BTreeNodeType.Leaf);
+        SecondaryIndexNode.DeserializeTo(buffer, deserialized);
 
         Assert.IsFalse(deserialized.IsFull());
     }
@@ -97,7 +99,8 @@ public class SecondaryIndexNodeTests
 
         ushort writtenMaxKeys = (ushort)(buffer[8] | (buffer[9] << 8));
 
-        SecondaryIndexNode deserialized = SecondaryIndexNode.Deserialize(buffer, pageSize);
+        SecondaryIndexNode deserialized = new SecondaryIndexNode(pageSize, maxKeys, BTreeNodeType.Leaf);
+        SecondaryIndexNode.DeserializeTo(buffer, deserialized);
 
         Assert.AreEqual(maxKeys, writtenMaxKeys);
     }
@@ -136,7 +139,8 @@ public class SecondaryIndexNodeTests
         byte[] readBuffer = new byte[pageSize];
         pageIO.ReadPage(0, readBuffer);
 
-        SecondaryIndexNode readNode = SecondaryIndexNode.Deserialize(readBuffer, pageSize);
+        SecondaryIndexNode readNode = new SecondaryIndexNode(pageSize, maxKeys, BTreeNodeType.Leaf);
+        SecondaryIndexNode.DeserializeTo(readBuffer, readNode);
 
         pageIO.Close();
         pageIO.Dispose();
@@ -198,7 +202,8 @@ public class SecondaryIndexNodeTests
 
         byte[] readBuffer = new byte[pageSize];
         pageIO.ReadPage(rootPageId, readBuffer);
-        SecondaryIndexNode readNode = SecondaryIndexNode.Deserialize(readBuffer, pageSize);
+        SecondaryIndexNode readNode = new SecondaryIndexNode(pageSize, maxKeys, BTreeNodeType.Leaf);
+        SecondaryIndexNode.DeserializeTo(readBuffer, readNode);
 
         pageIO.Close();
         pageIO.Dispose();

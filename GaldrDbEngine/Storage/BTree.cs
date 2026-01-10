@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -33,7 +32,8 @@ public class BTree
     public void Insert(int docId, DocumentLocation location)
     {
         byte[] rootBuffer = BufferPool.Rent(_pageSize);
-        BTreeNode root = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode root = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode newRoot = null;
         try
         {
             _pageIO.ReadPage(_rootPageId, rootBuffer);
@@ -42,7 +42,7 @@ public class BTree
             if (root.IsFull())
             {
                 int newRootPageId = _pageManager.AllocatePage();
-                BTreeNode newRoot = new BTreeNode(_pageSize, _order, BTreeNodeType.Internal);
+                newRoot = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Internal);
                 newRoot.ChildPageIds.Add(_rootPageId);
 
                 newRoot.SerializeTo(rootBuffer);
@@ -61,6 +61,8 @@ public class BTree
         finally
         {
             BufferPool.Return(rootBuffer);
+            BTreeNodePool.Return(root);
+            BTreeNodePool.Return(newRoot);
         }
     }
 
@@ -84,7 +86,7 @@ public class BTree
     private void CollectAllEntries(int pageId, List<BTreeEntry> entries)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
-        BTreeNode node = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         Stack<int> pageStack = new Stack<int>();
         pageStack.Push(pageId);
 
@@ -116,6 +118,7 @@ public class BTree
         finally
         {
             BufferPool.Return(buffer);
+            BTreeNodePool.Return(node);
         }
     }
 
@@ -124,7 +127,7 @@ public class BTree
         bool result = false;
 
         byte[] buffer = BufferPool.Rent(_pageSize);
-        BTreeNode node = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
             int currentPageId = pageId;
@@ -164,6 +167,7 @@ public class BTree
         finally
         {
             BufferPool.Return(buffer);
+            BTreeNodePool.Return(node);
         }
 
         return result;
@@ -174,7 +178,7 @@ public class BTree
         DocumentLocation? result = null;
 
         byte[] buffer = BufferPool.Rent(_pageSize);
-        BTreeNode node = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
             int currentPageId = pageId;
@@ -207,6 +211,7 @@ public class BTree
         finally
         {
             BufferPool.Return(buffer);
+            BTreeNodePool.Return(node);
         }
 
         return result;
@@ -216,8 +221,8 @@ public class BTree
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
         byte[] childBuffer = BufferPool.Rent(_pageSize);
-        BTreeNode node = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
-        BTreeNode child = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode child = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
             int currentPageId = pageId;
@@ -281,6 +286,8 @@ public class BTree
         {
             BufferPool.Return(childBuffer);
             BufferPool.Return(buffer);
+            BTreeNodePool.Return(node);
+            BTreeNodePool.Return(child);
         }
     }
 
@@ -288,8 +295,9 @@ public class BTree
     {
         byte[] childBuffer = BufferPool.Rent(_pageSize);
         byte[] parentBuffer = BufferPool.Rent(_pageSize);
-        BTreeNode fullChild = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
-        BTreeNode parent = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode fullChild = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode parent = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode newChild = null;
         try
         {
             _pageIO.ReadPage(childPageId, childBuffer);
@@ -299,7 +307,7 @@ public class BTree
             BTreeNode.DeserializeTo(parentBuffer, parent, _order);
 
             int newChildPageId = _pageManager.AllocatePage();
-            BTreeNode newChild = new BTreeNode(_pageSize, _order, fullChild.NodeType);
+            newChild = BTreeNodePool.Rent(_pageSize, _order, fullChild.NodeType);
 
             int mid = (_order - 1) / 2;
             int keyToPromote = fullChild.Keys[mid];
@@ -377,19 +385,22 @@ public class BTree
         {
             BufferPool.Return(childBuffer);
             BufferPool.Return(parentBuffer);
+            BTreeNodePool.Return(fullChild);
+            BTreeNodePool.Return(parent);
+            BTreeNodePool.Return(newChild);
         }
     }
 
     public async Task<DocumentLocation?> SearchAsync(int docId, CancellationToken cancellationToken = default)
     {
-        DocumentLocation? result = await SearchNodeAsync(_rootPageId, docId, cancellationToken).ConfigureAwait(false);
-        return result;
+        return await SearchNodeAsync(_rootPageId, docId, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task InsertAsync(int docId, DocumentLocation location, CancellationToken cancellationToken = default)
     {
         byte[] rootBuffer = BufferPool.Rent(_pageSize);
-        BTreeNode root = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode root = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode newRoot = null;
         try
         {
             await _pageIO.ReadPageAsync(_rootPageId, rootBuffer, cancellationToken).ConfigureAwait(false);
@@ -398,7 +409,7 @@ public class BTree
             if (root.IsFull())
             {
                 int newRootPageId = _pageManager.AllocatePage();
-                BTreeNode newRoot = new BTreeNode(_pageSize, _order, BTreeNodeType.Internal);
+                newRoot = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Internal);
                 newRoot.ChildPageIds.Add(_rootPageId);
 
                 newRoot.SerializeTo(rootBuffer);
@@ -417,13 +428,14 @@ public class BTree
         finally
         {
             BufferPool.Return(rootBuffer);
+            BTreeNodePool.Return(root);
+            BTreeNodePool.Return(newRoot);
         }
     }
 
     public async Task<bool> DeleteAsync(int docId, CancellationToken cancellationToken = default)
     {
-        bool result = await DeleteFromNodeAsync(_rootPageId, docId, cancellationToken).ConfigureAwait(false);
-        return result;
+        return await DeleteFromNodeAsync(_rootPageId, docId, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<DocumentLocation?> SearchNodeAsync(int pageId, int docId, CancellationToken cancellationToken)
@@ -431,7 +443,7 @@ public class BTree
         DocumentLocation? result = null;
 
         byte[] buffer = BufferPool.Rent(_pageSize);
-        BTreeNode node = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
             int currentPageId = pageId;
@@ -464,6 +476,7 @@ public class BTree
         finally
         {
             BufferPool.Return(buffer);
+            BTreeNodePool.Return(node);
         }
 
         return result;
@@ -473,8 +486,8 @@ public class BTree
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
         byte[] childBuffer = BufferPool.Rent(_pageSize);
-        BTreeNode node = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
-        BTreeNode child = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode child = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
             int currentPageId = pageId;
@@ -538,6 +551,8 @@ public class BTree
         {
             BufferPool.Return(childBuffer);
             BufferPool.Return(buffer);
+            BTreeNodePool.Return(node);
+            BTreeNodePool.Return(child);
         }
     }
 
@@ -545,8 +560,9 @@ public class BTree
     {
         byte[] childBuffer = BufferPool.Rent(_pageSize);
         byte[] parentBuffer = BufferPool.Rent(_pageSize);
-        BTreeNode fullChild = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
-        BTreeNode parent = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode fullChild = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode parent = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode newChild = null;
         try
         {
             await _pageIO.ReadPageAsync(childPageId, childBuffer, cancellationToken).ConfigureAwait(false);
@@ -556,7 +572,7 @@ public class BTree
             BTreeNode.DeserializeTo(parentBuffer, parent, _order);
 
             int newChildPageId = _pageManager.AllocatePage();
-            BTreeNode newChild = new BTreeNode(_pageSize, _order, fullChild.NodeType);
+            newChild = BTreeNodePool.Rent(_pageSize, _order, fullChild.NodeType);
 
             int mid = (_order - 1) / 2;
             int keyToPromote = fullChild.Keys[mid];
@@ -634,6 +650,9 @@ public class BTree
         {
             BufferPool.Return(childBuffer);
             BufferPool.Return(parentBuffer);
+            BTreeNodePool.Return(fullChild);
+            BTreeNodePool.Return(parent);
+            BTreeNodePool.Return(newChild);
         }
     }
 
@@ -642,7 +661,7 @@ public class BTree
         bool result = false;
 
         byte[] buffer = BufferPool.Rent(_pageSize);
-        BTreeNode node = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
+        BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
             int currentPageId = pageId;
@@ -682,6 +701,7 @@ public class BTree
         finally
         {
             BufferPool.Return(buffer);
+            BTreeNodePool.Return(node);
         }
 
         return result;

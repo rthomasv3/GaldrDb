@@ -12,6 +12,9 @@ public class BTreeNode
     private readonly int _pageSize;
     private readonly int _order;
 
+    public int PageSize => _pageSize;
+    public int Order => _order;
+
     public byte PageType { get; set; }
     public BTreeNodeType NodeType { get; set; }
     public ushort KeyCount { get; set; }
@@ -28,21 +31,17 @@ public class BTreeNode
         NodeType = nodeType;
         KeyCount = 0;
         NextLeaf = 0;
-        // Pre-allocate capacity to avoid list resizing during operations
-        // Max keys per node = order - 1
-        Keys = new List<int>(order - 1);
+        Keys = ListPool<int>.Rent(order - 1);
 
         if (nodeType == BTreeNodeType.Internal)
         {
-            // Internal nodes have one more child pointer than keys
-            ChildPageIds = new List<int>(order);
+            ChildPageIds = ListPool<int>.Rent(order);
             LeafValues = null;
         }
         else
         {
             ChildPageIds = null;
-            // Leaf nodes have same number of values as keys
-            LeafValues = new List<DocumentLocation>(order - 1);
+            LeafValues = ListPool<DocumentLocation>.Rent(order - 1);
         }
     }
 
@@ -54,6 +53,50 @@ public class BTreeNode
     public bool CanInsert()
     {
         return KeyCount < _order - 1;
+    }
+
+    public void Reset(BTreeNodeType nodeType)
+    {
+        PageType = PageConstants.PAGE_TYPE_BTREE;
+        NodeType = nodeType;
+        KeyCount = 0;
+        NextLeaf = 0;
+        Keys?.Clear();
+        ChildPageIds?.Clear();
+        LeafValues?.Clear();
+    }
+
+    public void EnsureListsForNodeType(BTreeNodeType nodeType)
+    {
+        if (Keys == null)
+        {
+            Keys = ListPool<int>.Rent(_order - 1);
+        }
+
+        if (nodeType == BTreeNodeType.Internal)
+        {
+            if (ChildPageIds == null)
+            {
+                ChildPageIds = ListPool<int>.Rent(_order);
+            }
+        }
+        else
+        {
+            if (LeafValues == null)
+            {
+                LeafValues = ListPool<DocumentLocation>.Rent(_order - 1);
+            }
+        }
+    }
+
+    public void ReturnLists()
+    {
+        ListPool<int>.Return(Keys);
+        Keys = null;
+        ListPool<int>.Return(ChildPageIds);
+        ChildPageIds = null;
+        ListPool<DocumentLocation>.Return(LeafValues);
+        LeafValues = null;
     }
 
     public void SerializeTo(byte[] buffer)
@@ -112,27 +155,8 @@ public class BTreeNode
         BTreeNodeType nodeType = (BTreeNodeType)buffer[offset];
         offset += 1;
 
-        // Handle node type change
-        if (nodeType != node.NodeType)
-        {
-            node.NodeType = nodeType;
-            if (nodeType == BTreeNodeType.Internal)
-            {
-                if (node.ChildPageIds == null)
-                {
-                    node.ChildPageIds = new List<int>(order);
-                }
-                node.LeafValues = null;
-            }
-            else
-            {
-                node.ChildPageIds = null;
-                if (node.LeafValues == null)
-                {
-                    node.LeafValues = new List<DocumentLocation>(order - 1);
-                }
-            }
-        }
+        node.NodeType = nodeType;
+        node.EnsureListsForNodeType(nodeType);
 
         // Clear existing data
         node.Keys.Clear();

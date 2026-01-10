@@ -31,15 +31,17 @@ public class SecondaryIndexBTree
     public void Insert(byte[] key, DocumentLocation location)
     {
         byte[] rootBuffer = BufferPool.Rent(_pageSize);
+        SecondaryIndexNode root = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
+        SecondaryIndexNode newRoot = null;
         try
         {
             _pageIO.ReadPage(_rootPageId, rootBuffer);
-            SecondaryIndexNode root = SecondaryIndexNode.Deserialize(rootBuffer, _pageSize);
+            SecondaryIndexNode.DeserializeTo(rootBuffer, root);
 
             if (root.IsFull())
             {
                 int newRootPageId = _pageManager.AllocatePage();
-                SecondaryIndexNode newRoot = new SecondaryIndexNode(_pageSize, _maxKeys, BTreeNodeType.Internal);
+                newRoot = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Internal);
                 newRoot.ChildPageIds.Add(_rootPageId);
 
                 newRoot.SerializeTo(rootBuffer);
@@ -58,6 +60,8 @@ public class SecondaryIndexBTree
         finally
         {
             BufferPool.Return(rootBuffer);
+            SecondaryIndexNodePool.Return(root);
+            SecondaryIndexNodePool.Return(newRoot);
         }
     }
 
@@ -90,10 +94,11 @@ public class SecondaryIndexBTree
         DocumentLocation? result = null;
 
         byte[] buffer = BufferPool.Rent(_pageSize);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
         try
         {
             _pageIO.ReadPage(pageId, buffer);
-            SecondaryIndexNode node = SecondaryIndexNode.Deserialize(buffer, _pageSize);
+            SecondaryIndexNode.DeserializeTo(buffer, node);
 
             int i = 0;
             while (i < node.KeyCount && SecondaryIndexNode.CompareKeys(key, node.Keys[i]) > 0)
@@ -116,6 +121,7 @@ public class SecondaryIndexBTree
         finally
         {
             BufferPool.Return(buffer);
+            SecondaryIndexNodePool.Return(node);
         }
 
         return result;
@@ -124,10 +130,11 @@ public class SecondaryIndexBTree
     private void SearchByFieldValueNode(int pageId, byte[] fieldValueKey, List<DocumentLocation> results)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
         try
         {
             _pageIO.ReadPage(pageId, buffer);
-            SecondaryIndexNode node = SecondaryIndexNode.Deserialize(buffer, _pageSize);
+            SecondaryIndexNode.DeserializeTo(buffer, node);
 
             if (node.NodeType == BTreeNodeType.Leaf)
             {
@@ -167,6 +174,7 @@ public class SecondaryIndexBTree
         finally
         {
             BufferPool.Return(buffer);
+            SecondaryIndexNodePool.Return(node);
         }
     }
 
@@ -191,10 +199,11 @@ public class SecondaryIndexBTree
     private void SearchRangeNode(int pageId, byte[] startKey, byte[] endKey, bool includeStart, bool includeEnd, List<DocumentLocation> results)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
         try
         {
             _pageIO.ReadPage(pageId, buffer);
-            SecondaryIndexNode node = SecondaryIndexNode.Deserialize(buffer, _pageSize);
+            SecondaryIndexNode.DeserializeTo(buffer, node);
 
             if (node.NodeType == BTreeNodeType.Leaf)
             {
@@ -238,6 +247,7 @@ public class SecondaryIndexBTree
         finally
         {
             BufferPool.Return(buffer);
+            SecondaryIndexNodePool.Return(node);
         }
     }
 
@@ -246,10 +256,11 @@ public class SecondaryIndexBTree
         bool result = false;
 
         byte[] buffer = BufferPool.Rent(_pageSize);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
         try
         {
             _pageIO.ReadPage(pageId, buffer);
-            SecondaryIndexNode node = SecondaryIndexNode.Deserialize(buffer, _pageSize);
+            SecondaryIndexNode.DeserializeTo(buffer, node);
 
             int i = 0;
             while (i < node.KeyCount && SecondaryIndexNode.CompareKeys(key, node.Keys[i]) > 0)
@@ -279,6 +290,7 @@ public class SecondaryIndexBTree
         finally
         {
             BufferPool.Return(buffer);
+            SecondaryIndexNodePool.Return(node);
         }
 
         return result;
@@ -287,10 +299,11 @@ public class SecondaryIndexBTree
     private void InsertNonFull(int pageId, byte[] key, DocumentLocation location)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
         try
         {
             _pageIO.ReadPage(pageId, buffer);
-            SecondaryIndexNode node = SecondaryIndexNode.Deserialize(buffer, _pageSize);
+            SecondaryIndexNode.DeserializeTo(buffer, node);
 
             int i = node.KeyCount - 1;
 
@@ -322,17 +335,18 @@ public class SecondaryIndexBTree
                 i++;
 
                 byte[] childBuffer = BufferPool.Rent(_pageSize);
+                SecondaryIndexNode child = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
                 try
                 {
                     _pageIO.ReadPage(node.ChildPageIds[i], childBuffer);
-                    SecondaryIndexNode child = SecondaryIndexNode.Deserialize(childBuffer, _pageSize);
+                    SecondaryIndexNode.DeserializeTo(childBuffer, child);
 
                     if (child.IsFull())
                     {
                         SplitChild(pageId, i, node.ChildPageIds[i]);
 
                         _pageIO.ReadPage(pageId, buffer);
-                        node = SecondaryIndexNode.Deserialize(buffer, _pageSize);
+                        SecondaryIndexNode.DeserializeTo(buffer, node);
 
                         if (SecondaryIndexNode.CompareKeys(key, node.Keys[i]) > 0)
                         {
@@ -343,6 +357,7 @@ public class SecondaryIndexBTree
                 finally
                 {
                     BufferPool.Return(childBuffer);
+                    SecondaryIndexNodePool.Return(child);
                 }
 
                 InsertNonFull(node.ChildPageIds[i], key, location);
@@ -351,6 +366,7 @@ public class SecondaryIndexBTree
         finally
         {
             BufferPool.Return(buffer);
+            SecondaryIndexNodePool.Return(node);
         }
     }
 
@@ -358,16 +374,19 @@ public class SecondaryIndexBTree
     {
         byte[] childBuffer = BufferPool.Rent(_pageSize);
         byte[] parentBuffer = BufferPool.Rent(_pageSize);
+        SecondaryIndexNode fullChild = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
+        SecondaryIndexNode parent = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
+        SecondaryIndexNode newChild = null;
         try
         {
             _pageIO.ReadPage(childPageId, childBuffer);
-            SecondaryIndexNode fullChild = SecondaryIndexNode.Deserialize(childBuffer, _pageSize);
+            SecondaryIndexNode.DeserializeTo(childBuffer, fullChild);
 
             _pageIO.ReadPage(parentPageId, parentBuffer);
-            SecondaryIndexNode parent = SecondaryIndexNode.Deserialize(parentBuffer, _pageSize);
+            SecondaryIndexNode.DeserializeTo(parentBuffer, parent);
 
             int newChildPageId = _pageManager.AllocatePage();
-            SecondaryIndexNode newChild = new SecondaryIndexNode(_pageSize, _maxKeys, fullChild.NodeType);
+            newChild = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, fullChild.NodeType);
 
             int mid = (_maxKeys) / 2;
             byte[] keyToPromote = fullChild.Keys[mid];
@@ -437,6 +456,9 @@ public class SecondaryIndexBTree
         {
             BufferPool.Return(childBuffer);
             BufferPool.Return(parentBuffer);
+            SecondaryIndexNodePool.Return(fullChild);
+            SecondaryIndexNodePool.Return(parent);
+            SecondaryIndexNodePool.Return(newChild);
         }
     }
 

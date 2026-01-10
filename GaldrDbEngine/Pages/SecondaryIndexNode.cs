@@ -12,6 +12,9 @@ public class SecondaryIndexNode
     private readonly int _pageSize;
     private readonly int _maxKeys;
 
+    public int PageSize => _pageSize;
+    public int MaxKeys => _maxKeys;
+
     public byte PageType { get; set; }
     public BTreeNodeType NodeType { get; set; }
     public ushort KeyCount { get; set; }
@@ -28,26 +31,67 @@ public class SecondaryIndexNode
         NodeType = nodeType;
         KeyCount = 0;
         NextLeaf = 0;
-        // Pre-allocate capacity to avoid list resizing during operations
-        Keys = new List<byte[]>(maxKeys);
+        Keys = ListPool<byte[]>.Rent(maxKeys);
 
         if (nodeType == BTreeNodeType.Internal)
         {
-            // Internal nodes have one more child pointer than keys
-            ChildPageIds = new List<int>(maxKeys + 1);
+            ChildPageIds = ListPool<int>.Rent(maxKeys + 1);
             LeafValues = null;
         }
         else
         {
             ChildPageIds = null;
-            // Leaf nodes have same number of values as keys
-            LeafValues = new List<DocumentLocation>(maxKeys);
+            LeafValues = ListPool<DocumentLocation>.Rent(maxKeys);
         }
     }
 
     public bool IsFull()
     {
         return KeyCount >= _maxKeys;
+    }
+
+    public void Reset(BTreeNodeType nodeType)
+    {
+        PageType = PageConstants.PAGE_TYPE_SECONDARY_INDEX;
+        NodeType = nodeType;
+        KeyCount = 0;
+        NextLeaf = 0;
+        Keys?.Clear();
+        ChildPageIds?.Clear();
+        LeafValues?.Clear();
+    }
+
+    public void EnsureListsForNodeType(BTreeNodeType nodeType)
+    {
+        if (Keys == null)
+        {
+            Keys = ListPool<byte[]>.Rent(_maxKeys);
+        }
+
+        if (nodeType == BTreeNodeType.Internal)
+        {
+            if (ChildPageIds == null)
+            {
+                ChildPageIds = ListPool<int>.Rent(_maxKeys + 1);
+            }
+        }
+        else
+        {
+            if (LeafValues == null)
+            {
+                LeafValues = ListPool<DocumentLocation>.Rent(_maxKeys);
+            }
+        }
+    }
+
+    public void ReturnLists()
+    {
+        ListPool<byte[]>.Return(Keys);
+        Keys = null;
+        ListPool<int>.Return(ChildPageIds);
+        ChildPageIds = null;
+        ListPool<DocumentLocation>.Return(LeafValues);
+        LeafValues = null;
     }
 
     public void SerializeTo(byte[] buffer)
@@ -101,11 +145,11 @@ public class SecondaryIndexNode
         }
     }
 
-    public static SecondaryIndexNode Deserialize(byte[] buffer, int pageSize)
+    public static void DeserializeTo(byte[] buffer, SecondaryIndexNode node)
     {
         int offset = 0;
 
-        byte pageType = buffer[offset];
+        node.PageType = buffer[offset];
         offset += 1;
 
         BTreeNodeType nodeType = (BTreeNodeType)buffer[offset];
@@ -114,16 +158,20 @@ public class SecondaryIndexNode
         ushort keyCount = BinaryHelper.ReadUInt16LE(buffer, offset);
         offset += 2;
 
-        int nextLeaf = BinaryHelper.ReadInt32LE(buffer, offset);
+        node.NextLeaf = BinaryHelper.ReadInt32LE(buffer, offset);
         offset += 4;
 
-        ushort maxKeys = BinaryHelper.ReadUInt16LE(buffer, offset);
+        // Skip maxKeys in buffer - already set in node
         offset += 2;
 
-        SecondaryIndexNode node = new SecondaryIndexNode(pageSize, maxKeys, nodeType);
-        node.PageType = pageType;
+        node.NodeType = nodeType;
         node.KeyCount = keyCount;
-        node.NextLeaf = nextLeaf;
+        node.EnsureListsForNodeType(nodeType);
+
+        // Clear existing data
+        node.Keys.Clear();
+        node.ChildPageIds?.Clear();
+        node.LeafValues?.Clear();
 
         for (int i = 0; i < keyCount; i++)
         {
@@ -155,8 +203,6 @@ public class SecondaryIndexNode
                 node.LeafValues.Add(new DocumentLocation(pageId, slotIndex));
             }
         }
-
-        return node;
     }
 
     public static int CompareKeys(byte[] a, byte[] b)
