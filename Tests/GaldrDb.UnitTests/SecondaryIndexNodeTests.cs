@@ -170,13 +170,13 @@ public class SecondaryIndexNodeTests
 
         tree.Insert(compositeKey, location);
 
-        DocumentLocation found = tree.Search(compositeKey);
+        DocumentLocation? found = tree.Search(compositeKey);
 
         pageIO.Close();
         pageIO.Dispose();
 
         Assert.IsNotNull(found);
-        Assert.AreEqual(10, found.PageId);
+        Assert.AreEqual(10, found.Value.PageId);
     }
 
     [TestMethod]

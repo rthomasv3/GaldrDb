@@ -895,7 +895,6 @@ public class GaldrDb : IDisposable
 
         int order = CalculateBTreeOrder(_options.PageSize);
         BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
-        DocumentLocation oldLocation = btree.Search(docId);
 
         if (oldIndexFields != null && oldIndexFields.Count > 0)
         {
@@ -942,7 +941,7 @@ public class GaldrDb : IDisposable
 
         int order = CalculateBTreeOrder(_options.PageSize);
         BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
-        DocumentLocation location = btree.Search(docId);
+        DocumentLocation? location = btree.Search(docId);
 
         if (location != null)
         {
@@ -1060,7 +1059,6 @@ public class GaldrDb : IDisposable
 
         int order = CalculateBTreeOrder(_options.PageSize);
         BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
-        DocumentLocation oldLocation = await btree.SearchAsync(docId, cancellationToken).ConfigureAwait(false);
 
         if (oldIndexFields != null && oldIndexFields.Count > 0)
         {
@@ -1108,7 +1106,7 @@ public class GaldrDb : IDisposable
 
         int order = CalculateBTreeOrder(_options.PageSize);
         BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
-        DocumentLocation location = await btree.SearchAsync(docId, cancellationToken).ConfigureAwait(false);
+        DocumentLocation? location = await btree.SearchAsync(docId, cancellationToken).ConfigureAwait(false);
 
         if (location != null)
         {

@@ -35,7 +35,7 @@ public class DocumentStorage : IDisposable
         }
 
         int[] pageIds = new int[pagesNeeded];
-        DocumentLocation result = null;
+        DocumentLocation result;
 
         if (pagesNeeded == 1)
         {
@@ -297,7 +297,7 @@ public class DocumentStorage : IDisposable
         }
 
         int[] pageIds = new int[pagesNeeded];
-        DocumentLocation result = null;
+        DocumentLocation result;
 
         if (pagesNeeded == 1)
         {

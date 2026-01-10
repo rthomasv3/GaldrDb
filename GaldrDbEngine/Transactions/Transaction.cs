@@ -199,7 +199,7 @@ public class Transaction : IDisposable
 
         // Check if document exists (either in write set or database)
         bool exists = false;
-        DocumentLocation previousLocation = null;
+        DocumentLocation? previousLocation = null;
         IReadOnlyList<IndexFieldEntry> oldIndexFields = null;
 
         if (_writeSet.TryGetValue((collectionName, id), out WriteSetEntry existingEntry))
@@ -352,7 +352,7 @@ public class Transaction : IDisposable
                 foreach (KeyValuePair<(string CollectionName, int DocId), WriteSetEntry> kvp in _writeSet)
                 {
                     WriteSetEntry entry = kvp.Value;
-                    DocumentLocation location = null;
+                    DocumentLocation location;
 
                     switch (entry.Operation)
                     {
@@ -556,7 +556,7 @@ public class Transaction : IDisposable
 
         // Check if document exists (either in write set or database)
         bool exists = false;
-        DocumentLocation previousLocation = null;
+        DocumentLocation? previousLocation = null;
         IReadOnlyList<IndexFieldEntry> oldIndexFields = null;
 
         if (_writeSet.TryGetValue((collectionName, id), out WriteSetEntry existingEntry))
@@ -709,7 +709,7 @@ public class Transaction : IDisposable
                 foreach (KeyValuePair<(string CollectionName, int DocId), WriteSetEntry> kvp in _writeSet)
                 {
                     WriteSetEntry entry = kvp.Value;
-                    DocumentLocation location = null;
+                    DocumentLocation location;
 
                     switch (entry.Operation)
                     {

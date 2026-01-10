@@ -283,7 +283,7 @@ public class DocumentStorageTests
 
         string testData = "Persistent data";
         byte[] documentBytes = Encoding.UTF8.GetBytes(testData);
-        DocumentLocation location = null;
+        DocumentLocation location;
 
         IPageIO pageIO1 = null;
         PageManager pageManager1 = null;

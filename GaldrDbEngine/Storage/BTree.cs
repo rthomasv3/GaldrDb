@@ -64,7 +64,7 @@ public class BTree
         }
     }
 
-    public DocumentLocation Search(int docId)
+    public DocumentLocation? Search(int docId)
     {
         return SearchNode(_rootPageId, docId);
     }
@@ -169,9 +169,9 @@ public class BTree
         return result;
     }
 
-    private DocumentLocation SearchNode(int pageId, int docId)
+    private DocumentLocation? SearchNode(int pageId, int docId)
     {
-        DocumentLocation result = null;
+        DocumentLocation? result = null;
 
         byte[] buffer = BufferPool.Rent(_pageSize);
         BTreeNode node = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
@@ -232,7 +232,7 @@ public class BTree
                 if (node.NodeType == BTreeNodeType.Leaf)
                 {
                     node.Keys.Add(0);
-                    node.LeafValues.Add(null);
+                    node.LeafValues.Add(default);
 
                     while (i >= 0 && docId < node.Keys[i])
                     {
@@ -380,9 +380,9 @@ public class BTree
         }
     }
 
-    public async Task<DocumentLocation> SearchAsync(int docId, CancellationToken cancellationToken = default)
+    public async Task<DocumentLocation?> SearchAsync(int docId, CancellationToken cancellationToken = default)
     {
-        DocumentLocation result = await SearchNodeAsync(_rootPageId, docId, cancellationToken).ConfigureAwait(false);
+        DocumentLocation? result = await SearchNodeAsync(_rootPageId, docId, cancellationToken).ConfigureAwait(false);
         return result;
     }
 
@@ -426,9 +426,9 @@ public class BTree
         return result;
     }
 
-    private async Task<DocumentLocation> SearchNodeAsync(int pageId, int docId, CancellationToken cancellationToken)
+    private async Task<DocumentLocation?> SearchNodeAsync(int pageId, int docId, CancellationToken cancellationToken)
     {
-        DocumentLocation result = null;
+        DocumentLocation? result = null;
 
         byte[] buffer = BufferPool.Rent(_pageSize);
         BTreeNode node = new BTreeNode(_pageSize, _order, BTreeNodeType.Leaf);
@@ -489,7 +489,7 @@ public class BTree
                 if (node.NodeType == BTreeNodeType.Leaf)
                 {
                     node.Keys.Add(0);
-                    node.LeafValues.Add(null);
+                    node.LeafValues.Add(default);
 
                     while (i >= 0 && docId < node.Keys[i])
                     {

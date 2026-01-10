@@ -66,9 +66,9 @@ public class BTreeTests
         DocumentLocation location = new DocumentLocation(100, 5);
         btree.Insert(1, location);
 
-        DocumentLocation found = btree.Search(1);
+        DocumentLocation? found = btree.Search(1);
 
-        bool result = found != null && found.PageId == 100 && found.SlotIndex == 5;
+        bool result = found != null && found.Value.PageId == 100 && found.Value.SlotIndex == 5;
 
         pageIO.Dispose();
 
@@ -90,13 +90,13 @@ public class BTreeTests
         btree.Insert(5, new DocumentLocation(101, 1));
         btree.Insert(3, new DocumentLocation(102, 2));
 
-        DocumentLocation found1 = btree.Search(1);
-        DocumentLocation found3 = btree.Search(3);
-        DocumentLocation found5 = btree.Search(5);
+        DocumentLocation? found1 = btree.Search(1);
+        DocumentLocation? found3 = btree.Search(3);
+        DocumentLocation? found5 = btree.Search(5);
 
-        bool result = found1.PageId == 100 && found1.SlotIndex == 0 &&
-                      found3.PageId == 102 && found3.SlotIndex == 2 &&
-                      found5.PageId == 101 && found5.SlotIndex == 1;
+        bool result = found1.Value.PageId == 100 && found1.Value.SlotIndex == 0 &&
+                      found3.Value.PageId == 102 && found3.Value.SlotIndex == 2 &&
+                      found5.Value.PageId == 101 && found5.Value.SlotIndex == 1;
 
         pageIO.Dispose();
 
@@ -117,7 +117,7 @@ public class BTreeTests
         btree.Insert(1, new DocumentLocation(100, 0));
         btree.Insert(5, new DocumentLocation(101, 1));
 
-        DocumentLocation found = btree.Search(99);
+        DocumentLocation? found = btree.Search(99);
 
         bool result = found == null;
 
@@ -142,13 +142,13 @@ public class BTreeTests
             btree.Insert(i, new DocumentLocation(100 + i, i));
         }
 
-        DocumentLocation found1 = btree.Search(1);
-        DocumentLocation found10 = btree.Search(10);
-        DocumentLocation found20 = btree.Search(20);
+        DocumentLocation? found1 = btree.Search(1);
+        DocumentLocation? found10 = btree.Search(10);
+        DocumentLocation? found20 = btree.Search(20);
 
-        bool result = found1 != null && found1.PageId == 101 && found1.SlotIndex == 1 &&
-                      found10 != null && found10.PageId == 110 && found10.SlotIndex == 10 &&
-                      found20 != null && found20.PageId == 120 && found20.SlotIndex == 20;
+        bool result = found1 != null && found1.Value.PageId == 101 && found1.Value.SlotIndex == 1 &&
+                      found10 != null && found10.Value.PageId == 110 && found10.Value.SlotIndex == 10 &&
+                      found20 != null && found20.Value.PageId == 120 && found20.Value.SlotIndex == 20;
 
         pageIO.Dispose();
 
@@ -201,8 +201,8 @@ public class BTreeTests
         bool allFound = true;
         for (int i = 1; i <= 50; i++)
         {
-            DocumentLocation found = btree.Search(i);
-            if (found == null || found.PageId != 100 + i || found.SlotIndex != i)
+            DocumentLocation? found = btree.Search(i);
+            if (found == null || found.Value.PageId != 100 + i || found.Value.SlotIndex != i)
             {
                 allFound = false;
                 break;
@@ -233,8 +233,8 @@ public class BTreeTests
         bool allFound = true;
         for (int i = 1; i <= 50; i++)
         {
-            DocumentLocation found = btree.Search(i);
-            if (found == null || found.PageId != 100 + i || found.SlotIndex != i)
+            DocumentLocation? found = btree.Search(i);
+            if (found == null || found.Value.PageId != 100 + i || found.Value.SlotIndex != i)
             {
                 allFound = false;
                 break;
@@ -260,7 +260,7 @@ public class BTreeTests
         btree.Insert(1, new DocumentLocation(100, 0));
 
         bool deleted = btree.Delete(1);
-        DocumentLocation found = btree.Search(1);
+        DocumentLocation? found = btree.Search(1);
 
         pageIO.Dispose();
 
@@ -304,9 +304,9 @@ public class BTreeTests
         btree.Insert(3, new DocumentLocation(102, 2));
 
         bool deleted = btree.Delete(2);
-        DocumentLocation found1 = btree.Search(1);
-        DocumentLocation found2 = btree.Search(2);
-        DocumentLocation found3 = btree.Search(3);
+        DocumentLocation? found1 = btree.Search(1);
+        DocumentLocation? found2 = btree.Search(2);
+        DocumentLocation? found3 = btree.Search(3);
 
         pageIO.Dispose();
 
@@ -314,8 +314,8 @@ public class BTreeTests
         Assert.IsNotNull(found1);
         Assert.IsNull(found2);
         Assert.IsNotNull(found3);
-        Assert.AreEqual(100, found1.PageId);
-        Assert.AreEqual(102, found3.PageId);
+        Assert.AreEqual(100, found1.Value.PageId);
+        Assert.AreEqual(102, found3.Value.PageId);
     }
 
     [TestMethod]
@@ -378,11 +378,11 @@ public class BTreeTests
         bool deleted10 = btree.Delete(10);
         bool deleted15 = btree.Delete(15);
 
-        DocumentLocation found5 = btree.Search(5);
-        DocumentLocation found10 = btree.Search(10);
-        DocumentLocation found15 = btree.Search(15);
-        DocumentLocation found1 = btree.Search(1);
-        DocumentLocation found20 = btree.Search(20);
+        DocumentLocation? found5 = btree.Search(5);
+        DocumentLocation? found10 = btree.Search(10);
+        DocumentLocation? found15 = btree.Search(15);
+        DocumentLocation? found1 = btree.Search(1);
+        DocumentLocation? found20 = btree.Search(20);
 
         pageIO.Dispose();
 
@@ -580,9 +580,9 @@ public class BTreeTests
         DocumentLocation location = new DocumentLocation(100, 5);
         await btree.InsertAsync(1, location);
 
-        DocumentLocation found = await btree.SearchAsync(1);
+        DocumentLocation? found = await btree.SearchAsync(1);
 
-        bool result = found != null && found.PageId == 100 && found.SlotIndex == 5;
+        bool result = found != null && found.Value.PageId == 100 && found.Value.SlotIndex == 5;
 
         pageIO.Dispose();
 
@@ -604,13 +604,13 @@ public class BTreeTests
         await btree.InsertAsync(5, new DocumentLocation(101, 1));
         await btree.InsertAsync(3, new DocumentLocation(102, 2));
 
-        DocumentLocation found1 = await btree.SearchAsync(1);
-        DocumentLocation found3 = await btree.SearchAsync(3);
-        DocumentLocation found5 = await btree.SearchAsync(5);
+        DocumentLocation? found1 = await btree.SearchAsync(1);
+        DocumentLocation? found3 = await btree.SearchAsync(3);
+        DocumentLocation? found5 = await btree.SearchAsync(5);
 
-        bool result = found1.PageId == 100 && found1.SlotIndex == 0 &&
-                      found3.PageId == 102 && found3.SlotIndex == 2 &&
-                      found5.PageId == 101 && found5.SlotIndex == 1;
+        bool result = found1.Value.PageId == 100 && found1.Value.SlotIndex == 0 &&
+                      found3.Value.PageId == 102 && found3.Value.SlotIndex == 2 &&
+                      found5.Value.PageId == 101 && found5.Value.SlotIndex == 1;
 
         pageIO.Dispose();
 
@@ -630,7 +630,7 @@ public class BTreeTests
 
         await btree.InsertAsync(1, new DocumentLocation(100, 0));
 
-        DocumentLocation found = await btree.SearchAsync(99);
+        DocumentLocation? found = await btree.SearchAsync(99);
 
         pageIO.Dispose();
 
@@ -653,13 +653,13 @@ public class BTreeTests
             await btree.InsertAsync(i, new DocumentLocation(100 + i, i));
         }
 
-        DocumentLocation found1 = await btree.SearchAsync(1);
-        DocumentLocation found10 = await btree.SearchAsync(10);
-        DocumentLocation found20 = await btree.SearchAsync(20);
+        DocumentLocation? found1 = await btree.SearchAsync(1);
+        DocumentLocation? found10 = await btree.SearchAsync(10);
+        DocumentLocation? found20 = await btree.SearchAsync(20);
 
-        bool result = found1 != null && found1.PageId == 101 && found1.SlotIndex == 1 &&
-                      found10 != null && found10.PageId == 110 && found10.SlotIndex == 10 &&
-                      found20 != null && found20.PageId == 120 && found20.SlotIndex == 20;
+        bool result = found1 != null && found1.Value.PageId == 101 && found1.Value.SlotIndex == 1 &&
+                      found10 != null && found10.Value.PageId == 110 && found10.Value.SlotIndex == 10 &&
+                      found20 != null && found20.Value.PageId == 120 && found20.Value.SlotIndex == 20;
 
         pageIO.Dispose();
 
@@ -680,7 +680,7 @@ public class BTreeTests
         await btree.InsertAsync(1, new DocumentLocation(100, 0));
 
         bool deleted = await btree.DeleteAsync(1);
-        DocumentLocation found = await btree.SearchAsync(1);
+        DocumentLocation? found = await btree.SearchAsync(1);
 
         pageIO.Dispose();
 
@@ -728,11 +728,11 @@ public class BTreeTests
         bool deleted10 = await btree.DeleteAsync(10);
         bool deleted15 = await btree.DeleteAsync(15);
 
-        DocumentLocation found5 = await btree.SearchAsync(5);
-        DocumentLocation found10 = await btree.SearchAsync(10);
-        DocumentLocation found15 = await btree.SearchAsync(15);
-        DocumentLocation found1 = await btree.SearchAsync(1);
-        DocumentLocation found20 = await btree.SearchAsync(20);
+        DocumentLocation? found5 = await btree.SearchAsync(5);
+        DocumentLocation? found10 = await btree.SearchAsync(10);
+        DocumentLocation? found15 = await btree.SearchAsync(15);
+        DocumentLocation? found1 = await btree.SearchAsync(1);
+        DocumentLocation? found20 = await btree.SearchAsync(20);
 
         pageIO.Dispose();
 
@@ -765,8 +765,8 @@ public class BTreeTests
         bool allFound = true;
         for (int i = 1; i <= 50; i++)
         {
-            DocumentLocation found = await btree.SearchAsync(i);
-            if (found == null || found.PageId != 100 + i || found.SlotIndex != i)
+            DocumentLocation? found = await btree.SearchAsync(i);
+            if (found == null || found.Value.PageId != 100 + i || found.Value.SlotIndex != i)
             {
                 allFound = false;
                 break;
@@ -797,8 +797,8 @@ public class BTreeTests
         bool allFound = true;
         for (int i = 1; i <= 50; i++)
         {
-            DocumentLocation found = await btree.SearchAsync(i);
-            if (found == null || found.PageId != 100 + i || found.SlotIndex != i)
+            DocumentLocation? found = await btree.SearchAsync(i);
+            if (found == null || found.Value.PageId != 100 + i || found.Value.SlotIndex != i)
             {
                 allFound = false;
                 break;
@@ -825,7 +825,7 @@ public class BTreeTests
 
         BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
 
-        DocumentLocation found = btree.Search(1);
+        DocumentLocation? found = btree.Search(1);
 
         pageIO.Dispose();
 
@@ -848,7 +848,7 @@ public class BTreeTests
             btree.Insert(i, new DocumentLocation(i, 0));
         }
 
-        DocumentLocation found = btree.Search(50);
+        DocumentLocation? found = btree.Search(50);
 
         pageIO.Dispose();
 
@@ -871,7 +871,7 @@ public class BTreeTests
             btree.Insert(i, new DocumentLocation(i, 0));
         }
 
-        DocumentLocation found = btree.Search(999);
+        DocumentLocation? found = btree.Search(999);
 
         pageIO.Dispose();
 
@@ -897,8 +897,8 @@ public class BTreeTests
         bool allFound = true;
         for (int i = 1; i <= 50; i++)
         {
-            DocumentLocation found = btree.Search(i);
-            if (found == null || found.PageId != 100 + i)
+            DocumentLocation? found = btree.Search(i);
+            if (found == null || found.Value.PageId != 100 + i)
             {
                 allFound = false;
                 break;
@@ -934,8 +934,8 @@ public class BTreeTests
         bool allFound = true;
         foreach (int key in keys)
         {
-            DocumentLocation found = btree.Search(key);
-            if (found == null || found.PageId != key + 100)
+            DocumentLocation? found = btree.Search(key);
+            if (found == null || found.Value.PageId != key + 100)
             {
                 allFound = false;
                 break;
@@ -969,8 +969,8 @@ public class BTreeTests
         bool allFound = true;
         for (int i = 1; i <= 500; i++)
         {
-            DocumentLocation found = btree.Search(i);
-            if (found == null || found.PageId != i)
+            DocumentLocation? found = btree.Search(i);
+            if (found == null || found.Value.PageId != i)
             {
                 allFound = false;
                 break;
@@ -1004,8 +1004,8 @@ public class BTreeTests
         bool allFound = true;
         for (int i = 1; i <= 1000; i++)
         {
-            DocumentLocation found = btree.Search(i);
-            if (found == null || found.PageId != i)
+            DocumentLocation? found = btree.Search(i);
+            if (found == null || found.Value.PageId != i)
             {
                 allFound = false;
                 break;
@@ -1034,7 +1034,7 @@ public class BTreeTests
         btree.Insert(1, new DocumentLocation(100, 0));
         btree.Insert(1, new DocumentLocation(200, 5));
 
-        DocumentLocation found = btree.Search(1);
+        DocumentLocation? found = btree.Search(1);
         List<BTreeEntry> entries = btree.GetAllEntries();
 
         pageIO.Dispose();
@@ -1061,8 +1061,8 @@ public class BTreeTests
         }
 
         bool deleted = btree.Delete(1);
-        DocumentLocation found1 = btree.Search(1);
-        DocumentLocation found2 = btree.Search(2);
+        DocumentLocation? found1 = btree.Search(1);
+        DocumentLocation? found2 = btree.Search(2);
 
         pageIO.Dispose();
 
@@ -1088,8 +1088,8 @@ public class BTreeTests
         }
 
         bool deleted = btree.Delete(20);
-        DocumentLocation found20 = btree.Search(20);
-        DocumentLocation found19 = btree.Search(19);
+        DocumentLocation? found20 = btree.Search(20);
+        DocumentLocation? found19 = btree.Search(19);
 
         pageIO.Dispose();
 
@@ -1156,7 +1156,7 @@ public class BTreeTests
         bool evenGone = true;
         for (int i = 1; i <= 20; i++)
         {
-            DocumentLocation found = btree.Search(i);
+            DocumentLocation? found = btree.Search(i);
             if (i % 2 == 1 && found == null)
             {
                 oddFound = false;
@@ -1248,13 +1248,13 @@ public class BTreeTests
         btree.Delete(30);
         btree.Insert(35, new DocumentLocation(35, 0));
 
-        DocumentLocation found5 = btree.Search(5);
-        DocumentLocation found10 = btree.Search(10);
-        DocumentLocation found15 = btree.Search(15);
-        DocumentLocation found20 = btree.Search(20);
-        DocumentLocation found25 = btree.Search(25);
-        DocumentLocation found30 = btree.Search(30);
-        DocumentLocation found35 = btree.Search(35);
+        DocumentLocation? found5 = btree.Search(5);
+        DocumentLocation? found10 = btree.Search(10);
+        DocumentLocation? found15 = btree.Search(15);
+        DocumentLocation? found20 = btree.Search(20);
+        DocumentLocation? found25 = btree.Search(25);
+        DocumentLocation? found30 = btree.Search(30);
+        DocumentLocation? found35 = btree.Search(35);
 
         List<BTreeEntry> entries = btree.GetAllEntries();
 
@@ -1289,8 +1289,8 @@ public class BTreeTests
         bool allFound = true;
         for (int i = 1; i <= 100; i++)
         {
-            DocumentLocation found = btree.Search(i);
-            if (found == null || found.PageId != i)
+            DocumentLocation? found = btree.Search(i);
+            if (found == null || found.Value.PageId != i)
             {
                 allFound = false;
                 break;
@@ -1378,8 +1378,8 @@ public class BTreeTests
         bool allFound = true;
         for (int i = -50; i <= 50; i++)
         {
-            DocumentLocation found = btree.Search(i);
-            if (found == null || found.PageId != i + 1000)
+            DocumentLocation? found = btree.Search(i);
+            if (found == null || found.Value.PageId != i + 1000)
             {
                 allFound = false;
                 break;
@@ -1409,18 +1409,18 @@ public class BTreeTests
         btree.Insert(-1, new DocumentLocation(998, 0));
         btree.Insert(1, new DocumentLocation(1000, 0));
 
-        DocumentLocation foundNeg = btree.Search(-1);
-        DocumentLocation foundZero = btree.Search(0);
-        DocumentLocation foundPos = btree.Search(1);
+        DocumentLocation? foundNeg = btree.Search(-1);
+        DocumentLocation? foundZero = btree.Search(0);
+        DocumentLocation? foundPos = btree.Search(1);
 
         pageIO.Dispose();
 
         Assert.IsNotNull(foundNeg);
         Assert.IsNotNull(foundZero);
         Assert.IsNotNull(foundPos);
-        Assert.AreEqual(998, foundNeg.PageId);
-        Assert.AreEqual(999, foundZero.PageId);
-        Assert.AreEqual(1000, foundPos.PageId);
+        Assert.AreEqual(998, foundNeg.Value.PageId);
+        Assert.AreEqual(999, foundZero.Value.PageId);
+        Assert.AreEqual(1000, foundPos.Value.PageId);
     }
 
     [TestMethod]
@@ -1444,7 +1444,7 @@ public class BTreeTests
         bool allFound = true;
         foreach (int key in largeKeys)
         {
-            DocumentLocation found = btree.Search(key);
+            DocumentLocation? found = btree.Search(key);
             if (found == null)
             {
                 allFound = false;

@@ -61,7 +61,7 @@ public class SecondaryIndexBTree
         }
     }
 
-    public DocumentLocation Search(byte[] key)
+    public DocumentLocation? Search(byte[] key)
     {
         return SearchNode(_rootPageId, key);
     }
@@ -85,9 +85,9 @@ public class SecondaryIndexBTree
         return DeleteFromNode(_rootPageId, key);
     }
 
-    private DocumentLocation SearchNode(int pageId, byte[] key)
+    private DocumentLocation? SearchNode(int pageId, byte[] key)
     {
-        DocumentLocation result = null;
+        DocumentLocation? result = null;
 
         byte[] buffer = BufferPool.Rent(_pageSize);
         try
@@ -297,7 +297,7 @@ public class SecondaryIndexBTree
             if (node.NodeType == BTreeNodeType.Leaf)
             {
                 node.Keys.Add(null);
-                node.LeafValues.Add(null);
+                node.LeafValues.Add(default);
 
                 while (i >= 0 && SecondaryIndexNode.CompareKeys(key, node.Keys[i]) < 0)
                 {
