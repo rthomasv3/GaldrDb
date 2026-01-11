@@ -100,15 +100,16 @@ public class SecondaryIndexBTree
             _pageIO.ReadPage(pageId, buffer);
             SecondaryIndexNode.DeserializeTo(buffer, node);
 
+            ReadOnlySpan<byte> keySpan = key.AsSpan();
             int i = 0;
-            while (i < node.KeyCount && SecondaryIndexNode.CompareKeys(key, node.Keys[i]) > 0)
+            while (i < node.KeyCount && KeyBuffer.Compare(keySpan, node.Keys[i]) > 0)
             {
                 i++;
             }
 
             if (node.NodeType == BTreeNodeType.Leaf)
             {
-                if (i < node.KeyCount && SecondaryIndexNode.CompareKeys(key, node.Keys[i]) == 0)
+                if (i < node.KeyCount && KeyBuffer.Compare(keySpan, node.Keys[i]) == 0)
                 {
                     result = node.LeafValues[i];
                 }
@@ -140,12 +141,12 @@ public class SecondaryIndexBTree
             {
                 for (int i = 0; i < node.KeyCount; i++)
                 {
-                    if (KeyStartsWith(node.Keys[i], fieldValueKey))
+                    KeyBuffer nodeKey = node.Keys[i];
+                    if (nodeKey.StartsWith(fieldValueKey))
                     {
                         results.Add(node.LeafValues[i]);
                     }
-                    else if (SecondaryIndexNode.CompareKeys(node.Keys[i], fieldValueKey) > 0 &&
-                             !KeyStartsWith(node.Keys[i], fieldValueKey))
+                    else if (KeyBuffer.Compare(fieldValueKey.AsSpan(), nodeKey) < 0 && !nodeKey.StartsWith(fieldValueKey))
                     {
                         break;
                     }
@@ -154,7 +155,7 @@ public class SecondaryIndexBTree
             else
             {
                 int i = 0;
-                while (i < node.KeyCount && SecondaryIndexNode.CompareKeys(fieldValueKey, node.Keys[i]) > 0)
+                while (i < node.KeyCount && KeyBuffer.Compare(fieldValueKey.AsSpan(), node.Keys[i]) > 0)
                 {
                     i++;
                 }
@@ -163,8 +164,8 @@ public class SecondaryIndexBTree
                 {
                     SearchByFieldValueNode(node.ChildPageIds[j], fieldValueKey, results);
 
-                    if (j < node.KeyCount && !KeyStartsWith(node.Keys[j], fieldValueKey) &&
-                        SecondaryIndexNode.CompareKeys(node.Keys[j], fieldValueKey) > 0)
+                    if (j < node.KeyCount && !node.Keys[j].StartsWith(fieldValueKey) &&
+                        KeyBuffer.Compare(fieldValueKey.AsSpan(), node.Keys[j]) < 0)
                     {
                         break;
                     }
@@ -178,24 +179,6 @@ public class SecondaryIndexBTree
         }
     }
 
-    private bool KeyStartsWith(byte[] fullKey, byte[] prefix)
-    {
-        if (fullKey.Length < prefix.Length)
-        {
-            return false;
-        }
-
-        for (int i = 0; i < prefix.Length; i++)
-        {
-            if (fullKey[i] != prefix[i])
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
     private void SearchRangeNode(int pageId, byte[] startKey, byte[] endKey, bool includeStart, bool includeEnd, List<DocumentLocation> results)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
@@ -205,16 +188,19 @@ public class SecondaryIndexBTree
             _pageIO.ReadPage(pageId, buffer);
             SecondaryIndexNode.DeserializeTo(buffer, node);
 
+            ReadOnlySpan<byte> startSpan = startKey.AsSpan();
+            ReadOnlySpan<byte> endSpan = endKey.AsSpan();
+
             if (node.NodeType == BTreeNodeType.Leaf)
             {
                 for (int i = 0; i < node.KeyCount; i++)
                 {
-                    byte[] key = node.Keys[i];
-                    int startCmp = startKey == null ? 1 : SecondaryIndexNode.CompareKeys(key, startKey);
-                    int endCmp = endKey == null ? -1 : SecondaryIndexNode.CompareKeys(key, endKey);
+                    KeyBuffer nodeKey = node.Keys[i];
+                    int startCmp = startKey == null ? 1 : KeyBuffer.Compare(startSpan, nodeKey);
+                    int endCmp = endKey == null ? -1 : KeyBuffer.Compare(endSpan, nodeKey);
 
-                    bool afterStart = startCmp > 0 || (includeStart && startCmp == 0);
-                    bool beforeEnd = endCmp < 0 || (includeEnd && endCmp == 0);
+                    bool afterStart = startCmp < 0 || (includeStart && startCmp == 0);
+                    bool beforeEnd = endCmp > 0 || (includeEnd && endCmp == 0);
 
                     if (afterStart && beforeEnd)
                     {
@@ -230,8 +216,8 @@ public class SecondaryIndexBTree
 
                     if (i < node.KeyCount && startKey != null)
                     {
-                        int cmp = SecondaryIndexNode.CompareKeys(node.Keys[i], startKey);
-                        if (cmp < 0)
+                        int cmp = KeyBuffer.Compare(startSpan, node.Keys[i]);
+                        if (cmp > 0)
                         {
                             shouldDescend = false;
                         }
@@ -262,15 +248,16 @@ public class SecondaryIndexBTree
             _pageIO.ReadPage(pageId, buffer);
             SecondaryIndexNode.DeserializeTo(buffer, node);
 
+            ReadOnlySpan<byte> keySpan = key.AsSpan();
             int i = 0;
-            while (i < node.KeyCount && SecondaryIndexNode.CompareKeys(key, node.Keys[i]) > 0)
+            while (i < node.KeyCount && KeyBuffer.Compare(keySpan, node.Keys[i]) > 0)
             {
                 i++;
             }
 
             if (node.NodeType == BTreeNodeType.Leaf)
             {
-                if (i < node.KeyCount && SecondaryIndexNode.CompareKeys(key, node.Keys[i]) == 0)
+                if (i < node.KeyCount && KeyBuffer.Compare(keySpan, node.Keys[i]) == 0)
                 {
                     node.Keys.RemoveAt(i);
                     node.LeafValues.RemoveAt(i);
@@ -305,21 +292,22 @@ public class SecondaryIndexBTree
             _pageIO.ReadPage(pageId, buffer);
             SecondaryIndexNode.DeserializeTo(buffer, node);
 
+            ReadOnlySpan<byte> keySpan = key.AsSpan();
             int i = node.KeyCount - 1;
 
             if (node.NodeType == BTreeNodeType.Leaf)
             {
-                node.Keys.Add(null);
+                node.Keys.Add(default);
                 node.LeafValues.Add(default);
 
-                while (i >= 0 && SecondaryIndexNode.CompareKeys(key, node.Keys[i]) < 0)
+                while (i >= 0 && KeyBuffer.Compare(keySpan, node.Keys[i]) < 0)
                 {
                     node.Keys[i + 1] = node.Keys[i];
                     node.LeafValues[i + 1] = node.LeafValues[i];
                     i--;
                 }
 
-                node.Keys[i + 1] = key;
+                node.Keys[i + 1] = KeyBuffer.FromCopy(key, 0, key.Length);
                 node.LeafValues[i + 1] = location;
                 node.KeyCount++;
 
@@ -328,7 +316,7 @@ public class SecondaryIndexBTree
             }
             else
             {
-                while (i >= 0 && SecondaryIndexNode.CompareKeys(key, node.Keys[i]) < 0)
+                while (i >= 0 && KeyBuffer.Compare(keySpan, node.Keys[i]) < 0)
                 {
                     i--;
                 }
@@ -348,7 +336,7 @@ public class SecondaryIndexBTree
                         _pageIO.ReadPage(pageId, buffer);
                         SecondaryIndexNode.DeserializeTo(buffer, node);
 
-                        if (SecondaryIndexNode.CompareKeys(key, node.Keys[i]) > 0)
+                        if (KeyBuffer.Compare(keySpan, node.Keys[i]) > 0)
                         {
                             i++;
                         }
@@ -389,7 +377,7 @@ public class SecondaryIndexBTree
             newChild = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, fullChild.NodeType);
 
             int mid = (_maxKeys) / 2;
-            byte[] keyToPromote = fullChild.Keys[mid];
+            KeyBuffer keyToPromote = fullChild.Keys[mid];
 
             for (int j = mid + 1; j < fullChild.KeyCount; j++)
             {
@@ -440,7 +428,8 @@ public class SecondaryIndexBTree
             }
 
             parent.ChildPageIds.Insert(index + 1, newChildPageId);
-            parent.Keys.Insert(index, keyToPromote);
+            KeyBuffer promotedKeyCopy = KeyBuffer.FromCopy(keyToPromote.Data, keyToPromote.Offset, keyToPromote.Length);
+            parent.Keys.Insert(index, promotedKeyCopy);
             parent.KeyCount++;
 
             fullChild.SerializeTo(childBuffer);

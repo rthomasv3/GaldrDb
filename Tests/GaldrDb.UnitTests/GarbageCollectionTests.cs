@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using GaldrDb.UnitTests.TestModels;
 using GaldrDbEngine;
-using GaldrDbEngine.Generated;
 using GaldrDbEngine.MVCC;
 using GaldrDbEngine.Transactions;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -255,7 +254,6 @@ public class GarbageCollectionTests
             // Verify each collectable version has valid location info
             foreach (CollectableVersion cv in result.CollectableVersions)
             {
-                Assert.IsNotNull(cv.Location);
                 Assert.IsGreaterThanOrEqualTo(0, cv.Location.PageId);
                 Assert.IsGreaterThanOrEqualTo(0, cv.Location.SlotIndex);
                 Assert.AreEqual("Person", cv.CollectionName);
@@ -305,7 +303,6 @@ public class GarbageCollectionTests
             // Verify all collected versions have valid locations that were cleaned up
             foreach (CollectableVersion cv in result.CollectableVersions)
             {
-                Assert.IsNotNull(cv.Location);
                 Assert.IsGreaterThanOrEqualTo(0, cv.Location.PageId);
             }
 
@@ -446,10 +443,6 @@ public class GarbageCollectionTests
             // Verify the collected version had a location (physical cleanup occurred)
             Assert.IsNotNull(result.CollectableVersions);
             Assert.IsGreaterThan(0, result.CollectableVersions.Count);
-            foreach (CollectableVersion cv in result.CollectableVersions)
-            {
-                Assert.IsNotNull(cv.Location);
-            }
 
             // Verify current document is readable
             Person current = db.GetById<Person>(id);

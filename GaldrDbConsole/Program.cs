@@ -23,6 +23,18 @@ class Program
             case "-b":
                 RunBenchmarks(args);
                 break;
+            case "--test-serialize":
+            case "-ts":
+                SerializationTest.Run();
+                break;
+            case "--test-insert":
+            case "-ti":
+                InsertTest.Run();
+                break;
+            case "--test-alloc":
+            case "-ta":
+                AllocationTracingTest.Run();
+                break;
             case "--help":
             case "-h":
                 PrintUsage();
@@ -55,6 +67,10 @@ class Program
             case "single":
                 Console.WriteLine("Running single operation benchmarks...");
                 BenchmarkRunner.Run<SingleOperationBenchmarks>(config);
+                break;
+            case "serialize":
+                Console.WriteLine("Running serialization comparison benchmarks...");
+                BenchmarkRunner.Run<SerializationComparisonBenchmarks>(config);
                 break;
             case "all":
                 Console.WriteLine("Running all benchmarks...");

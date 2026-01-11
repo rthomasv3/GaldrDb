@@ -3,13 +3,13 @@ using GaldrJson;
 
 namespace GaldrDb.UnitTests.TestModels;
 
-[GaldrJsonSerializable]
+[GaldrDbCollection]
 public class User
 {
     public int Id { get; set; }
     public string Name { get; set; }
-    [GaldrIndex(Unique = true)]
+    [GaldrDbIndex(Unique = true)]
     public string Email { get; set; }
-    [GaldrIndex]
+    [GaldrDbIndex]
     public string Department { get; set; }
 }

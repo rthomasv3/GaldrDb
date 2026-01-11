@@ -3,11 +3,11 @@ using GaldrJson;
 
 namespace GaldrDb.UnitTests.TestModels.Customers;
 
-[GaldrJsonSerializable]
+[GaldrDbCollection]
 public class Order
 {
     public int Id { get; set; }
-    [GaldrIndex]
+    [GaldrDbIndex]
     public int CustomerId { get; set; }
     public decimal TotalAmount { get; set; }
 }

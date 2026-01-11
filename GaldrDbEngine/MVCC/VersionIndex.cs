@@ -8,10 +8,23 @@ public sealed class VersionIndex
 {
     private readonly Dictionary<string, Dictionary<int, DocumentVersion>> _index;
     private readonly object _lock = new object();
+    private int _multiVersionDocumentCount;
 
     public VersionIndex()
     {
         _index = new Dictionary<string, Dictionary<int, DocumentVersion>>();
+        _multiVersionDocumentCount = 0;
+    }
+
+    public int MultiVersionDocumentCount
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _multiVersionDocumentCount;
+            }
+        }
     }
 
     public DocumentVersion GetLatestVersion(string collectionName, int documentId)
@@ -76,6 +89,12 @@ public sealed class VersionIndex
                 previousVersion = existing;
                 // Mark the previous version as superseded by this new version
                 previousVersion.MarkDeleted(createdBy);
+
+                // If this document was single-version, it now becomes multi-version
+                if (previousVersion.PreviousVersion == null)
+                {
+                    _multiVersionDocumentCount++;
+                }
             }
 
             DocumentVersion newVersion = new DocumentVersion(createdBy, location, previousVersion);
@@ -174,34 +193,95 @@ public sealed class VersionIndex
         return results;
     }
 
-    public List<CollectionVersions> GetAllCollectionsForGC()
-    {
-        List<CollectionVersions> results = new List<CollectionVersions>();
-
-        lock (_lock)
-        {
-            foreach (KeyValuePair<string, Dictionary<int, DocumentVersion>> collectionKvp in _index)
-            {
-                List<DocumentVersionChain> chains = new List<DocumentVersionChain>();
-
-                foreach (KeyValuePair<int, DocumentVersion> docKvp in collectionKvp.Value)
-                {
-                    chains.Add(new DocumentVersionChain(collectionKvp.Key, docKvp.Key, docKvp.Value));
-                }
-
-                results.Add(new CollectionVersions(collectionKvp.Key, chains));
-            }
-        }
-
-        return results;
-    }
-
     public void UnlinkVersion(string collectionName, int documentId, DocumentVersion previous, DocumentVersion toRemove)
     {
         lock (_lock)
         {
             // Update the previous version's pointer to skip over the removed version
             previous.SetPreviousVersion(toRemove.PreviousVersion);
+
+            // If the chain now has only one version (head with no previous), decrement counter
+            if (_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
+            {
+                if (collection.TryGetValue(documentId, out DocumentVersion head))
+                {
+                    if (head.PreviousVersion == null)
+                    {
+                        _multiVersionDocumentCount--;
+                    }
+                }
+            }
+        }
+    }
+
+    public void CollectGarbageVersions(TxId oldestSnapshot, List<CollectableVersion> results)
+    {
+        lock (_lock)
+        {
+            foreach (KeyValuePair<string, Dictionary<int, DocumentVersion>> collectionKvp in _index)
+            {
+                string collectionName = collectionKvp.Key;
+
+                foreach (KeyValuePair<int, DocumentVersion> docKvp in collectionKvp.Value)
+                {
+                    int documentId = docKvp.Key;
+                    DocumentVersion head = docKvp.Value;
+
+                    // Skip single-version chains - nothing to collect
+                    if (head.PreviousVersion == null)
+                    {
+                        continue;
+                    }
+
+                    // Walk the chain and identify collectable versions
+                    DocumentVersion current = head;
+                    DocumentVersion previous = null;
+                    bool foundVisibleVersion = false;
+
+                    while (current != null)
+                    {
+                        bool canCollect = false;
+
+                        if (foundVisibleVersion)
+                        {
+                            // Version was superseded - collect if deleted at or before oldest snapshot
+                            if (current.DeletedBy != TxId.MaxValue && current.DeletedBy <= oldestSnapshot)
+                            {
+                                canCollect = true;
+                            }
+                        }
+                        else
+                        {
+                            if (current.IsVisibleTo(oldestSnapshot))
+                            {
+                                foundVisibleVersion = true;
+                            }
+                            else if (current.DeletedBy != TxId.MaxValue && current.DeletedBy <= oldestSnapshot)
+                            {
+                                // Version is not visible to oldest snapshot - safe to collect
+                                canCollect = true;
+                            }
+                        }
+
+                        if (canCollect)
+                        {
+                            CollectableVersion collectable = new CollectableVersion(
+                                collectionName,
+                                documentId,
+                                previous,
+                                current,
+                                current.Location);
+                            results.Add(collectable);
+                        }
+                        else
+                        {
+                            previous = current;
+                        }
+
+                        current = current.PreviousVersion;
+                    }
+                }
+            }
         }
     }
 }

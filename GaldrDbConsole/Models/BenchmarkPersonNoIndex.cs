@@ -1,14 +1,20 @@
 using GaldrDbEngine.Attributes;
 using GaldrJson;
 
-namespace GaldrDb.UnitTests.TestModels;
+namespace GaldrDbConsole.Models;
 
 [GaldrDbCollection]
-public class Person
+public class BenchmarkPersonNoIndex
 {
     public int Id { get; set; }
-    [GaldrDbIndex]
+
     public string Name { get; set; }
+
     public int Age { get; set; }
+
     public string Email { get; set; }
+
+    public string Address { get; set; }
+
+    public string Phone { get; set; }
 }

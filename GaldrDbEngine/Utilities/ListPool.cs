@@ -6,6 +6,18 @@ namespace GaldrDbEngine.Utilities;
 public static class ListPool<T>
 {
     private static readonly ConcurrentDictionary<int, ConcurrentBag<List<T>>> _pools = new();
+    private static int _hits;
+    private static int _misses;
+    private static int _capacityMismatches;
+
+    public static (int Hits, int Misses, int CapacityMismatches) Stats => (_hits, _misses, _capacityMismatches);
+
+    public static void ResetStats()
+    {
+        _hits = 0;
+        _misses = 0;
+        _capacityMismatches = 0;
+    }
 
     public static List<T> Rent(int capacity)
     {
@@ -14,10 +26,12 @@ public static class ListPool<T>
 
         if (pool.TryTake(out List<T> list))
         {
+            _hits++;
             result = list;
         }
         else
         {
+            _misses++;
             result = new List<T>(capacity);
         }
 
@@ -28,7 +42,12 @@ public static class ListPool<T>
     {
         if (list != null)
         {
+            int originalCapacity = list.Capacity;
             list.Clear();
+            if (list.Capacity != originalCapacity)
+            {
+                _capacityMismatches++;
+            }
             ConcurrentBag<List<T>> pool = _pools.GetOrAdd(list.Capacity, _ => new ConcurrentBag<List<T>>());
             pool.Add(list);
         }

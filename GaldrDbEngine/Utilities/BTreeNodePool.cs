@@ -35,4 +35,16 @@ public static class BTreeNodePool
             pool.Add(node);
         }
     }
+
+    public static void Warmup(int pageSize, int order, int count)
+    {
+        ConcurrentBag<BTreeNode> pool = _pools.GetOrAdd((pageSize, order), _ => new ConcurrentBag<BTreeNode>());
+
+        for (int i = 0; i < count; i++)
+        {
+            BTreeNode node = new BTreeNode(pageSize, order, BTreeNodeType.Leaf);
+            node.ReturnLists();
+            pool.Add(node);
+        }
+    }
 }

@@ -3,11 +3,11 @@ using GaldrJson;
 
 namespace GaldrDb.UnitTests.TestModels.Products;
 
-[GaldrJsonSerializable]
+[GaldrDbCollection]
 public class Order
 {
     public int Id { get; set; }
-    [GaldrIndex]
+    [GaldrDbIndex]
     public int ProductId { get; set; }
     public int Quantity { get; set; }
 }

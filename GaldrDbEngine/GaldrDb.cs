@@ -78,6 +78,7 @@ public class GaldrDb : IDisposable
         GaldrDb db = new GaldrDb(filePath, options);
         db.ValidateOptions();
         db.InitializeFile();
+        db.InitializePools();
         return db;
     }
 
@@ -104,6 +105,7 @@ public class GaldrDb : IDisposable
 
         GaldrDb db = new GaldrDb(filePath, options);
         db.OpenAndValidateFile();
+        db.InitializePools();
 
         return db;
     }
@@ -495,6 +497,22 @@ public class GaldrDb : IDisposable
         if (!isPowerOfTwo)
         {
             throw new ArgumentException("PageSize must be a power of 2");
+        }
+    }
+
+    private void InitializePools()
+    {
+        JsonWriterPool.Configure(_options.JsonWriterBufferSize);
+
+        if (_options.WarmupOnOpen)
+        {
+            JsonWriterPool.Warmup(_options.JsonWriterPoolWarmupCount);
+
+            int order = CalculateBTreeOrder(_options.PageSize);
+            int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
+
+            BTreeNodePool.Warmup(_options.PageSize, order, 8);
+            SecondaryIndexNodePool.Warmup(_options.PageSize, maxKeys, 8);
         }
     }
 

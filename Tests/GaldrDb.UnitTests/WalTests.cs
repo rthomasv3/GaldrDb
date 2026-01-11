@@ -39,8 +39,9 @@ public class WalTests
             FrameCount = 100
         };
 
-        byte[] serialized = header.Serialize();
-        WalHeader deserialized = WalHeader.Deserialize(serialized);
+        byte[] buffer = new byte[WalHeader.HEADER_SIZE];
+        header.SerializeTo(buffer);
+        WalHeader deserialized = WalHeader.Deserialize(buffer);
 
         Assert.AreEqual(WalHeader.WAL_MAGIC_NUMBER, deserialized.MagicNumber);
         Assert.AreEqual(1, deserialized.Version);
@@ -59,8 +60,9 @@ public class WalTests
             FrameCount = 50
         };
 
-        byte[] serialized = header.Serialize();
-        WalHeader deserialized = WalHeader.Deserialize(serialized);
+        byte[] buffer = new byte[WalHeader.HEADER_SIZE];
+        header.SerializeTo(buffer);
+        WalHeader deserialized = WalHeader.Deserialize(buffer);
 
         bool result = deserialized.ValidateChecksum();
 

@@ -21,9 +21,8 @@ public class WalHeader
         Version = 1;
     }
 
-    public byte[] Serialize()
+    public void SerializeTo(Span<byte> buffer)
     {
-        byte[] buffer = new byte[HEADER_SIZE];
         int offset = 0;
 
         BinaryHelper.WriteUInt32LE(buffer, offset, MagicNumber);
@@ -42,13 +41,9 @@ public class WalHeader
         offset += 8;
 
         // Calculate checksum over header bytes (excluding checksum field itself)
-        byte[] checksumData = new byte[HEADER_SIZE - 4];
-        Array.Copy(buffer, 0, checksumData, 0, HEADER_SIZE - 4);
-        Checksum = BinaryHelper.CalculateCRC32(checksumData);
+        Checksum = BinaryHelper.CalculateCRC32(buffer.Slice(0, HEADER_SIZE - 4));
 
         BinaryHelper.WriteUInt32LE(buffer, offset, Checksum);
-
-        return buffer;
     }
 
     public static WalHeader Deserialize(byte[] buffer)
@@ -78,14 +73,20 @@ public class WalHeader
 
     public bool ValidateChecksum()
     {
-        byte[] buffer = Serialize();
-        byte[] checksumData = new byte[HEADER_SIZE - 4];
-        Array.Copy(buffer, 0, checksumData, 0, HEADER_SIZE - 4);
-        uint calculatedChecksum = BinaryHelper.CalculateCRC32(checksumData);
+        byte[] buffer = BufferPool.Rent(HEADER_SIZE);
+        try
+        {
+            SerializeTo(buffer);
+            uint calculatedChecksum = BinaryHelper.CalculateCRC32(buffer, 0, HEADER_SIZE - 4);
 
-        bool result = calculatedChecksum == Checksum;
+            bool result = calculatedChecksum == Checksum;
 
-        return result;
+            return result;
+        }
+        finally
+        {
+            BufferPool.Return(buffer);
+        }
     }
 
     public bool ValidateMagicNumber()

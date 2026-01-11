@@ -16,6 +16,14 @@ public static class BinaryHelper
         buffer[offset + 3] = (byte)((value >> 24) & 0xFF);
     }
 
+    public static void WriteInt32LE(Span<byte> buffer, int offset, int value)
+    {
+        buffer[offset] = (byte)(value & 0xFF);
+        buffer[offset + 1] = (byte)((value >> 8) & 0xFF);
+        buffer[offset + 2] = (byte)((value >> 16) & 0xFF);
+        buffer[offset + 3] = (byte)((value >> 24) & 0xFF);
+    }
+
     public static int ReadInt32LE(byte[] buffer, int offset)
     {
         int result = buffer[offset] |
@@ -34,6 +42,14 @@ public static class BinaryHelper
         buffer[offset + 3] = (byte)((value >> 24) & 0xFF);
     }
 
+    public static void WriteUInt32LE(Span<byte> buffer, int offset, uint value)
+    {
+        buffer[offset] = (byte)(value & 0xFF);
+        buffer[offset + 1] = (byte)((value >> 8) & 0xFF);
+        buffer[offset + 2] = (byte)((value >> 16) & 0xFF);
+        buffer[offset + 3] = (byte)((value >> 24) & 0xFF);
+    }
+
     public static uint ReadUInt32LE(byte[] buffer, int offset)
     {
         uint result = buffer[offset] |
@@ -45,6 +61,18 @@ public static class BinaryHelper
     }
 
     public static void WriteUInt64LE(byte[] buffer, int offset, ulong value)
+    {
+        buffer[offset] = (byte)(value & 0xFF);
+        buffer[offset + 1] = (byte)((value >> 8) & 0xFF);
+        buffer[offset + 2] = (byte)((value >> 16) & 0xFF);
+        buffer[offset + 3] = (byte)((value >> 24) & 0xFF);
+        buffer[offset + 4] = (byte)((value >> 32) & 0xFF);
+        buffer[offset + 5] = (byte)((value >> 40) & 0xFF);
+        buffer[offset + 6] = (byte)((value >> 48) & 0xFF);
+        buffer[offset + 7] = (byte)((value >> 56) & 0xFF);
+    }
+
+    public static void WriteUInt64LE(Span<byte> buffer, int offset, ulong value)
     {
         buffer[offset] = (byte)(value & 0xFF);
         buffer[offset + 1] = (byte)((value >> 8) & 0xFF);
@@ -106,6 +134,21 @@ public static class BinaryHelper
     }
 
     public static uint CalculateCRC32(byte[] data)
+    {
+        uint crc = 0xFFFFFFFF;
+
+        for (int i = 0; i < data.Length; i++)
+        {
+            byte index = (byte)((crc ^ data[i]) & 0xFF);
+            crc = (crc >> 8) ^ _crc32Table[index];
+        }
+
+        uint result = crc ^ 0xFFFFFFFF;
+
+        return result;
+    }
+
+    public static uint CalculateCRC32(ReadOnlySpan<byte> data)
     {
         uint crc = 0xFFFFFFFF;
 

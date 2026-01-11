@@ -14,4 +14,9 @@ public class GaldrDbOptions
     // Garbage collection options
     public int GarbageCollectionThreshold { get; set; } = 100; // run GC after N commits
     public bool AutoGarbageCollection { get; set; } = true;
+
+    // Pool warmup options
+    public bool WarmupOnOpen { get; set; } = true;
+    public int JsonWriterBufferSize { get; set; } = 4096; // initial buffer size for JSON serialization
+    public int JsonWriterPoolWarmupCount { get; set; } = 4; // number of writers to pre-create
 }

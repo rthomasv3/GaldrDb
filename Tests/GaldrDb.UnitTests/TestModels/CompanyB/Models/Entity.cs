@@ -2,7 +2,7 @@ using GaldrJson;
 
 namespace GaldrDb.UnitTests.TestModels.CompanyB.Models;
 
-[GaldrJsonSerializable]
+[GaldrDbCollection]
 public class Entity
 {
     public int Id { get; set; }

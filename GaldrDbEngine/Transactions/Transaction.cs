@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using GaldrDbEngine.MVCC;
 using GaldrDbEngine.Query;
 using GaldrDbEngine.Storage;
+using GaldrDbEngine.Utilities;
 using GaldrJson;
 
 namespace GaldrDbEngine.Transactions;
@@ -148,26 +149,34 @@ public class Transaction : IDisposable
             }
         }
 
-        string json = _jsonSerializer.Serialize(document, _jsonOptions);
-        byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
-
-        IReadOnlyList<IndexFieldEntry> indexFields = ExtractIndexFields(document, typeInfo);
-
-        WriteSetEntry entry = new WriteSetEntry
+        PooledJsonWriter pooledWriter = JsonWriterPool.Rent();
+        try
         {
-            Operation = WriteOperation.Insert,
-            CollectionName = collectionName,
-            DocumentId = assignedId,
-            SerializedData = jsonBytes,
-            PreviousLocation = null,
-            NewLocation = null,
-            IndexFields = indexFields,
-            OldIndexFields = null
-        };
+            _jsonSerializer.SerializeTo(pooledWriter.Writer, document, _jsonOptions);
+            byte[] jsonBytes = pooledWriter.WrittenSpan.ToArray();
 
-        _writeSet[(collectionName, assignedId)] = entry;
+            IReadOnlyList<IndexFieldEntry> indexFields = ExtractIndexFields(document, typeInfo);
 
-        return assignedId;
+            WriteSetEntry entry = new WriteSetEntry
+            {
+                Operation = WriteOperation.Insert,
+                CollectionName = collectionName,
+                DocumentId = assignedId,
+                SerializedData = jsonBytes,
+                PreviousLocation = null,
+                NewLocation = null,
+                IndexFields = indexFields,
+                OldIndexFields = null
+            };
+
+            _writeSet[(collectionName, assignedId)] = entry;
+
+            return assignedId;
+        }
+        finally
+        {
+            JsonWriterPool.Return(pooledWriter);
+        }
     }
 
     public bool Update<T>(T document)
@@ -232,24 +241,32 @@ public class Transaction : IDisposable
 
         if (exists)
         {
-            string json = _jsonSerializer.Serialize(document, _jsonOptions);
-            byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
-
-            IReadOnlyList<IndexFieldEntry> newIndexFields = ExtractIndexFields(document, typeInfo);
-
-            WriteSetEntry entry = new WriteSetEntry
+            PooledJsonWriter pooledWriter = JsonWriterPool.Rent();
+            try
             {
-                Operation = WriteOperation.Update,
-                CollectionName = collectionName,
-                DocumentId = id,
-                SerializedData = jsonBytes,
-                PreviousLocation = previousLocation,
-                NewLocation = null,
-                IndexFields = newIndexFields,
-                OldIndexFields = oldIndexFields
-            };
+                _jsonSerializer.SerializeTo(pooledWriter.Writer, document, _jsonOptions);
+                byte[] jsonBytes = pooledWriter.WrittenSpan.ToArray();
 
-            _writeSet[(collectionName, id)] = entry;
+                IReadOnlyList<IndexFieldEntry> newIndexFields = ExtractIndexFields(document, typeInfo);
+
+                WriteSetEntry entry = new WriteSetEntry
+                {
+                    Operation = WriteOperation.Update,
+                    CollectionName = collectionName,
+                    DocumentId = id,
+                    SerializedData = jsonBytes,
+                    PreviousLocation = previousLocation,
+                    NewLocation = null,
+                    IndexFields = newIndexFields,
+                    OldIndexFields = oldIndexFields
+                };
+
+                _writeSet[(collectionName, id)] = entry;
+            }
+            finally
+            {
+                JsonWriterPool.Return(pooledWriter);
+            }
         }
 
         return exists;
@@ -505,26 +522,34 @@ public class Transaction : IDisposable
             }
         }
 
-        string json = _jsonSerializer.Serialize(document, _jsonOptions);
-        byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
-
-        IReadOnlyList<IndexFieldEntry> indexFields = ExtractIndexFields(document, typeInfo);
-
-        WriteSetEntry entry = new WriteSetEntry
+        PooledJsonWriter pooledWriter = JsonWriterPool.Rent();
+        try
         {
-            Operation = WriteOperation.Insert,
-            CollectionName = collectionName,
-            DocumentId = assignedId,
-            SerializedData = jsonBytes,
-            PreviousLocation = null,
-            NewLocation = null,
-            IndexFields = indexFields,
-            OldIndexFields = null
-        };
+            _jsonSerializer.SerializeTo(pooledWriter.Writer, document, _jsonOptions);
+            byte[] jsonBytes = pooledWriter.WrittenSpan.ToArray();
 
-        _writeSet[(collectionName, assignedId)] = entry;
+            IReadOnlyList<IndexFieldEntry> indexFields = ExtractIndexFields(document, typeInfo);
 
-        return Task.FromResult(assignedId);
+            WriteSetEntry entry = new WriteSetEntry
+            {
+                Operation = WriteOperation.Insert,
+                CollectionName = collectionName,
+                DocumentId = assignedId,
+                SerializedData = jsonBytes,
+                PreviousLocation = null,
+                NewLocation = null,
+                IndexFields = indexFields,
+                OldIndexFields = null
+            };
+
+            _writeSet[(collectionName, assignedId)] = entry;
+
+            return Task.FromResult(assignedId);
+        }
+        finally
+        {
+            JsonWriterPool.Return(pooledWriter);
+        }
     }
 
     public async Task<bool> UpdateAsync<T>(T document, CancellationToken cancellationToken = default)
@@ -589,24 +614,32 @@ public class Transaction : IDisposable
 
         if (exists)
         {
-            string json = _jsonSerializer.Serialize(document, _jsonOptions);
-            byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
-
-            IReadOnlyList<IndexFieldEntry> newIndexFields = ExtractIndexFields(document, typeInfo);
-
-            WriteSetEntry entry = new WriteSetEntry
+            PooledJsonWriter pooledWriter = JsonWriterPool.Rent();
+            try
             {
-                Operation = WriteOperation.Update,
-                CollectionName = collectionName,
-                DocumentId = id,
-                SerializedData = jsonBytes,
-                PreviousLocation = previousLocation,
-                NewLocation = null,
-                IndexFields = newIndexFields,
-                OldIndexFields = oldIndexFields
-            };
+                _jsonSerializer.SerializeTo(pooledWriter.Writer, document, _jsonOptions);
+                byte[] jsonBytes = pooledWriter.WrittenSpan.ToArray();
 
-            _writeSet[(collectionName, id)] = entry;
+                IReadOnlyList<IndexFieldEntry> newIndexFields = ExtractIndexFields(document, typeInfo);
+
+                WriteSetEntry entry = new WriteSetEntry
+                {
+                    Operation = WriteOperation.Update,
+                    CollectionName = collectionName,
+                    DocumentId = id,
+                    SerializedData = jsonBytes,
+                    PreviousLocation = previousLocation,
+                    NewLocation = null,
+                    IndexFields = newIndexFields,
+                    OldIndexFields = oldIndexFields
+                };
+
+                _writeSet[(collectionName, id)] = entry;
+            }
+            finally
+            {
+                JsonWriterPool.Return(pooledWriter);
+            }
         }
 
         return exists;

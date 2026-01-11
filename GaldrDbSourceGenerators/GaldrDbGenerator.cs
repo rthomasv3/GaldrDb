@@ -41,7 +41,7 @@ namespace GaldrDbSourceGenerators
             // Collect all classes with [GaldrJsonSerializable] attribute
             IncrementalValuesProvider<ClassInfo> classDeclarations = context.SyntaxProvider
                 .ForAttributeWithMetadataName(
-                    "GaldrJson.GaldrJsonSerializableAttribute",
+                    "GaldrJson.GaldrDbCollectionAttribute",
                     predicate: static (node, _) => node is ClassDeclarationSyntax,
                     transform: static (ctx, _) => GetClassInfo(ctx))
                 .Where(static info => info != null)
@@ -106,10 +106,10 @@ namespace GaldrDbSourceGenerators
                     IdValidationResult.NotPublic);
             }
 
-            // Check for [GaldrCollection] override
+            // Check for [GaldrDbCollection] override
             string collectionOverride = null;
             AttributeData collectionAttr = classSymbol.GetAttributes()
-                .FirstOrDefault(a => a.AttributeClass?.Name == "GaldrCollectionAttribute");
+                .FirstOrDefault(a => a.AttributeClass?.Name == "GaldrDbCollectionAttribute");
             if (collectionAttr != null && collectionAttr.ConstructorArguments.Length > 0)
             {
                 collectionOverride = collectionAttr.ConstructorArguments[0].Value as string;
@@ -128,11 +128,11 @@ namespace GaldrDbSourceGenerators
                     continue;
                 }
 
-                // Check if property has [GaldrIndex] attribute and if it's unique
+                // Check if property has [GaldrDbIndex] attribute and if it's unique
                 bool isIndexed = false;
                 bool isUniqueIndex = false;
                 AttributeData indexAttr = prop.GetAttributes()
-                    .FirstOrDefault(a => a.AttributeClass?.Name == "GaldrIndexAttribute");
+                    .FirstOrDefault(a => a.AttributeClass?.Name == "GaldrDbIndexAttribute");
                 
                 if (indexAttr != null)
                 {

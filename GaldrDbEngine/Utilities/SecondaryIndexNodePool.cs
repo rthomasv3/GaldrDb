@@ -35,4 +35,16 @@ public static class SecondaryIndexNodePool
             pool.Add(node);
         }
     }
+
+    public static void Warmup(int pageSize, int maxKeys, int count)
+    {
+        ConcurrentBag<SecondaryIndexNode> pool = _pools.GetOrAdd((pageSize, maxKeys), _ => new ConcurrentBag<SecondaryIndexNode>());
+
+        for (int i = 0; i < count; i++)
+        {
+            SecondaryIndexNode node = new SecondaryIndexNode(pageSize, maxKeys, BTreeNodeType.Leaf);
+            node.ReturnLists();
+            pool.Add(node);
+        }
+    }
 }

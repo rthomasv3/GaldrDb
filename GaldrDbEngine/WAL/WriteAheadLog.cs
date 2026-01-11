@@ -61,23 +61,38 @@ public class WriteAheadLog : IDisposable
         {
             _header = new WalHeader();
             _header.PageSize = _pageSize;
-            byte[] headerBytes = _header.Serialize();
-            _walStream.Write(headerBytes, 0, headerBytes.Length);
-            _walStream.Flush();
+            byte[] headerBuffer = BufferPool.Rent(WalHeader.HEADER_SIZE);
+            try
+            {
+                _header.SerializeTo(headerBuffer);
+                _walStream.Write(headerBuffer, 0, WalHeader.HEADER_SIZE);
+                _walStream.Flush();
+            }
+            finally
+            {
+                BufferPool.Return(headerBuffer);
+            }
             _currentFrameNumber = 0;
         }
         else
         {
-            byte[] headerBuffer = new byte[WalHeader.HEADER_SIZE];
-            _walStream.Position = 0;
-            int bytesRead = _walStream.Read(headerBuffer, 0, WalHeader.HEADER_SIZE);
-
-            if (bytesRead < WalHeader.HEADER_SIZE)
+            byte[] headerBuffer = BufferPool.Rent(WalHeader.HEADER_SIZE);
+            try
             {
-                throw new InvalidOperationException("WAL file is corrupted: header too short");
-            }
+                _walStream.Position = 0;
+                int bytesRead = _walStream.Read(headerBuffer, 0, WalHeader.HEADER_SIZE);
 
-            _header = WalHeader.Deserialize(headerBuffer);
+                if (bytesRead < WalHeader.HEADER_SIZE)
+                {
+                    throw new InvalidOperationException("WAL file is corrupted: header too short");
+                }
+
+                _header = WalHeader.Deserialize(headerBuffer);
+            }
+            finally
+            {
+                BufferPool.Return(headerBuffer);
+            }
 
             if (!_header.ValidateMagicNumber())
             {
@@ -312,8 +327,16 @@ public class WriteAheadLog : IDisposable
 
     private void WriteHeader()
     {
-        byte[] headerBytes = _header.Serialize();
-        _walStream.Position = 0;
-        _walStream.Write(headerBytes, 0, headerBytes.Length);
+        byte[] headerBuffer = BufferPool.Rent(WalHeader.HEADER_SIZE);
+        try
+        {
+            _header.SerializeTo(headerBuffer);
+            _walStream.Position = 0;
+            _walStream.Write(headerBuffer, 0, WalHeader.HEADER_SIZE);
+        }
+        finally
+        {
+            BufferPool.Return(headerBuffer);
+        }
     }
 }

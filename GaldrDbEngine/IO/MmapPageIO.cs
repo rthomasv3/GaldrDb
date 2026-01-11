@@ -3,6 +3,7 @@ using System.IO;
 using System.IO.MemoryMappedFiles;
 using System.Threading;
 using System.Threading.Tasks;
+using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.IO;
 
@@ -102,9 +103,16 @@ public class MmapPageIO : IPageIO
         }
         else
         {
-            byte[] tempBuffer = new byte[_pageSize];
-            _accessor.ReadArray(offset, tempBuffer, 0, _pageSize);
-            tempBuffer.AsSpan().CopyTo(destination);
+            byte[] tempBuffer = BufferPool.Rent(_pageSize);
+            try
+            {
+                _accessor.ReadArray(offset, tempBuffer, 0, _pageSize);
+                tempBuffer.AsSpan(0, _pageSize).CopyTo(destination);
+            }
+            finally
+            {
+                BufferPool.Return(tempBuffer);
+            }
         }
     }
 
@@ -139,8 +147,16 @@ public class MmapPageIO : IPageIO
             _accessor = _memoryMappedFile.CreateViewAccessor();
         }
 
-        byte[] tempBuffer = data.ToArray();
-        _accessor.WriteArray(offset, tempBuffer, 0, tempBuffer.Length);
+        byte[] tempBuffer = BufferPool.Rent(_pageSize);
+        try
+        {
+            data.CopyTo(tempBuffer);
+            _accessor.WriteArray(offset, tempBuffer, 0, _pageSize);
+        }
+        finally
+        {
+            BufferPool.Return(tempBuffer);
+        }
     }
 
     public void Flush()

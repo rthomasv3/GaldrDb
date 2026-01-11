@@ -3,12 +3,12 @@ using GaldrJson;
 
 namespace GaldrDbConsole.Models;
 
-[GaldrJsonSerializable]
+[GaldrDbCollection]
 public class BenchmarkPerson
 {
     public int Id { get; set; }
 
-    [GaldrIndex]
+    [GaldrDbIndex]
     public string Name { get; set; }
 
     public int Age { get; set; }

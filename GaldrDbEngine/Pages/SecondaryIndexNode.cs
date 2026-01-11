@@ -7,10 +7,10 @@ namespace GaldrDbEngine.Pages;
 
 public class SecondaryIndexNode
 {
-    private const int HEADER_SIZE = 10;
-
     private readonly int _pageSize;
     private readonly int _maxKeys;
+    private byte[] _keyDataBuffer;
+    private int _keyDataBufferSize;
 
     public int PageSize => _pageSize;
     public int MaxKeys => _maxKeys;
@@ -19,7 +19,7 @@ public class SecondaryIndexNode
     public BTreeNodeType NodeType { get; set; }
     public ushort KeyCount { get; set; }
     public int NextLeaf { get; set; }
-    public List<byte[]> Keys { get; set; }
+    public List<KeyBuffer> Keys { get; set; }
     public List<int> ChildPageIds { get; set; }
     public List<DocumentLocation> LeafValues { get; set; }
 
@@ -31,7 +31,7 @@ public class SecondaryIndexNode
         NodeType = nodeType;
         KeyCount = 0;
         NextLeaf = 0;
-        Keys = ListPool<byte[]>.Rent(maxKeys);
+        Keys = ListPool<KeyBuffer>.Rent(maxKeys);
 
         if (nodeType == BTreeNodeType.Internal)
         {
@@ -56,6 +56,7 @@ public class SecondaryIndexNode
         NodeType = nodeType;
         KeyCount = 0;
         NextLeaf = 0;
+
         Keys?.Clear();
         ChildPageIds?.Clear();
         LeafValues?.Clear();
@@ -65,7 +66,7 @@ public class SecondaryIndexNode
     {
         if (Keys == null)
         {
-            Keys = ListPool<byte[]>.Rent(_maxKeys);
+            Keys = ListPool<KeyBuffer>.Rent(_maxKeys);
         }
 
         if (nodeType == BTreeNodeType.Internal)
@@ -86,7 +87,7 @@ public class SecondaryIndexNode
 
     public void ReturnLists()
     {
-        ListPool<byte[]>.Return(Keys);
+        ListPool<KeyBuffer>.Return(Keys);
         Keys = null;
         ListPool<int>.Return(ChildPageIds);
         ChildPageIds = null;
@@ -96,7 +97,6 @@ public class SecondaryIndexNode
 
     public void SerializeTo(byte[] buffer)
     {
-        // Clear the buffer first to ensure clean state
         Array.Clear(buffer, 0, _pageSize);
 
         int offset = 0;
@@ -118,10 +118,11 @@ public class SecondaryIndexNode
 
         for (int i = 0; i < KeyCount; i++)
         {
-            byte[] key = Keys[i];
+            KeyBuffer key = Keys[i];
+            ReadOnlySpan<byte> keySpan = key.AsSpan();
             BinaryHelper.WriteUInt16LE(buffer, offset, (ushort)key.Length);
             offset += 2;
-            Array.Copy(key, 0, buffer, offset, key.Length);
+            keySpan.CopyTo(buffer.AsSpan(offset, key.Length));
             offset += key.Length;
         }
 
@@ -145,6 +146,29 @@ public class SecondaryIndexNode
         }
     }
 
+    public void EnsureKeyDataBuffer(int requiredSize)
+    {
+        if (_keyDataBuffer == null || _keyDataBufferSize < requiredSize)
+        {
+            if (_keyDataBuffer != null)
+            {
+                BufferPool.Return(_keyDataBuffer);
+            }
+            _keyDataBuffer = BufferPool.Rent(requiredSize);
+            _keyDataBufferSize = requiredSize;
+        }
+    }
+
+    public void ReturnKeyDataBuffer()
+    {
+        if (_keyDataBuffer != null)
+        {
+            BufferPool.Return(_keyDataBuffer);
+            _keyDataBuffer = null;
+            _keyDataBufferSize = 0;
+        }
+    }
+
     public static void DeserializeTo(byte[] buffer, SecondaryIndexNode node)
     {
         int offset = 0;
@@ -161,25 +185,39 @@ public class SecondaryIndexNode
         node.NextLeaf = BinaryHelper.ReadInt32LE(buffer, offset);
         offset += 4;
 
-        // Skip maxKeys in buffer - already set in node
         offset += 2;
 
         node.NodeType = nodeType;
         node.KeyCount = keyCount;
         node.EnsureListsForNodeType(nodeType);
 
-        // Clear existing data
-        node.Keys.Clear();
+        node.Keys?.Clear();
         node.ChildPageIds?.Clear();
         node.LeafValues?.Clear();
 
+        int totalKeyBytes = 0;
+        int scanOffset = offset;
+        for (int i = 0; i < keyCount; i++)
+        {
+            ushort keyLength = BinaryHelper.ReadUInt16LE(buffer, scanOffset);
+            scanOffset += 2;
+            totalKeyBytes += keyLength;
+            scanOffset += keyLength;
+        }
+
+        if (totalKeyBytes > 0)
+        {
+            node.EnsureKeyDataBuffer(totalKeyBytes);
+        }
+
+        int keyDataOffset = 0;
         for (int i = 0; i < keyCount; i++)
         {
             ushort keyLength = BinaryHelper.ReadUInt16LE(buffer, offset);
             offset += 2;
-            byte[] key = new byte[keyLength];
-            Array.Copy(buffer, offset, key, 0, keyLength);
-            node.Keys.Add(key);
+            Array.Copy(buffer, offset, node._keyDataBuffer, keyDataOffset, keyLength);
+            node.Keys.Add(new KeyBuffer(node._keyDataBuffer, keyDataOffset, keyLength));
+            keyDataOffset += keyLength;
             offset += keyLength;
         }
 
@@ -203,20 +241,5 @@ public class SecondaryIndexNode
                 node.LeafValues.Add(new DocumentLocation(pageId, slotIndex));
             }
         }
-    }
-
-    public static int CompareKeys(byte[] a, byte[] b)
-    {
-        int minLength = Math.Min(a.Length, b.Length);
-        for (int i = 0; i < minLength; i++)
-        {
-            int diff = a[i] - b[i];
-            if (diff != 0)
-            {
-                return diff;
-            }
-        }
-
-        return a.Length - b.Length;
     }
 }

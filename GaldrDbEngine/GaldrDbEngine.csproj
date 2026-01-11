@@ -6,7 +6,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <PackageReference Include="GaldrJson" Version="1.0.3" />
+      <PackageReference Include="GaldrJson" Version="1.1.1" />
     </ItemGroup>
 
 </Project>
