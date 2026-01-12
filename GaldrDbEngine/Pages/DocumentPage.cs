@@ -95,10 +95,73 @@ public class DocumentPage
 
     public int GetFreeSpaceBytes()
     {
-        int freeSpace = FreeSpaceEnd - FreeSpaceOffset;
-        int result = freeSpace;
+        return FreeSpaceEnd - FreeSpaceOffset;
+    }
 
-        return result;
+    public int GetLogicalFreeSpace()
+    {
+        int usedByLiveData = 0;
+        foreach (SlotEntry slot in Slots)
+        {
+            if (slot.PageCount > 0)
+            {
+                usedByLiveData += slot.Length;
+            }
+        }
+
+        int dataRegionSize = _pageSize - FreeSpaceEnd;
+        int holeSpace = dataRegionSize - usedByLiveData;
+
+        return GetFreeSpaceBytes() + holeSpace;
+    }
+
+    public bool NeedsCompaction(int minimumGain = 64)
+    {
+        int logicalFree = GetLogicalFreeSpace();
+        int contiguousFree = GetFreeSpaceBytes();
+
+        return (logicalFree - contiguousFree) >= minimumGain;
+    }
+
+    public void Compact()
+    {
+        List<(int slotIndex, byte[] data)> liveData = new List<(int, byte[])>();
+
+        for (int i = 0; i < Slots.Count; i++)
+        {
+            SlotEntry slot = Slots[i];
+            if (slot.PageCount > 0 && slot.Length > 0)
+            {
+                byte[] data = new byte[slot.Length];
+                Array.Copy(PageData, slot.Offset, data, 0, slot.Length);
+                liveData.Add((i, data));
+            }
+        }
+
+        int newOffset = _pageSize;
+
+        foreach ((int slotIndex, byte[] data) in liveData)
+        {
+            newOffset -= data.Length;
+            Array.Copy(data, 0, PageData, newOffset, data.Length);
+
+            SlotEntry slot = Slots[slotIndex];
+            Slots[slotIndex] = new SlotEntry
+            {
+                PageCount = slot.PageCount,
+                PageIds = slot.PageIds,
+                TotalSize = slot.TotalSize,
+                Offset = newOffset,
+                Length = slot.Length
+            };
+        }
+
+        if (newOffset > FreeSpaceOffset)
+        {
+            Array.Clear(PageData, FreeSpaceOffset, newOffset - FreeSpaceOffset);
+        }
+
+        FreeSpaceEnd = (ushort)newOffset;
     }
 
     public void SerializeTo(byte[] buffer)

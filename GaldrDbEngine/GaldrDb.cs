@@ -156,16 +156,16 @@ public class GaldrDb : IDisposable
     public GarbageCollectionResult Vacuum()
     {
         EnsureGarbageCollector();
-        GarbageCollectionResult result = _garbageCollector.Collect();
+        GarbageCollectionResult gcResult = _garbageCollector.Collect();
 
-        if (result.VersionsCollected > 0)
+        if (gcResult.VersionsCollected > 0)
         {
             ulong walTxId = _txManager.AllocateTxId().Value;
             BeginWalTransaction(walTxId);
 
             try
             {
-                foreach (CollectableVersion collectable in result.CollectableVersions)
+                foreach (CollectableVersion collectable in gcResult.CollectableVersions)
                 {
                     _documentStorage.DeleteDocument(collectable.Location.PageId, collectable.Location.SlotIndex);
                 }
@@ -178,10 +178,16 @@ public class GaldrDb : IDisposable
                 throw;
             }
 
-            _garbageCollector.UnlinkVersions(result.CollectableVersions);
+            _garbageCollector.UnlinkVersions(gcResult.CollectableVersions);
         }
 
-        return result;
+        int pagesCompacted = CompactFragmentedPages();
+
+        return new GarbageCollectionResult(
+            gcResult.VersionsCollected,
+            gcResult.DocumentsProcessed,
+            gcResult.CollectableVersions,
+            pagesCompacted);
     }
 
     public Task<GarbageCollectionResult> VacuumAsync(CancellationToken cancellationToken = default)
@@ -837,6 +843,74 @@ public class GaldrDb : IDisposable
         {
             Checkpoint();
         }
+    }
+
+    private int CompactFragmentedPages()
+    {
+        int compacted = 0;
+        int totalPages = _pageManager.Header.TotalPageCount;
+        byte[] pageBuffer = BufferPool.Rent(_options.PageSize);
+        DocumentPage reusablePage = new DocumentPage();
+
+        try
+        {
+            for (int pageId = PageConstants.FIRST_DATA_PAGE_ID; pageId < totalPages; pageId++)
+            {
+                if (!_pageManager.IsAllocated(pageId))
+                {
+                    continue;
+                }
+
+                _pageIO.ReadPage(pageId, pageBuffer);
+
+                if (pageBuffer[0] != PageConstants.PAGE_TYPE_DOCUMENT)
+                {
+                    continue;
+                }
+
+                DocumentPage.DeserializeTo(pageBuffer, reusablePage, _options.PageSize);
+
+                if (reusablePage.NeedsCompaction())
+                {
+                    reusablePage.Compact();
+                    reusablePage.SerializeTo(pageBuffer);
+                    _pageIO.WritePage(pageId, pageBuffer);
+
+                    int freeSpaceBytes = reusablePage.GetFreeSpaceBytes();
+                    FreeSpaceLevel level = CalculateFreeSpaceLevel(freeSpaceBytes);
+                    _pageManager.SetFreeSpaceLevel(pageId, level);
+
+                    compacted++;
+                }
+            }
+        }
+        finally
+        {
+            BufferPool.Return(pageBuffer);
+        }
+
+        return compacted;
+    }
+
+    private FreeSpaceLevel CalculateFreeSpaceLevel(int freeSpaceBytes)
+    {
+        double freeSpacePercentage = (double)freeSpaceBytes / _options.PageSize;
+        FreeSpaceLevel level = FreeSpaceLevel.None;
+
+        if (freeSpacePercentage >= 0.70)
+        {
+            level = FreeSpaceLevel.High;
+        }
+        else if (freeSpacePercentage >= 0.40)
+        {
+            level = FreeSpaceLevel.Medium;
+        }
+        else if (freeSpacePercentage >= 0.10)
+        {
+            level = FreeSpaceLevel.Low;
+        }
+
+        return level;
     }
 
     internal void BeginWalTransaction(ulong txId)

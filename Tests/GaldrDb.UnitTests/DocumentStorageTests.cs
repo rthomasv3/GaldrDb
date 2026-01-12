@@ -378,4 +378,55 @@ public class DocumentStorageTests
         Assert.HasCount(largeDocument.Length, read1);
         Assert.AreEqual("Small async document", Encoding.UTF8.GetString(read2));
     }
+
+    [TestMethod]
+    public void WriteDocument_PageFragmented_CompactsOnDemand()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 4096;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
+
+        byte[] doc1 = new byte[1000];
+        byte[] doc2 = new byte[1000];
+        byte[] doc3 = new byte[1000];
+        for (int i = 0; i < 1000; i++)
+        {
+            doc1[i] = (byte)'A';
+            doc2[i] = (byte)'B';
+            doc3[i] = (byte)'C';
+        }
+
+        DocumentLocation loc1 = storage.WriteDocument(doc1);
+        DocumentLocation loc2 = storage.WriteDocument(doc2);
+        DocumentLocation loc3 = storage.WriteDocument(doc3);
+
+        int originalPageId = loc1.PageId;
+        Assert.AreEqual(originalPageId, loc2.PageId, "All docs should be on same page initially");
+        Assert.AreEqual(originalPageId, loc3.PageId, "All docs should be on same page initially");
+
+        storage.DeleteDocument(loc1.PageId, loc1.SlotIndex);
+        storage.DeleteDocument(loc2.PageId, loc2.SlotIndex);
+
+        byte[] doc4 = new byte[1500];
+        for (int i = 0; i < doc4.Length; i++)
+        {
+            doc4[i] = (byte)'D';
+        }
+        DocumentLocation loc4 = storage.WriteDocument(doc4);
+
+        Assert.AreEqual(originalPageId, loc4.PageId, "Doc4 should fit on original page after compaction");
+
+        byte[] read3 = storage.ReadDocument(loc3.PageId, loc3.SlotIndex);
+        byte[] read4 = storage.ReadDocument(loc4.PageId, loc4.SlotIndex);
+
+        pageIO.Dispose();
+
+        Assert.HasCount(1000, read3);
+        Assert.AreEqual((byte)'C', read3[0]);
+        Assert.HasCount(1500, read4);
+        Assert.AreEqual((byte)'D', read4[0]);
+    }
 }

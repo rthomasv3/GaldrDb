@@ -57,6 +57,23 @@ public class DocumentStorage : IDisposable
                     _reusablePage.Value.Reset(_pageSize);
                 }
 
+                if (!_reusablePage.Value.CanFit(documentSize))
+                {
+                    int slotOverhead = 16;
+                    int requiredSpace = documentSize + slotOverhead;
+
+                    if (_reusablePage.Value.GetLogicalFreeSpace() >= requiredSpace)
+                    {
+                        _reusablePage.Value.Compact();
+                    }
+                    else
+                    {
+                        pageId = _pageManager.AllocatePage();
+                        pageIds[0] = pageId;
+                        _reusablePage.Value.Reset(_pageSize);
+                    }
+                }
+
                 int slotIndex = _reusablePage.Value.AddDocument(documentBytes, pageIds, documentSize);
 
                 _reusablePage.Value.SerializeTo(pageBuffer);
@@ -243,14 +260,63 @@ public class DocumentStorage : IDisposable
 
         int pageId = _pageManager.FindPageWithSpace(minLevel);
 
-        if (pageId == -1 || !_pageManager.IsAllocated(pageId) || pageId < 4)
+        if (pageId == -1 || !_pageManager.IsAllocated(pageId) || pageId < PageConstants.FIRST_DATA_PAGE_ID)
         {
-            pageId = _pageManager.AllocatePage();
+            int compactablePageId = FindCompactablePageForDocument(requiredSpace);
+            if (compactablePageId != -1)
+            {
+                pageId = compactablePageId;
+            }
+            else
+            {
+                pageId = _pageManager.AllocatePage();
+            }
         }
 
-        int result = pageId;
+        return pageId;
+    }
 
-        return result;
+    private int FindCompactablePageForDocument(int requiredSpace)
+    {
+        int totalPages = _pageManager.Header.TotalPageCount;
+        byte[] pageBuffer = BufferPool.Rent(_pageSize);
+
+        try
+        {
+            for (int pageId = PageConstants.FIRST_DATA_PAGE_ID; pageId < totalPages; pageId++)
+            {
+                if (!_pageManager.IsAllocated(pageId))
+                {
+                    continue;
+                }
+
+                FreeSpaceLevel level = _pageManager.GetFreeSpaceLevel(pageId);
+                if (level == FreeSpaceLevel.High)
+                {
+                    continue;
+                }
+
+                _pageIO.ReadPage(pageId, pageBuffer);
+
+                if (!IsPageInitialized(pageBuffer))
+                {
+                    continue;
+                }
+
+                DocumentPage.DeserializeTo(pageBuffer, _reusablePage.Value, _pageSize);
+
+                if (_reusablePage.Value.GetLogicalFreeSpace() >= requiredSpace)
+                {
+                    return pageId;
+                }
+            }
+        }
+        finally
+        {
+            BufferPool.Return(pageBuffer);
+        }
+
+        return -1;
     }
 
     private void UpdateFSM(int pageId, int freeSpaceBytes)
@@ -316,6 +382,23 @@ public class DocumentStorage : IDisposable
                 else
                 {
                     _reusablePage.Value.Reset(_pageSize);
+                }
+
+                if (!_reusablePage.Value.CanFit(documentSize))
+                {
+                    int slotOverhead = 16;
+                    int requiredSpace = documentSize + slotOverhead;
+
+                    if (_reusablePage.Value.GetLogicalFreeSpace() >= requiredSpace)
+                    {
+                        _reusablePage.Value.Compact();
+                    }
+                    else
+                    {
+                        pageId = _pageManager.AllocatePage();
+                        pageIds[0] = pageId;
+                        _reusablePage.Value.Reset(_pageSize);
+                    }
                 }
 
                 int slotIndex = _reusablePage.Value.AddDocument(documentBytes, pageIds, documentSize);

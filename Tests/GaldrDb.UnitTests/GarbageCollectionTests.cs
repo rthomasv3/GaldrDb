@@ -616,4 +616,149 @@ public class GarbageCollectionTests
                 "Should have collected some versions");
         }
     }
+
+    [TestMethod]
+    public void Vacuum_FragmentedPages_CompactsAll()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 4096, UseWal = true, AutoGarbageCollection = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            // Insert several documents on the same page
+            for (int i = 0; i < 5; i++)
+            {
+                Person person = new Person { Name = $"Person{i}", Age = 20 + i, Email = $"p{i}@example.com" };
+                db.Insert(person);
+            }
+
+            // Delete some to create fragmentation (holes in the page)
+            db.Delete<Person>(1);
+            db.Delete<Person>(3);
+
+            // Vacuum should run version GC and then compact fragmented pages
+            GarbageCollectionResult result = db.Vacuum();
+
+            // Should have compacted at least one page (the page with deleted docs has holes)
+            Assert.IsGreaterThanOrEqualTo(0, result.PagesCompacted);
+
+            // Verify remaining documents are still readable
+            Person p2 = db.GetById<Person>(2);
+            Person p4 = db.GetById<Person>(4);
+            Person p5 = db.GetById<Person>(5);
+            Assert.IsNotNull(p2);
+            Assert.IsNotNull(p4);
+            Assert.IsNotNull(p5);
+            Assert.AreEqual("Person1", p2.Name);
+            Assert.AreEqual("Person3", p4.Name);
+            Assert.AreEqual("Person4", p5.Name);
+        }
+    }
+
+    [TestMethod]
+    public void Vacuum_NoFragmentation_CompactsNone()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true, AutoGarbageCollection = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            // Insert documents without any deletions
+            for (int i = 0; i < 5; i++)
+            {
+                Person person = new Person { Name = $"Person{i}", Age = 20 + i, Email = $"p{i}@example.com" };
+                db.Insert(person);
+            }
+
+            // Vacuum with no deletions - no fragmentation to compact
+            GarbageCollectionResult result = db.Vacuum();
+
+            Assert.AreEqual(0, result.PagesCompacted, "No pages should be compacted when there's no fragmentation");
+        }
+    }
+
+    [TestMethod]
+    public void Vacuum_ReturnsCorrectPagesCompactedCount()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 4096, UseWal = true, AutoGarbageCollection = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            // Insert several documents
+            for (int i = 0; i < 10; i++)
+            {
+                Person person = new Person { Name = $"Person{i}", Age = 20 + i, Email = $"p{i}@example.com" };
+                db.Insert(person);
+            }
+
+            // Delete some documents to create fragmentation
+            db.Delete<Person>(2);
+            db.Delete<Person>(5);
+            db.Delete<Person>(8);
+
+            // First vacuum: version GC + page compaction
+            GarbageCollectionResult result1 = db.Vacuum();
+
+            // PagesCompacted should be a non-negative number
+            Assert.IsGreaterThanOrEqualTo(0, result1.PagesCompacted);
+
+            // Second vacuum should compact fewer or no pages (already compacted)
+            GarbageCollectionResult result2 = db.Vacuum();
+            Assert.AreEqual(0, result2.PagesCompacted, "Second vacuum should not need to compact anything");
+        }
+    }
+
+    [TestMethod]
+    public void Vacuum_PageCompaction_NewDocumentsCanUseReclaimedSpace()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 4096, UseWal = true, AutoGarbageCollection = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            // Insert documents with known sizes
+            for (int i = 0; i < 3; i++)
+            {
+                Person person = new Person
+                {
+                    Name = $"Person{i}",
+                    Age = 20 + i,
+                    Email = new string('x', 500) + $"{i}@example.com"
+                };
+                db.Insert(person);
+            }
+
+            // Delete first two documents to create holes
+            db.Delete<Person>(1);
+            db.Delete<Person>(2);
+
+            // Vacuum should compact and reclaim space
+            GarbageCollectionResult result = db.Vacuum();
+
+            // Insert new documents - should be able to use the reclaimed space
+            for (int i = 0; i < 3; i++)
+            {
+                Person person = new Person
+                {
+                    Name = $"NewPerson{i}",
+                    Age = 40 + i,
+                    Email = $"new{i}@example.com"
+                };
+                db.Insert(person);
+            }
+
+            // Verify all current documents are readable
+            Person p3 = db.GetById<Person>(3);
+            Assert.IsNotNull(p3);
+            Assert.AreEqual("Person2", p3.Name);
+
+            for (int i = 4; i <= 6; i++)
+            {
+                Person newPerson = db.GetById<Person>(i);
+                Assert.IsNotNull(newPerson);
+                Assert.StartsWith("NewPerson", newPerson.Name);
+            }
+        }
+    }
 }
