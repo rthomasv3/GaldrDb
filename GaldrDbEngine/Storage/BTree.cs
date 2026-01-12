@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,6 +10,8 @@ namespace GaldrDbEngine.Storage;
 
 public class BTree
 {
+    private const int MAX_TREE_DEPTH = 32;
+
     private readonly IPageIO _pageIO;
     private readonly PageManager _pageManager;
     private readonly int _pageSize;
@@ -128,9 +131,11 @@ public class BTree
 
         byte[] buffer = BufferPool.Rent(_pageSize);
         BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+        List<DeletePathEntry> path = ListPool<DeletePathEntry>.Rent(MAX_TREE_DEPTH);
         try
         {
             int currentPageId = pageId;
+            int leafPageId = 0;
 
             while (currentPageId != 0)
             {
@@ -154,23 +159,343 @@ public class BTree
                         node.SerializeTo(buffer);
                         _pageIO.WritePage(currentPageId, buffer);
 
+                        leafPageId = currentPageId;
                         result = true;
                     }
                     break;
                 }
                 else
                 {
+                    path.Add(new DeletePathEntry(currentPageId, i));
                     currentPageId = node.ChildPageIds[i];
                 }
+            }
+
+            if (result && leafPageId != 0)
+            {
+                RebalanceAfterDelete(path, leafPageId, node);
             }
         }
         finally
         {
             BufferPool.Return(buffer);
             BTreeNodePool.Return(node);
+            ListPool<DeletePathEntry>.Return(path);
         }
 
         return result;
+    }
+
+    private void RebalanceAfterDelete(List<DeletePathEntry> path, int nodePageId, BTreeNode node)
+    {
+        byte[] parentBuffer = BufferPool.Rent(_pageSize);
+        byte[] siblingBuffer = BufferPool.Rent(_pageSize);
+        BTreeNode parent = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Internal);
+        BTreeNode sibling = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+
+        try
+        {
+            int currentPageId = nodePageId;
+            int pathIndex = path.Count - 1;
+
+            while (pathIndex >= 0 && node.IsUnderflow())
+            {
+                DeletePathEntry parentEntry = path[pathIndex];
+                int parentPageId = parentEntry.PageId;
+                int childIndex = parentEntry.ChildIndex;
+
+                _pageIO.ReadPage(parentPageId, parentBuffer);
+                BTreeNode.DeserializeTo(parentBuffer, parent, _order);
+
+                bool rebalanced = false;
+
+                if (childIndex > 0)
+                {
+                    int leftSiblingPageId = parent.ChildPageIds[childIndex - 1];
+                    _pageIO.ReadPage(leftSiblingPageId, siblingBuffer);
+                    BTreeNode.DeserializeTo(siblingBuffer, sibling, _order);
+
+                    if (sibling.CanLendKey())
+                    {
+                        BorrowFromLeftSibling(parentPageId, parent, parentBuffer,
+                                              leftSiblingPageId, sibling, siblingBuffer,
+                                              currentPageId, node, childIndex);
+                        rebalanced = true;
+                    }
+                }
+
+                if (!rebalanced && childIndex < parent.KeyCount)
+                {
+                    int rightSiblingPageId = parent.ChildPageIds[childIndex + 1];
+                    _pageIO.ReadPage(rightSiblingPageId, siblingBuffer);
+                    BTreeNode.DeserializeTo(siblingBuffer, sibling, _order);
+
+                    if (sibling.CanLendKey())
+                    {
+                        BorrowFromRightSibling(parentPageId, parent, parentBuffer,
+                                               currentPageId, node,
+                                               rightSiblingPageId, sibling, siblingBuffer,
+                                               childIndex);
+                        rebalanced = true;
+                    }
+                }
+
+                if (!rebalanced)
+                {
+                    if (childIndex > 0)
+                    {
+                        int leftSiblingPageId = parent.ChildPageIds[childIndex - 1];
+                        _pageIO.ReadPage(leftSiblingPageId, siblingBuffer);
+                        BTreeNode.DeserializeTo(siblingBuffer, sibling, _order);
+
+                        MergeWithLeftSibling(parentPageId, parent, parentBuffer,
+                                             leftSiblingPageId, sibling, siblingBuffer,
+                                             currentPageId, node, childIndex);
+
+                        currentPageId = parentPageId;
+                        _pageIO.ReadPage(parentPageId, parentBuffer);
+                        BTreeNode.DeserializeTo(parentBuffer, node, _order);
+                    }
+                    else
+                    {
+                        int rightSiblingPageId = parent.ChildPageIds[childIndex + 1];
+                        _pageIO.ReadPage(rightSiblingPageId, siblingBuffer);
+                        BTreeNode.DeserializeTo(siblingBuffer, sibling, _order);
+
+                        MergeWithRightSibling(parentPageId, parent, parentBuffer,
+                                              currentPageId, node,
+                                              rightSiblingPageId, sibling, siblingBuffer,
+                                              childIndex);
+
+                        currentPageId = parentPageId;
+                        _pageIO.ReadPage(parentPageId, parentBuffer);
+                        BTreeNode.DeserializeTo(parentBuffer, node, _order);
+                    }
+                }
+                else
+                {
+                    break;
+                }
+
+                pathIndex--;
+            }
+
+            if (pathIndex < 0 && node.NodeType == BTreeNodeType.Internal && node.KeyCount == 0)
+            {
+                int newRootPageId = node.ChildPageIds[0];
+                _pageManager.DeallocatePage(_rootPageId);
+                _rootPageId = newRootPageId;
+            }
+        }
+        finally
+        {
+            BufferPool.Return(parentBuffer);
+            BufferPool.Return(siblingBuffer);
+            BTreeNodePool.Return(parent);
+            BTreeNodePool.Return(sibling);
+        }
+    }
+
+    private void BorrowFromLeftSibling(int parentPageId, BTreeNode parent, byte[] parentBuffer,
+                                       int leftSiblingPageId, BTreeNode leftSibling, byte[] leftBuffer,
+                                       int currentPageId, BTreeNode current, int childIndex)
+    {
+        byte[] currentBuffer = BufferPool.Rent(_pageSize);
+        try
+        {
+            if (current.NodeType == BTreeNodeType.Leaf)
+            {
+                int borrowedKey = leftSibling.Keys[leftSibling.KeyCount - 1];
+                DocumentLocation borrowedValue = leftSibling.LeafValues[leftSibling.KeyCount - 1];
+
+                current.Keys.Insert(0, borrowedKey);
+                current.LeafValues.Insert(0, borrowedValue);
+                current.KeyCount++;
+
+                leftSibling.Keys.RemoveAt(leftSibling.KeyCount - 1);
+                leftSibling.LeafValues.RemoveAt(leftSibling.KeyCount - 1);
+                leftSibling.KeyCount--;
+
+                parent.Keys[childIndex - 1] = leftSibling.Keys[leftSibling.KeyCount - 1];
+            }
+            else
+            {
+                int separatorKey = parent.Keys[childIndex - 1];
+
+                current.Keys.Insert(0, separatorKey);
+                current.ChildPageIds.Insert(0, leftSibling.ChildPageIds[leftSibling.KeyCount]);
+                current.KeyCount++;
+
+                parent.Keys[childIndex - 1] = leftSibling.Keys[leftSibling.KeyCount - 1];
+
+                leftSibling.Keys.RemoveAt(leftSibling.KeyCount - 1);
+                leftSibling.ChildPageIds.RemoveAt(leftSibling.KeyCount);
+                leftSibling.KeyCount--;
+            }
+
+            leftSibling.SerializeTo(leftBuffer);
+            _pageIO.WritePage(leftSiblingPageId, leftBuffer);
+
+            current.SerializeTo(currentBuffer);
+            _pageIO.WritePage(currentPageId, currentBuffer);
+
+            parent.SerializeTo(parentBuffer);
+            _pageIO.WritePage(parentPageId, parentBuffer);
+        }
+        finally
+        {
+            BufferPool.Return(currentBuffer);
+        }
+    }
+
+    private void BorrowFromRightSibling(int parentPageId, BTreeNode parent, byte[] parentBuffer,
+                                        int currentPageId, BTreeNode current,
+                                        int rightSiblingPageId, BTreeNode rightSibling, byte[] rightBuffer,
+                                        int childIndex)
+    {
+        byte[] currentBuffer = BufferPool.Rent(_pageSize);
+        try
+        {
+            if (current.NodeType == BTreeNodeType.Leaf)
+            {
+                int borrowedKey = rightSibling.Keys[0];
+                DocumentLocation borrowedValue = rightSibling.LeafValues[0];
+
+                current.Keys.Add(borrowedKey);
+                current.LeafValues.Add(borrowedValue);
+                current.KeyCount++;
+
+                rightSibling.Keys.RemoveAt(0);
+                rightSibling.LeafValues.RemoveAt(0);
+                rightSibling.KeyCount--;
+
+                parent.Keys[childIndex] = borrowedKey;
+            }
+            else
+            {
+                int separatorKey = parent.Keys[childIndex];
+
+                current.Keys.Add(separatorKey);
+                current.ChildPageIds.Add(rightSibling.ChildPageIds[0]);
+                current.KeyCount++;
+
+                parent.Keys[childIndex] = rightSibling.Keys[0];
+
+                rightSibling.Keys.RemoveAt(0);
+                rightSibling.ChildPageIds.RemoveAt(0);
+                rightSibling.KeyCount--;
+            }
+
+            current.SerializeTo(currentBuffer);
+            _pageIO.WritePage(currentPageId, currentBuffer);
+
+            rightSibling.SerializeTo(rightBuffer);
+            _pageIO.WritePage(rightSiblingPageId, rightBuffer);
+
+            parent.SerializeTo(parentBuffer);
+            _pageIO.WritePage(parentPageId, parentBuffer);
+        }
+        finally
+        {
+            BufferPool.Return(currentBuffer);
+        }
+    }
+
+    private void MergeWithLeftSibling(int parentPageId, BTreeNode parent, byte[] parentBuffer,
+                                      int leftSiblingPageId, BTreeNode leftSibling, byte[] leftBuffer,
+                                      int currentPageId, BTreeNode current, int childIndex)
+    {
+        if (current.NodeType == BTreeNodeType.Leaf)
+        {
+            for (int i = 0; i < current.KeyCount; i++)
+            {
+                leftSibling.Keys.Add(current.Keys[i]);
+                leftSibling.LeafValues.Add(current.LeafValues[i]);
+            }
+            leftSibling.KeyCount += current.KeyCount;
+
+            leftSibling.NextLeaf = current.NextLeaf;
+        }
+        else
+        {
+            leftSibling.Keys.Add(parent.Keys[childIndex - 1]);
+            leftSibling.KeyCount++;
+
+            for (int i = 0; i < current.KeyCount; i++)
+            {
+                leftSibling.Keys.Add(current.Keys[i]);
+            }
+            for (int i = 0; i <= current.KeyCount; i++)
+            {
+                leftSibling.ChildPageIds.Add(current.ChildPageIds[i]);
+            }
+            leftSibling.KeyCount += current.KeyCount;
+        }
+
+        parent.Keys.RemoveAt(childIndex - 1);
+        parent.ChildPageIds.RemoveAt(childIndex);
+        parent.KeyCount--;
+
+        leftSibling.SerializeTo(leftBuffer);
+        _pageIO.WritePage(leftSiblingPageId, leftBuffer);
+
+        parent.SerializeTo(parentBuffer);
+        _pageIO.WritePage(parentPageId, parentBuffer);
+
+        _pageManager.DeallocatePage(currentPageId);
+    }
+
+    private void MergeWithRightSibling(int parentPageId, BTreeNode parent, byte[] parentBuffer,
+                                       int currentPageId, BTreeNode current,
+                                       int rightSiblingPageId, BTreeNode rightSibling, byte[] rightBuffer,
+                                       int childIndex)
+    {
+        if (current.NodeType == BTreeNodeType.Leaf)
+        {
+            for (int i = 0; i < rightSibling.KeyCount; i++)
+            {
+                current.Keys.Add(rightSibling.Keys[i]);
+                current.LeafValues.Add(rightSibling.LeafValues[i]);
+            }
+            current.KeyCount += rightSibling.KeyCount;
+
+            current.NextLeaf = rightSibling.NextLeaf;
+        }
+        else
+        {
+            current.Keys.Add(parent.Keys[childIndex]);
+            current.KeyCount++;
+
+            for (int i = 0; i < rightSibling.KeyCount; i++)
+            {
+                current.Keys.Add(rightSibling.Keys[i]);
+            }
+            for (int i = 0; i <= rightSibling.KeyCount; i++)
+            {
+                current.ChildPageIds.Add(rightSibling.ChildPageIds[i]);
+            }
+            current.KeyCount += rightSibling.KeyCount;
+        }
+
+        parent.Keys.RemoveAt(childIndex);
+        parent.ChildPageIds.RemoveAt(childIndex + 1);
+        parent.KeyCount--;
+
+        byte[] currentBuffer = BufferPool.Rent(_pageSize);
+        try
+        {
+            current.SerializeTo(currentBuffer);
+            _pageIO.WritePage(currentPageId, currentBuffer);
+        }
+        finally
+        {
+            BufferPool.Return(currentBuffer);
+        }
+
+        parent.SerializeTo(parentBuffer);
+        _pageIO.WritePage(parentPageId, parentBuffer);
+
+        _pageManager.DeallocatePage(rightSiblingPageId);
     }
 
     private DocumentLocation? SearchNode(int pageId, int docId)
@@ -662,6 +987,7 @@ public class BTree
 
         byte[] buffer = BufferPool.Rent(_pageSize);
         BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+        List<DeletePathEntry> path = ListPool<DeletePathEntry>.Rent(MAX_TREE_DEPTH);
         try
         {
             int currentPageId = pageId;
@@ -688,12 +1014,18 @@ public class BTree
                         node.SerializeTo(buffer);
                         await _pageIO.WritePageAsync(currentPageId, buffer, cancellationToken).ConfigureAwait(false);
 
+                        if (node.IsUnderflow() && currentPageId != _rootPageId)
+                        {
+                            await RebalanceAfterDeleteAsync(path, currentPageId, node, cancellationToken).ConfigureAwait(false);
+                        }
+
                         result = true;
                     }
                     break;
                 }
                 else
                 {
+                    path.Add(new DeletePathEntry(currentPageId, i));
                     currentPageId = node.ChildPageIds[i];
                 }
             }
@@ -702,8 +1034,323 @@ public class BTree
         {
             BufferPool.Return(buffer);
             BTreeNodePool.Return(node);
+            ListPool<DeletePathEntry>.Return(path);
         }
 
         return result;
+    }
+
+    private async Task RebalanceAfterDeleteAsync(List<DeletePathEntry> path, int nodePageId, BTreeNode node, CancellationToken cancellationToken)
+    {
+        byte[] parentBuffer = BufferPool.Rent(_pageSize);
+        byte[] siblingBuffer = BufferPool.Rent(_pageSize);
+        BTreeNode parent = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Internal);
+        BTreeNode sibling = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+
+        try
+        {
+            int currentPageId = nodePageId;
+            int pathIndex = path.Count - 1;
+
+            while (pathIndex >= 0 && node.IsUnderflow())
+            {
+                DeletePathEntry parentEntry = path[pathIndex];
+                int parentPageId = parentEntry.PageId;
+                int childIndex = parentEntry.ChildIndex;
+
+                await _pageIO.ReadPageAsync(parentPageId, parentBuffer, cancellationToken).ConfigureAwait(false);
+                BTreeNode.DeserializeTo(parentBuffer, parent, _order);
+
+                bool rebalanced = false;
+
+                if (childIndex > 0)
+                {
+                    int leftSiblingPageId = parent.ChildPageIds[childIndex - 1];
+                    await _pageIO.ReadPageAsync(leftSiblingPageId, siblingBuffer, cancellationToken).ConfigureAwait(false);
+                    BTreeNode.DeserializeTo(siblingBuffer, sibling, _order);
+
+                    if (sibling.CanLendKey())
+                    {
+                        await BorrowFromLeftSiblingAsync(parentPageId, parent, parentBuffer,
+                                              leftSiblingPageId, sibling, siblingBuffer,
+                                              currentPageId, node, childIndex, cancellationToken).ConfigureAwait(false);
+                        rebalanced = true;
+                    }
+                }
+
+                if (!rebalanced && childIndex < parent.KeyCount)
+                {
+                    int rightSiblingPageId = parent.ChildPageIds[childIndex + 1];
+                    await _pageIO.ReadPageAsync(rightSiblingPageId, siblingBuffer, cancellationToken).ConfigureAwait(false);
+                    BTreeNode.DeserializeTo(siblingBuffer, sibling, _order);
+
+                    if (sibling.CanLendKey())
+                    {
+                        await BorrowFromRightSiblingAsync(parentPageId, parent, parentBuffer,
+                                               currentPageId, node,
+                                               rightSiblingPageId, sibling, siblingBuffer,
+                                               childIndex, cancellationToken).ConfigureAwait(false);
+                        rebalanced = true;
+                    }
+                }
+
+                if (!rebalanced)
+                {
+                    if (childIndex > 0)
+                    {
+                        int leftSiblingPageId = parent.ChildPageIds[childIndex - 1];
+                        await _pageIO.ReadPageAsync(leftSiblingPageId, siblingBuffer, cancellationToken).ConfigureAwait(false);
+                        BTreeNode.DeserializeTo(siblingBuffer, sibling, _order);
+
+                        await MergeWithLeftSiblingAsync(parentPageId, parent, parentBuffer,
+                                             leftSiblingPageId, sibling, siblingBuffer,
+                                             currentPageId, node, childIndex, cancellationToken).ConfigureAwait(false);
+
+                        currentPageId = parentPageId;
+                        await _pageIO.ReadPageAsync(parentPageId, parentBuffer, cancellationToken).ConfigureAwait(false);
+                        BTreeNode.DeserializeTo(parentBuffer, node, _order);
+                    }
+                    else
+                    {
+                        int rightSiblingPageId = parent.ChildPageIds[childIndex + 1];
+                        await _pageIO.ReadPageAsync(rightSiblingPageId, siblingBuffer, cancellationToken).ConfigureAwait(false);
+                        BTreeNode.DeserializeTo(siblingBuffer, sibling, _order);
+
+                        await MergeWithRightSiblingAsync(parentPageId, parent, parentBuffer,
+                                              currentPageId, node,
+                                              rightSiblingPageId, sibling, siblingBuffer,
+                                              childIndex, cancellationToken).ConfigureAwait(false);
+
+                        currentPageId = parentPageId;
+                        await _pageIO.ReadPageAsync(parentPageId, parentBuffer, cancellationToken).ConfigureAwait(false);
+                        BTreeNode.DeserializeTo(parentBuffer, node, _order);
+                    }
+                }
+                else
+                {
+                    break;
+                }
+
+                pathIndex--;
+            }
+
+            if (pathIndex < 0 && node.NodeType == BTreeNodeType.Internal && node.KeyCount == 0)
+            {
+                int newRootPageId = node.ChildPageIds[0];
+                _pageManager.DeallocatePage(_rootPageId);
+                _rootPageId = newRootPageId;
+            }
+        }
+        finally
+        {
+            BufferPool.Return(parentBuffer);
+            BufferPool.Return(siblingBuffer);
+            BTreeNodePool.Return(parent);
+            BTreeNodePool.Return(sibling);
+        }
+    }
+
+    private async Task BorrowFromLeftSiblingAsync(int parentPageId, BTreeNode parent, byte[] parentBuffer,
+                                       int leftSiblingPageId, BTreeNode leftSibling, byte[] leftBuffer,
+                                       int currentPageId, BTreeNode current, int childIndex,
+                                       CancellationToken cancellationToken)
+    {
+        byte[] currentBuffer = BufferPool.Rent(_pageSize);
+        try
+        {
+            if (current.NodeType == BTreeNodeType.Leaf)
+            {
+                int borrowedKey = leftSibling.Keys[leftSibling.KeyCount - 1];
+                DocumentLocation borrowedValue = leftSibling.LeafValues[leftSibling.KeyCount - 1];
+
+                current.Keys.Insert(0, borrowedKey);
+                current.LeafValues.Insert(0, borrowedValue);
+                current.KeyCount++;
+
+                leftSibling.Keys.RemoveAt(leftSibling.KeyCount - 1);
+                leftSibling.LeafValues.RemoveAt(leftSibling.KeyCount - 1);
+                leftSibling.KeyCount--;
+
+                parent.Keys[childIndex - 1] = leftSibling.Keys[leftSibling.KeyCount - 1];
+            }
+            else
+            {
+                int separatorKey = parent.Keys[childIndex - 1];
+
+                current.Keys.Insert(0, separatorKey);
+                current.ChildPageIds.Insert(0, leftSibling.ChildPageIds[leftSibling.KeyCount]);
+                current.KeyCount++;
+
+                parent.Keys[childIndex - 1] = leftSibling.Keys[leftSibling.KeyCount - 1];
+
+                leftSibling.Keys.RemoveAt(leftSibling.KeyCount - 1);
+                leftSibling.ChildPageIds.RemoveAt(leftSibling.KeyCount);
+                leftSibling.KeyCount--;
+            }
+
+            leftSibling.SerializeTo(leftBuffer);
+            await _pageIO.WritePageAsync(leftSiblingPageId, leftBuffer, cancellationToken).ConfigureAwait(false);
+
+            current.SerializeTo(currentBuffer);
+            await _pageIO.WritePageAsync(currentPageId, currentBuffer, cancellationToken).ConfigureAwait(false);
+
+            parent.SerializeTo(parentBuffer);
+            await _pageIO.WritePageAsync(parentPageId, parentBuffer, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            BufferPool.Return(currentBuffer);
+        }
+    }
+
+    private async Task BorrowFromRightSiblingAsync(int parentPageId, BTreeNode parent, byte[] parentBuffer,
+                                        int currentPageId, BTreeNode current,
+                                        int rightSiblingPageId, BTreeNode rightSibling, byte[] rightBuffer,
+                                        int childIndex, CancellationToken cancellationToken)
+    {
+        byte[] currentBuffer = BufferPool.Rent(_pageSize);
+        try
+        {
+            if (current.NodeType == BTreeNodeType.Leaf)
+            {
+                int borrowedKey = rightSibling.Keys[0];
+                DocumentLocation borrowedValue = rightSibling.LeafValues[0];
+
+                current.Keys.Add(borrowedKey);
+                current.LeafValues.Add(borrowedValue);
+                current.KeyCount++;
+
+                rightSibling.Keys.RemoveAt(0);
+                rightSibling.LeafValues.RemoveAt(0);
+                rightSibling.KeyCount--;
+
+                parent.Keys[childIndex] = borrowedKey;
+            }
+            else
+            {
+                int separatorKey = parent.Keys[childIndex];
+
+                current.Keys.Add(separatorKey);
+                current.ChildPageIds.Add(rightSibling.ChildPageIds[0]);
+                current.KeyCount++;
+
+                parent.Keys[childIndex] = rightSibling.Keys[0];
+
+                rightSibling.Keys.RemoveAt(0);
+                rightSibling.ChildPageIds.RemoveAt(0);
+                rightSibling.KeyCount--;
+            }
+
+            current.SerializeTo(currentBuffer);
+            await _pageIO.WritePageAsync(currentPageId, currentBuffer, cancellationToken).ConfigureAwait(false);
+
+            rightSibling.SerializeTo(rightBuffer);
+            await _pageIO.WritePageAsync(rightSiblingPageId, rightBuffer, cancellationToken).ConfigureAwait(false);
+
+            parent.SerializeTo(parentBuffer);
+            await _pageIO.WritePageAsync(parentPageId, parentBuffer, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            BufferPool.Return(currentBuffer);
+        }
+    }
+
+    private async Task MergeWithLeftSiblingAsync(int parentPageId, BTreeNode parent, byte[] parentBuffer,
+                                      int leftSiblingPageId, BTreeNode leftSibling, byte[] leftBuffer,
+                                      int currentPageId, BTreeNode current, int childIndex,
+                                      CancellationToken cancellationToken)
+    {
+        if (current.NodeType == BTreeNodeType.Leaf)
+        {
+            for (int i = 0; i < current.KeyCount; i++)
+            {
+                leftSibling.Keys.Add(current.Keys[i]);
+                leftSibling.LeafValues.Add(current.LeafValues[i]);
+            }
+            leftSibling.KeyCount += current.KeyCount;
+
+            leftSibling.NextLeaf = current.NextLeaf;
+        }
+        else
+        {
+            leftSibling.Keys.Add(parent.Keys[childIndex - 1]);
+            leftSibling.KeyCount++;
+
+            for (int i = 0; i < current.KeyCount; i++)
+            {
+                leftSibling.Keys.Add(current.Keys[i]);
+            }
+            for (int i = 0; i <= current.KeyCount; i++)
+            {
+                leftSibling.ChildPageIds.Add(current.ChildPageIds[i]);
+            }
+            leftSibling.KeyCount += current.KeyCount;
+        }
+
+        parent.Keys.RemoveAt(childIndex - 1);
+        parent.ChildPageIds.RemoveAt(childIndex);
+        parent.KeyCount--;
+
+        leftSibling.SerializeTo(leftBuffer);
+        await _pageIO.WritePageAsync(leftSiblingPageId, leftBuffer, cancellationToken).ConfigureAwait(false);
+
+        parent.SerializeTo(parentBuffer);
+        await _pageIO.WritePageAsync(parentPageId, parentBuffer, cancellationToken).ConfigureAwait(false);
+
+        _pageManager.DeallocatePage(currentPageId);
+    }
+
+    private async Task MergeWithRightSiblingAsync(int parentPageId, BTreeNode parent, byte[] parentBuffer,
+                                       int currentPageId, BTreeNode current,
+                                       int rightSiblingPageId, BTreeNode rightSibling, byte[] rightBuffer,
+                                       int childIndex, CancellationToken cancellationToken)
+    {
+        if (current.NodeType == BTreeNodeType.Leaf)
+        {
+            for (int i = 0; i < rightSibling.KeyCount; i++)
+            {
+                current.Keys.Add(rightSibling.Keys[i]);
+                current.LeafValues.Add(rightSibling.LeafValues[i]);
+            }
+            current.KeyCount += rightSibling.KeyCount;
+
+            current.NextLeaf = rightSibling.NextLeaf;
+        }
+        else
+        {
+            current.Keys.Add(parent.Keys[childIndex]);
+            current.KeyCount++;
+
+            for (int i = 0; i < rightSibling.KeyCount; i++)
+            {
+                current.Keys.Add(rightSibling.Keys[i]);
+            }
+            for (int i = 0; i <= rightSibling.KeyCount; i++)
+            {
+                current.ChildPageIds.Add(rightSibling.ChildPageIds[i]);
+            }
+            current.KeyCount += rightSibling.KeyCount;
+        }
+
+        parent.Keys.RemoveAt(childIndex);
+        parent.ChildPageIds.RemoveAt(childIndex + 1);
+        parent.KeyCount--;
+
+        byte[] currentBuffer = BufferPool.Rent(_pageSize);
+        try
+        {
+            current.SerializeTo(currentBuffer);
+            await _pageIO.WritePageAsync(currentPageId, currentBuffer, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            BufferPool.Return(currentBuffer);
+        }
+
+        parent.SerializeTo(parentBuffer);
+        await _pageIO.WritePageAsync(parentPageId, parentBuffer, cancellationToken).ConfigureAwait(false);
+
+        _pageManager.DeallocatePage(rightSiblingPageId);
     }
 }

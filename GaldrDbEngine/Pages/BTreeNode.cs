@@ -55,6 +55,21 @@ public class BTreeNode
         return KeyCount < _order - 1;
     }
 
+    public int GetMinKeys()
+    {
+        return (_order - 1) / 2;
+    }
+
+    public bool IsUnderflow()
+    {
+        return KeyCount < GetMinKeys();
+    }
+
+    public bool CanLendKey()
+    {
+        return KeyCount > GetMinKeys();
+    }
+
     public void Reset(BTreeNodeType nodeType)
     {
         PageType = PageConstants.PAGE_TYPE_BTREE;

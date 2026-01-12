@@ -972,6 +972,12 @@ public class GaldrDb : IDisposable
             // Old versions must remain readable until garbage collection.
             btree.Delete(docId);
 
+            int newRootPageId = btree.GetRootPageId();
+            if (newRootPageId != collection.RootPage)
+            {
+                collection.RootPage = newRootPageId;
+            }
+
             collection.DocumentCount--;
             _collectionsMetadata.UpdateCollection(collection);
             _collectionsMetadata.WriteToDisk();
@@ -1136,6 +1142,12 @@ public class GaldrDb : IDisposable
             // Note: We do NOT delete the document from storage for MVCC.
             // Old versions must remain readable until garbage collection.
             await btree.DeleteAsync(docId, cancellationToken).ConfigureAwait(false);
+
+            int newRootPageId = btree.GetRootPageId();
+            if (newRootPageId != collection.RootPage)
+            {
+                collection.RootPage = newRootPageId;
+            }
 
             collection.DocumentCount--;
             _collectionsMetadata.UpdateCollection(collection);

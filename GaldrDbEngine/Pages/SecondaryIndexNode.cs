@@ -50,6 +50,21 @@ public class SecondaryIndexNode
         return KeyCount >= _maxKeys;
     }
 
+    public int GetMinKeys()
+    {
+        return _maxKeys / 2;
+    }
+
+    public bool IsUnderflow()
+    {
+        return KeyCount < GetMinKeys();
+    }
+
+    public bool CanLendKey()
+    {
+        return KeyCount > GetMinKeys();
+    }
+
     public void Reset(BTreeNodeType nodeType)
     {
         PageType = PageConstants.PAGE_TYPE_SECONDARY_INDEX;

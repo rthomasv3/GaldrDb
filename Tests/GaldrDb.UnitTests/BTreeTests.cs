@@ -1147,9 +1147,19 @@ public class BTreeTests
             btree.Insert(i, new DocumentLocation(i, 0));
         }
 
+        List<int> missingOddKeys = new List<int>();
         for (int i = 2; i <= 20; i += 2)
         {
             btree.Delete(i);
+
+            for (int j = 1; j < i; j += 2)
+            {
+                DocumentLocation? check = btree.Search(j);
+                if (check == null && !missingOddKeys.Contains(j))
+                {
+                    missingOddKeys.Add(j);
+                }
+            }
         }
 
         bool oddFound = true;
@@ -1171,7 +1181,7 @@ public class BTreeTests
 
         pageIO.Dispose();
 
-        Assert.IsTrue(oddFound);
+        Assert.IsTrue(oddFound, $"Missing odd keys: {string.Join(", ", missingOddKeys)}");
         Assert.IsTrue(evenGone);
         Assert.HasCount(10, entries);
     }
@@ -1522,5 +1532,123 @@ public class BTreeTests
 
         Assert.IsTrue(allPresent);
         Assert.HasCount(300, entries);
+    }
+
+    // =====================================================
+    // Underflow Detection Tests
+    // =====================================================
+
+    [TestMethod]
+    public void GetMinKeys_Order5_Returns2()
+    {
+        int pageSize = 8192;
+        int order = 5;
+        BTreeNode node = new BTreeNode(pageSize, order, BTreeNodeType.Leaf);
+
+        int minKeys = node.GetMinKeys();
+
+        Assert.AreEqual(2, minKeys);
+    }
+
+    [TestMethod]
+    public void GetMinKeys_Order10_Returns4()
+    {
+        int pageSize = 8192;
+        int order = 10;
+        BTreeNode node = new BTreeNode(pageSize, order, BTreeNodeType.Leaf);
+
+        int minKeys = node.GetMinKeys();
+
+        Assert.AreEqual(4, minKeys);
+    }
+
+    [TestMethod]
+    public void GetMinKeys_Order3_Returns1()
+    {
+        int pageSize = 8192;
+        int order = 3;
+        BTreeNode node = new BTreeNode(pageSize, order, BTreeNodeType.Leaf);
+
+        int minKeys = node.GetMinKeys();
+
+        Assert.AreEqual(1, minKeys);
+    }
+
+    [TestMethod]
+    public void IsUnderflow_BelowMinimum_ReturnsTrue()
+    {
+        int pageSize = 8192;
+        int order = 5;
+        BTreeNode node = new BTreeNode(pageSize, order, BTreeNodeType.Leaf);
+        node.KeyCount = 1;
+
+        bool result = node.IsUnderflow();
+
+        Assert.IsTrue(result);
+    }
+
+    [TestMethod]
+    public void IsUnderflow_AtMinimum_ReturnsFalse()
+    {
+        int pageSize = 8192;
+        int order = 5;
+        BTreeNode node = new BTreeNode(pageSize, order, BTreeNodeType.Leaf);
+        node.KeyCount = 2;
+
+        bool result = node.IsUnderflow();
+
+        Assert.IsFalse(result);
+    }
+
+    [TestMethod]
+    public void IsUnderflow_AboveMinimum_ReturnsFalse()
+    {
+        int pageSize = 8192;
+        int order = 5;
+        BTreeNode node = new BTreeNode(pageSize, order, BTreeNodeType.Leaf);
+        node.KeyCount = 3;
+
+        bool result = node.IsUnderflow();
+
+        Assert.IsFalse(result);
+    }
+
+    [TestMethod]
+    public void CanLendKey_AboveMinimum_ReturnsTrue()
+    {
+        int pageSize = 8192;
+        int order = 5;
+        BTreeNode node = new BTreeNode(pageSize, order, BTreeNodeType.Leaf);
+        node.KeyCount = 3;
+
+        bool result = node.CanLendKey();
+
+        Assert.IsTrue(result);
+    }
+
+    [TestMethod]
+    public void CanLendKey_AtMinimum_ReturnsFalse()
+    {
+        int pageSize = 8192;
+        int order = 5;
+        BTreeNode node = new BTreeNode(pageSize, order, BTreeNodeType.Leaf);
+        node.KeyCount = 2;
+
+        bool result = node.CanLendKey();
+
+        Assert.IsFalse(result);
+    }
+
+    [TestMethod]
+    public void CanLendKey_BelowMinimum_ReturnsFalse()
+    {
+        int pageSize = 8192;
+        int order = 5;
+        BTreeNode node = new BTreeNode(pageSize, order, BTreeNodeType.Leaf);
+        node.KeyCount = 1;
+
+        bool result = node.CanLendKey();
+
+        Assert.IsFalse(result);
     }
 }
