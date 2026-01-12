@@ -16,12 +16,6 @@ public sealed class VersionGarbageCollector
 
     public GarbageCollectionResult Collect()
     {
-        // Early exit: if no documents have multiple versions, nothing to collect
-        if (_versionIndex.MultiVersionDocumentCount == 0)
-        {
-            return GarbageCollectionResult.Empty;
-        }
-
         TxId oldestSnapshot = _txManager.GetOldestActiveSnapshot();
 
         if (oldestSnapshot == TxId.MaxValue)
@@ -41,14 +35,11 @@ public sealed class VersionGarbageCollector
     {
         foreach (CollectableVersion collectable in collectableVersions)
         {
-            if (collectable.Previous != null)
-            {
-                _versionIndex.UnlinkVersion(
-                    collectable.CollectionName,
-                    collectable.DocumentId,
-                    collectable.Previous,
-                    collectable.ToRemove);
-            }
+            _versionIndex.UnlinkVersion(
+                collectable.CollectionName,
+                collectable.DocumentId,
+                collectable.Previous,
+                collectable.ToRemove);
         }
     }
 }

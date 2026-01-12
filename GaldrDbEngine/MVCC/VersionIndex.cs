@@ -197,17 +197,39 @@ public sealed class VersionIndex
     {
         lock (_lock)
         {
-            // Update the previous version's pointer to skip over the removed version
-            previous.SetPreviousVersion(toRemove.PreviousVersion);
-
-            // If the chain now has only one version (head with no previous), decrement counter
             if (_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
             {
-                if (collection.TryGetValue(documentId, out DocumentVersion head))
+                if (previous == null)
                 {
-                    if (head.PreviousVersion == null)
+                    // Removing the head version
+                    if (toRemove.PreviousVersion == null)
                     {
-                        _multiVersionDocumentCount--;
+                        // Last version in chain — remove document entry entirely
+                        collection.Remove(documentId);
+                    }
+                    else
+                    {
+                        // Promote next version to head
+                        collection[documentId] = toRemove.PreviousVersion;
+                        // Chain went from multi-version to still having versions, check if now single
+                        if (toRemove.PreviousVersion.PreviousVersion == null)
+                        {
+                            _multiVersionDocumentCount--;
+                        }
+                    }
+                }
+                else
+                {
+                    // Removing an interior version
+                    previous.SetPreviousVersion(toRemove.PreviousVersion);
+
+                    // If the chain now has only one version (head with no previous), decrement counter
+                    if (collection.TryGetValue(documentId, out DocumentVersion head))
+                    {
+                        if (head.PreviousVersion == null)
+                        {
+                            _multiVersionDocumentCount--;
+                        }
                     }
                 }
             }
@@ -227,9 +249,19 @@ public sealed class VersionIndex
                     int documentId = docKvp.Key;
                     DocumentVersion head = docKvp.Value;
 
-                    // Skip single-version chains - nothing to collect
+                    // Handle single-version chains - check if deleted and collectable
                     if (head.PreviousVersion == null)
                     {
+                        if (head.DeletedBy != TxId.MaxValue && head.DeletedBy <= oldestSnapshot)
+                        {
+                            CollectableVersion collectable = new CollectableVersion(
+                                collectionName,
+                                documentId,
+                                null,
+                                head,
+                                head.Location);
+                            results.Add(collectable);
+                        }
                         continue;
                     }
 

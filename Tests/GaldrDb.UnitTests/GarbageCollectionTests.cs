@@ -496,4 +496,124 @@ public class GarbageCollectionTests
             Assert.AreEqual("Updated", retrieved.Name);
         }
     }
+
+    [TestMethod]
+    public void Vacuum_SingleVersionDeletedDocument_CollectsTheVersion()
+    {
+        // Verifies that documents inserted and deleted without updates are collected
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true, AutoGarbageCollection = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            Person person = new Person { Name = "SingleVersion", Age = 25, Email = "single@example.com" };
+            int id = db.Insert(person);
+            db.Delete<Person>(id);
+
+            GarbageCollectionResult result = db.Vacuum();
+
+            Assert.IsGreaterThan(0, result.VersionsCollected,
+                "Single-version deleted document should be collected");
+        }
+    }
+
+    [TestMethod]
+    public void Vacuum_MultiVersionDeletedDocument_AllVersionsCollected()
+    {
+        // Test that multi-version deleted documents have ALL versions collected in one pass
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true, AutoGarbageCollection = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            // Insert a document
+            Person person = new Person { Name = "Version1", Age = 25, Email = "v1@example.com" };
+            int id = db.Insert(person);
+
+            // Update to create a second version
+            person.Id = id;
+            person.Name = "Version2";
+            db.Update(person);
+
+            // Delete the document (marks head as deleted)
+            db.Delete<Person>(id);
+
+            // First vacuum - should collect ALL versions (both head and interior)
+            GarbageCollectionResult result1 = db.Vacuum();
+            Assert.IsGreaterThan(0, result1.VersionsCollected, "First vacuum should collect versions");
+
+            // Both versions should be collected (insert version + update version)
+            Assert.IsGreaterThanOrEqualTo(2, result1.VersionsCollected,
+                "Should collect both the original and updated versions");
+
+            // Second vacuum should have nothing left to collect
+            GarbageCollectionResult result2 = db.Vacuum();
+            Assert.AreEqual(0, result2.VersionsCollected,
+                "Second vacuum should find nothing to collect - all versions already collected");
+        }
+    }
+
+    [TestMethod]
+    public void Vacuum_DeletedDocuments_FullyRemovedFromIndex()
+    {
+        // Verifies that multiple deleted single-version documents are all collected
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true, AutoGarbageCollection = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            for (int i = 0; i < 10; i++)
+            {
+                Person person = new Person { Name = $"Person{i}", Age = 20 + i, Email = $"p{i}@example.com" };
+                int id = db.Insert(person);
+                db.Delete<Person>(id);
+            }
+
+            GarbageCollectionResult result = db.Vacuum();
+
+            Assert.IsGreaterThan(0, result.VersionsCollected,
+                "Deleted single-version documents should be collected");
+        }
+    }
+
+    [TestMethod]
+    public void Vacuum_RepeatedVacuumEventuallyCollectsNothing()
+    {
+        // After proper GC, repeated vacuum calls should eventually collect nothing
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true, AutoGarbageCollection = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            // Create some multi-version deleted documents
+            for (int i = 0; i < 5; i++)
+            {
+                Person person = new Person { Name = $"Multi{i}_V1", Age = 30 + i, Email = $"m{i}@example.com" };
+                int id = db.Insert(person);
+                person.Id = id;
+                person.Name = $"Multi{i}_V2";
+                db.Update(person);
+                db.Delete<Person>(id);
+            }
+
+            // Run vacuum until nothing more to collect (max 10 rounds)
+            int rounds = 0;
+            int totalCollected = 0;
+            for (rounds = 1; rounds <= 10; rounds++)
+            {
+                GarbageCollectionResult result = db.Vacuum();
+                totalCollected += result.VersionsCollected;
+                if (result.VersionsCollected == 0)
+                {
+                    break;
+                }
+            }
+
+            // First round collects all, second round confirms nothing left
+            Assert.AreEqual(2, rounds,
+                "Should take exactly 2 rounds: one to collect all, one to confirm empty");
+            Assert.IsGreaterThan(0, totalCollected,
+                "Should have collected some versions");
+        }
+    }
 }
