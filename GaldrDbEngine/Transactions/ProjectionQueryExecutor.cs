@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using GaldrDbEngine.MVCC;
 using GaldrDbEngine.Query;
+using GaldrDbEngine.Storage;
 using GaldrJson;
 
 namespace GaldrDbEngine.Transactions;
@@ -46,22 +47,19 @@ public sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         string collectionName = _projTypeInfo.CollectionName;
         (List<IFieldFilter> sourceFilters, List<IFieldFilter> projectionFilters) = SeparateFilters(query.Filters);
 
-        List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
+        CollectionEntry collection = _db.GetCollection(collectionName);
+        QueryPlan plan = CreateQueryPlan(collection, sourceFilters);
 
-        List<object> sourceDocuments = new List<object>();
-        HashSet<int> snapshotDocIds = new HashSet<int>();
+        List<object> sourceDocuments;
+        HashSet<int> snapshotDocIds;
 
-        foreach (DocumentVersion version in visibleVersions)
+        if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
         {
-            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
-            string json = Encoding.UTF8.GetString(jsonBytes);
-            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
-
-            if (PassesFilters(sourceDoc, sourceFilters))
-            {
-                sourceDocuments.Add(sourceDoc);
-                snapshotDocIds.Add(_projTypeInfo.GetSourceId(sourceDoc));
-            }
+            (sourceDocuments, snapshotDocIds) = ExecutePrimaryKeyRangeScan(collectionName, plan, sourceFilters);
+        }
+        else
+        {
+            (sourceDocuments, snapshotDocIds) = ExecuteFullScan(collectionName, sourceFilters);
         }
 
         List<object> merged = ApplyWriteSetOverlay(sourceDocuments, snapshotDocIds, sourceFilters);
@@ -85,22 +83,19 @@ public sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         string collectionName = _projTypeInfo.CollectionName;
         (List<IFieldFilter> sourceFilters, List<IFieldFilter> projectionFilters) = SeparateFilters(query.Filters);
 
-        List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
+        CollectionEntry collection = _db.GetCollection(collectionName);
+        QueryPlan plan = CreateQueryPlan(collection, sourceFilters);
 
-        List<object> sourceDocuments = new List<object>();
-        HashSet<int> snapshotDocIds = new HashSet<int>();
+        List<object> sourceDocuments;
+        HashSet<int> snapshotDocIds;
 
-        foreach (DocumentVersion version in visibleVersions)
+        if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
         {
-            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
-            string json = Encoding.UTF8.GetString(jsonBytes);
-            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
-
-            if (PassesFilters(sourceDoc, sourceFilters))
-            {
-                sourceDocuments.Add(sourceDoc);
-                snapshotDocIds.Add(_projTypeInfo.GetSourceId(sourceDoc));
-            }
+            (sourceDocuments, snapshotDocIds) = await ExecutePrimaryKeyRangeScanAsync(collectionName, plan, sourceFilters, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            (sourceDocuments, snapshotDocIds) = await ExecuteFullScanAsync(collectionName, sourceFilters, cancellationToken).ConfigureAwait(false);
         }
 
         List<object> merged = ApplyWriteSetOverlay(sourceDocuments, snapshotDocIds, sourceFilters);
@@ -117,6 +112,165 @@ public sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
     public async Task<int> ExecuteCountAsync(QueryBuilder<T> query, CancellationToken cancellationToken = default)
     {
         return (await ExecuteQueryAsync(query, cancellationToken).ConfigureAwait(false)).Count;
+    }
+
+    public QueryExplanation GetQueryExplanation(IReadOnlyList<IFieldFilter> filters)
+    {
+        string collectionName = _projTypeInfo.CollectionName;
+        (List<IFieldFilter> sourceFilters, List<IFieldFilter> projectionFilters) = SeparateFilters(filters);
+
+        CollectionEntry collection = _db.GetCollection(collectionName);
+        QueryPlan plan = CreateQueryPlan(collection, sourceFilters);
+
+        return QueryExplanation.FromPlan(plan, filters.Count);
+    }
+
+    private QueryPlan CreateQueryPlan(CollectionEntry collection, List<IFieldFilter> filters)
+    {
+        QueryPlan plan;
+
+        if (collection != null)
+        {
+            QueryPlanner planner = new QueryPlanner(collection);
+            plan = planner.CreatePlan(filters);
+        }
+        else
+        {
+            plan = QueryPlan.FullScan();
+        }
+
+        return plan;
+    }
+
+    private (List<object> Results, HashSet<int> DocIds) ExecutePrimaryKeyRangeScan(string collectionName, QueryPlan plan, List<IFieldFilter> filters)
+    {
+        List<object> results = new List<object>();
+        HashSet<int> docIds = new HashSet<int>();
+
+        int startId = plan.StartDocId ?? int.MinValue;
+        int endId = plan.EndDocId ?? int.MaxValue;
+
+        List<int> rangeDocIds = _db.SearchDocIdRange(collectionName, startId, endId, plan.IncludeStart, plan.IncludeEnd);
+        List<DocIdVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
+
+        List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+
+        foreach (DocIdVersion docVersion in visibleVersions)
+        {
+            byte[] jsonBytes = _db.ReadDocumentByLocation(docVersion.Version.Location);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, remainingFilters))
+            {
+                results.Add(sourceDoc);
+                docIds.Add(docVersion.DocId);
+            }
+        }
+
+        return (results, docIds);
+    }
+
+    private async Task<(List<object> Results, HashSet<int> DocIds)> ExecutePrimaryKeyRangeScanAsync(string collectionName, QueryPlan plan, List<IFieldFilter> filters, CancellationToken cancellationToken)
+    {
+        List<object> results = new List<object>();
+        HashSet<int> docIds = new HashSet<int>();
+
+        int startId = plan.StartDocId ?? int.MinValue;
+        int endId = plan.EndDocId ?? int.MaxValue;
+
+        List<int> rangeDocIds = await _db.SearchDocIdRangeAsync(collectionName, startId, endId, plan.IncludeStart, plan.IncludeEnd, cancellationToken).ConfigureAwait(false);
+        List<DocIdVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
+
+        List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+
+        foreach (DocIdVersion docVersion in visibleVersions)
+        {
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(docVersion.Version.Location, cancellationToken).ConfigureAwait(false);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, remainingFilters))
+            {
+                results.Add(sourceDoc);
+                docIds.Add(docVersion.DocId);
+            }
+        }
+
+        return (results, docIds);
+    }
+
+    private (List<object> Results, HashSet<int> DocIds) ExecuteFullScan(string collectionName, List<IFieldFilter> filters)
+    {
+        List<object> results = new List<object>();
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, filters))
+            {
+                results.Add(sourceDoc);
+                docIds.Add(_projTypeInfo.GetSourceId(sourceDoc));
+            }
+        }
+
+        return (results, docIds);
+    }
+
+    private async Task<(List<object> Results, HashSet<int> DocIds)> ExecuteFullScanAsync(string collectionName, List<IFieldFilter> filters, CancellationToken cancellationToken)
+    {
+        List<object> results = new List<object>();
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, filters))
+            {
+                results.Add(sourceDoc);
+                docIds.Add(_projTypeInfo.GetSourceId(sourceDoc));
+            }
+        }
+
+        return (results, docIds);
+    }
+
+    private List<IFieldFilter> GetRemainingFilters(List<IFieldFilter> filters, int? usedFilterIndex)
+    {
+        List<IFieldFilter> result;
+
+        if (!usedFilterIndex.HasValue)
+        {
+            result = filters;
+        }
+        else if (filters.Count <= 1)
+        {
+            result = new List<IFieldFilter>();
+        }
+        else
+        {
+            result = new List<IFieldFilter>(filters.Count - 1);
+            for (int i = 0; i < filters.Count; i++)
+            {
+                if (i != usedFilterIndex.Value)
+                {
+                    result.Add(filters[i]);
+                }
+            }
+        }
+
+        return result;
     }
 
     private List<object> ApplyWriteSetOverlay(List<object> snapshotResults, HashSet<int> snapshotDocIds, List<IFieldFilter> filters)
@@ -215,7 +369,6 @@ public sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
             }
             else
             {
-                // If DocumentType matches neither, assume it's a source filter
                 sourceFilters.Add(filter);
             }
         }
@@ -241,91 +394,102 @@ public sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
 
     private List<T> ApplyProjectionFilters(List<T> projections, List<IFieldFilter> filters)
     {
+        List<T> result;
+
         if (filters.Count == 0)
         {
-            return projections;
+            result = projections;
         }
-
-        List<T> filtered = new List<T>();
-
-        foreach (T projection in projections)
+        else
         {
-            bool passes = true;
-            foreach (IFieldFilter filter in filters)
+            result = new List<T>();
+
+            foreach (T projection in projections)
             {
-                if (!filter.Evaluate(projection))
+                bool passes = true;
+                foreach (IFieldFilter filter in filters)
                 {
-                    passes = false;
-                    break;
+                    if (!filter.Evaluate(projection))
+                    {
+                        passes = false;
+                        break;
+                    }
+                }
+
+                if (passes)
+                {
+                    result.Add(projection);
                 }
             }
-
-            if (passes)
-            {
-                filtered.Add(projection);
-            }
         }
 
-        return filtered;
+        return result;
     }
 
     private List<T> ApplyOrdering(List<T> documents, IReadOnlyList<OrderByClause<T>> orderByClauses)
     {
+        List<T> result;
+
         if (orderByClauses.Count == 0)
         {
-            return documents;
+            result = documents;
+        }
+        else
+        {
+            result = new List<T>(documents);
+            result.Sort((a, b) =>
+            {
+                int cmp = 0;
+
+                foreach (OrderByClause<T> clause in orderByClauses)
+                {
+                    cmp = clause.Comparer(a, b);
+                    if (cmp != 0)
+                    {
+                        break;
+                    }
+                }
+
+                return cmp;
+            });
         }
 
-        List<T> sorted = new List<T>(documents);
-        sorted.Sort((a, b) =>
-        {
-            int result = 0;
-
-            foreach (OrderByClause<T> clause in orderByClauses)
-            {
-                result = clause.Comparer(a, b);
-                if (result != 0)
-                {
-                    break;
-                }
-            }
-
-            return result;
-        });
-
-        return sorted;
+        return result;
     }
 
     private List<T> ApplySkipAndLimit(List<T> documents, int? skip, int? limit)
     {
         int skipCount = skip ?? 0;
         int startIndex = skipCount;
+        List<T> results;
 
         if (startIndex >= documents.Count)
         {
-            return new List<T>();
-        }
-
-        int takeCount;
-        if (limit.HasValue)
-        {
-            takeCount = limit.Value;
+            results = new List<T>();
         }
         else
         {
-            takeCount = documents.Count - startIndex;
-        }
+            int takeCount;
+            if (limit.HasValue)
+            {
+                takeCount = limit.Value;
+            }
+            else
+            {
+                takeCount = documents.Count - startIndex;
+            }
 
-        int endIndex = startIndex + takeCount;
-        if (endIndex > documents.Count)
-        {
-            endIndex = documents.Count;
-        }
+            int endIndex = startIndex + takeCount;
+            if (endIndex > documents.Count)
+            {
+                endIndex = documents.Count;
+            }
 
-        List<T> results = new List<T>();
-        for (int i = startIndex; i < endIndex; i++)
-        {
-            results.Add(documents[i]);
+            results = new List<T>();
+            for (int i = startIndex; i < endIndex; i++)
+            {
+                results.Add(documents[i]);
+            }
         }
 
         return results;

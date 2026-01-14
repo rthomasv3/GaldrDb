@@ -148,6 +148,11 @@ public sealed class QueryBuilder<T>
         return _executor.ExecuteCount(this);
     }
 
+    public QueryExplanation Explain()
+    {
+        return _executor.GetQueryExplanation(_filters);
+    }
+
     public Task<List<T>> ToListAsync(CancellationToken cancellationToken = default)
     {
         return _executor.ExecuteQueryAsync(this, cancellationToken);

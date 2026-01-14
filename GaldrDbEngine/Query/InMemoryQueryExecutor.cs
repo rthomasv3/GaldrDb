@@ -85,4 +85,10 @@ public sealed class InMemoryQueryExecutor<T> : IQueryExecutor<T>
     {
         return Task.FromResult(ExecuteCount(query));
     }
+
+    public QueryExplanation GetQueryExplanation(IReadOnlyList<IFieldFilter> filters)
+    {
+        QueryPlan plan = QueryPlan.FullScan();
+        return QueryExplanation.FromPlan(plan, filters.Count);
+    }
 }

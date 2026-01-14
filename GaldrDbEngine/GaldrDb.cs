@@ -1023,6 +1023,46 @@ public class GaldrDb : IDisposable
         return _documentStorage.ReadDocument(location.PageId, location.SlotIndex);
     }
 
+    internal List<int> SearchDocIdRange(string collectionName, int startDocId, int endDocId, bool includeStart, bool includeEnd)
+    {
+        List<int> result = new List<int>();
+
+        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+        if (collection != null)
+        {
+            int order = CalculateBTreeOrder(_options.PageSize);
+            BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
+            List<BTreeEntry> entries = btree.SearchRange(startDocId, endDocId, includeStart, includeEnd);
+
+            foreach (BTreeEntry entry in entries)
+            {
+                result.Add(entry.Key);
+            }
+        }
+
+        return result;
+    }
+
+    internal async Task<List<int>> SearchDocIdRangeAsync(string collectionName, int startDocId, int endDocId, bool includeStart, bool includeEnd, CancellationToken cancellationToken = default)
+    {
+        List<int> result = new List<int>();
+
+        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+        if (collection != null)
+        {
+            int order = CalculateBTreeOrder(_options.PageSize);
+            BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
+            List<BTreeEntry> entries = await btree.SearchRangeAsync(startDocId, endDocId, includeStart, includeEnd, cancellationToken).ConfigureAwait(false);
+
+            foreach (BTreeEntry entry in entries)
+            {
+                result.Add(entry.Key);
+            }
+        }
+
+        return result;
+    }
+
     internal void CommitDelete(string collectionName, int docId, IReadOnlyList<IndexFieldEntry> oldIndexFields)
     {
         CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);

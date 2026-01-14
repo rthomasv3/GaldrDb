@@ -63,4 +63,9 @@ internal sealed class AutoDisposingQueryExecutor<T> : IQueryExecutor<T>
             _resource.Dispose();
         }
     }
+
+    public QueryExplanation GetQueryExplanation(IReadOnlyList<IFieldFilter> filters)
+    {
+        return _innerExecutor.GetQueryExplanation(filters);
+    }
 }

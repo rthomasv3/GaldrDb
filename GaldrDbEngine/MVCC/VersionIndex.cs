@@ -193,6 +193,36 @@ public sealed class VersionIndex
         return results;
     }
 
+    public List<DocIdVersion> GetVisibleVersionsForDocIds(string collectionName, IEnumerable<int> docIds, TxId snapshotTxId)
+    {
+        List<DocIdVersion> results = new List<DocIdVersion>();
+
+        lock (_lock)
+        {
+            if (_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
+            {
+                foreach (int docId in docIds)
+                {
+                    if (collection.TryGetValue(docId, out DocumentVersion currentVersion))
+                    {
+                        while (currentVersion != null)
+                        {
+                            if (currentVersion.IsVisibleTo(snapshotTxId))
+                            {
+                                results.Add(new DocIdVersion(docId, currentVersion));
+                                break;
+                            }
+
+                            currentVersion = currentVersion.PreviousVersion;
+                        }
+                    }
+                }
+            }
+        }
+
+        return results;
+    }
+
     public void UnlinkVersion(string collectionName, int documentId, DocumentVersion previous, DocumentVersion toRemove)
     {
         lock (_lock)

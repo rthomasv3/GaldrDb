@@ -74,6 +74,97 @@ public class BTree
         return SearchNode(_rootPageId, docId);
     }
 
+    public List<BTreeEntry> SearchRange(int startDocId, int endDocId, bool includeStart, bool includeEnd)
+    {
+        List<BTreeEntry> results = new List<BTreeEntry>();
+
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+        try
+        {
+            int leafPageId = FindLeafForKey(_rootPageId, startDocId, buffer, node);
+            int currentPageId = leafPageId;
+            bool continueScanning = currentPageId != 0;
+
+            while (continueScanning)
+            {
+                _pageIO.ReadPage(currentPageId, buffer);
+                BTreeNode.DeserializeTo(buffer, node, _order);
+
+                bool exceededEnd = ScanLeafForRange(node, startDocId, endDocId, includeStart, includeEnd, results);
+
+                if (exceededEnd || node.NextLeaf == 0)
+                {
+                    continueScanning = false;
+                }
+                else
+                {
+                    currentPageId = node.NextLeaf;
+                }
+            }
+        }
+        finally
+        {
+            BufferPool.Return(buffer);
+            BTreeNodePool.Return(node);
+        }
+
+        return results;
+    }
+
+    private int FindLeafForKey(int pageId, int targetKey, byte[] buffer, BTreeNode node)
+    {
+        int currentPageId = pageId;
+
+        while (currentPageId != 0)
+        {
+            _pageIO.ReadPage(currentPageId, buffer);
+            BTreeNode.DeserializeTo(buffer, node, _order);
+
+            if (node.NodeType == BTreeNodeType.Leaf)
+            {
+                break;
+            }
+
+            int i = 0;
+            while (i < node.KeyCount && targetKey > node.Keys[i])
+            {
+                i++;
+            }
+
+            currentPageId = node.ChildPageIds[i];
+        }
+
+        return currentPageId;
+    }
+
+    private bool ScanLeafForRange(BTreeNode leaf, int startDocId, int endDocId, bool includeStart, bool includeEnd, List<BTreeEntry> results)
+    {
+        bool exceededEnd = false;
+
+        for (int i = 0; i < leaf.KeyCount && !exceededEnd; i++)
+        {
+            int key = leaf.Keys[i];
+
+            if (key > endDocId || (key == endDocId && !includeEnd))
+            {
+                exceededEnd = true;
+            }
+            else
+            {
+                bool afterStart = key > startDocId || (key == startDocId && includeStart);
+                bool beforeEnd = key < endDocId || (key == endDocId && includeEnd);
+
+                if (afterStart && beforeEnd)
+                {
+                    results.Add(new BTreeEntry(key, leaf.LeafValues[i]));
+                }
+            }
+        }
+
+        return exceededEnd;
+    }
+
     public bool Delete(int docId)
     {
         return DeleteFromNode(_rootPageId, docId);
@@ -719,6 +810,70 @@ public class BTree
     public async Task<DocumentLocation?> SearchAsync(int docId, CancellationToken cancellationToken = default)
     {
         return await SearchNodeAsync(_rootPageId, docId, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<List<BTreeEntry>> SearchRangeAsync(int startDocId, int endDocId, bool includeStart, bool includeEnd, CancellationToken cancellationToken = default)
+    {
+        List<BTreeEntry> results = new List<BTreeEntry>();
+
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+        try
+        {
+            int leafPageId = await FindLeafForKeyAsync(_rootPageId, startDocId, buffer, node, cancellationToken).ConfigureAwait(false);
+            int currentPageId = leafPageId;
+            bool continueScanning = currentPageId != 0;
+
+            while (continueScanning)
+            {
+                await _pageIO.ReadPageAsync(currentPageId, buffer, cancellationToken).ConfigureAwait(false);
+                BTreeNode.DeserializeTo(buffer, node, _order);
+
+                bool exceededEnd = ScanLeafForRange(node, startDocId, endDocId, includeStart, includeEnd, results);
+
+                if (exceededEnd || node.NextLeaf == 0)
+                {
+                    continueScanning = false;
+                }
+                else
+                {
+                    currentPageId = node.NextLeaf;
+                }
+            }
+        }
+        finally
+        {
+            BufferPool.Return(buffer);
+            BTreeNodePool.Return(node);
+        }
+
+        return results;
+    }
+
+    private async Task<int> FindLeafForKeyAsync(int pageId, int targetKey, byte[] buffer, BTreeNode node, CancellationToken cancellationToken)
+    {
+        int currentPageId = pageId;
+
+        while (currentPageId != 0)
+        {
+            await _pageIO.ReadPageAsync(currentPageId, buffer, cancellationToken).ConfigureAwait(false);
+            BTreeNode.DeserializeTo(buffer, node, _order);
+
+            if (node.NodeType == BTreeNodeType.Leaf)
+            {
+                break;
+            }
+
+            int i = 0;
+            while (i < node.KeyCount && targetKey > node.Keys[i])
+            {
+                i++;
+            }
+
+            currentPageId = node.ChildPageIds[i];
+        }
+
+        return currentPageId;
     }
 
     public async Task InsertAsync(int docId, DocumentLocation location, CancellationToken cancellationToken = default)

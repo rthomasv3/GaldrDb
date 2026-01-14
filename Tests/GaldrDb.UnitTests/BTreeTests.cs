@@ -1651,4 +1651,687 @@ public class BTreeTests
 
         Assert.IsFalse(result);
     }
+
+    // =====================================================
+    // SearchRange Tests
+    // =====================================================
+
+    [TestMethod]
+    public void SearchRange_EmptyTree_ReturnsEmpty()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 10;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        List<BTreeEntry> results = btree.SearchRange(1, 10, true, true);
+
+        pageIO.Dispose();
+
+        Assert.IsEmpty(results);
+    }
+
+    [TestMethod]
+    public void SearchRange_SingleItem_InRange_ReturnsItem()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 10;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        btree.Insert(5, new DocumentLocation(105, 0));
+
+        List<BTreeEntry> results = btree.SearchRange(1, 10, true, true);
+
+        pageIO.Dispose();
+
+        Assert.HasCount(1, results);
+        Assert.AreEqual(5, results[0].Key);
+        Assert.AreEqual(105, results[0].Location.PageId);
+    }
+
+    [TestMethod]
+    public void SearchRange_SingleItem_OutOfRange_ReturnsEmpty()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 10;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        btree.Insert(50, new DocumentLocation(150, 0));
+
+        List<BTreeEntry> results = btree.SearchRange(1, 10, true, true);
+
+        pageIO.Dispose();
+
+        Assert.IsEmpty(results);
+    }
+
+    [TestMethod]
+    public void SearchRange_MultipleItems_ReturnsOnlyInRange()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 10;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 20; i++)
+        {
+            btree.Insert(i, new DocumentLocation(100 + i, 0));
+        }
+
+        List<BTreeEntry> results = btree.SearchRange(5, 15, true, true);
+
+        pageIO.Dispose();
+
+        Assert.HasCount(11, results);
+
+        bool allInRange = true;
+        foreach (BTreeEntry entry in results)
+        {
+            if (entry.Key < 5 || entry.Key > 15)
+            {
+                allInRange = false;
+                break;
+            }
+        }
+
+        Assert.IsTrue(allInRange);
+    }
+
+    [TestMethod]
+    public void SearchRange_IncludeStartFalse_ExcludesStartKey()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 10;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 10; i++)
+        {
+            btree.Insert(i, new DocumentLocation(100 + i, 0));
+        }
+
+        List<BTreeEntry> results = btree.SearchRange(5, 10, false, true);
+
+        pageIO.Dispose();
+
+        Assert.HasCount(5, results);
+
+        bool hasKey5 = false;
+        foreach (BTreeEntry entry in results)
+        {
+            if (entry.Key == 5)
+            {
+                hasKey5 = true;
+                break;
+            }
+        }
+
+        Assert.IsFalse(hasKey5);
+    }
+
+    [TestMethod]
+    public void SearchRange_IncludeEndFalse_ExcludesEndKey()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 10;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 10; i++)
+        {
+            btree.Insert(i, new DocumentLocation(100 + i, 0));
+        }
+
+        List<BTreeEntry> results = btree.SearchRange(1, 5, true, false);
+
+        pageIO.Dispose();
+
+        Assert.HasCount(4, results);
+
+        bool hasKey5 = false;
+        foreach (BTreeEntry entry in results)
+        {
+            if (entry.Key == 5)
+            {
+                hasKey5 = true;
+                break;
+            }
+        }
+
+        Assert.IsFalse(hasKey5);
+    }
+
+    [TestMethod]
+    public void SearchRange_BothExclusive_ExcludesBothEnds()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 10;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 10; i++)
+        {
+            btree.Insert(i, new DocumentLocation(100 + i, 0));
+        }
+
+        List<BTreeEntry> results = btree.SearchRange(3, 7, false, false);
+
+        pageIO.Dispose();
+
+        Assert.HasCount(3, results);
+
+        bool hasKey3 = false;
+        bool hasKey7 = false;
+        foreach (BTreeEntry entry in results)
+        {
+            if (entry.Key == 3) hasKey3 = true;
+            if (entry.Key == 7) hasKey7 = true;
+        }
+
+        Assert.IsFalse(hasKey3);
+        Assert.IsFalse(hasKey7);
+    }
+
+    [TestMethod]
+    public void SearchRange_MultiLevelTree_ReturnsCorrectRange()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 5;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 100; i++)
+        {
+            btree.Insert(i, new DocumentLocation(100 + i, 0));
+        }
+
+        List<BTreeEntry> results = btree.SearchRange(25, 75, true, true);
+
+        pageIO.Dispose();
+
+        Assert.HasCount(51, results);
+
+        bool allInRange = true;
+        foreach (BTreeEntry entry in results)
+        {
+            if (entry.Key < 25 || entry.Key > 75)
+            {
+                allInRange = false;
+                break;
+            }
+        }
+
+        Assert.IsTrue(allInRange);
+    }
+
+    [TestMethod]
+    public void SearchRange_RangeAtStart_ReturnsCorrectItems()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 5;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 50; i++)
+        {
+            btree.Insert(i, new DocumentLocation(100 + i, 0));
+        }
+
+        List<BTreeEntry> results = btree.SearchRange(1, 10, true, true);
+
+        pageIO.Dispose();
+
+        Assert.HasCount(10, results);
+    }
+
+    [TestMethod]
+    public void SearchRange_RangeAtEnd_ReturnsCorrectItems()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 5;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 50; i++)
+        {
+            btree.Insert(i, new DocumentLocation(100 + i, 0));
+        }
+
+        List<BTreeEntry> results = btree.SearchRange(41, 50, true, true);
+
+        pageIO.Dispose();
+
+        Assert.HasCount(10, results);
+    }
+
+    [TestMethod]
+    public void SearchRange_RangeBeyondData_ReturnsEmpty()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 5;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 50; i++)
+        {
+            btree.Insert(i, new DocumentLocation(100 + i, 0));
+        }
+
+        List<BTreeEntry> results = btree.SearchRange(100, 200, true, true);
+
+        pageIO.Dispose();
+
+        Assert.IsEmpty(results);
+    }
+
+    [TestMethod]
+    public void SearchRange_RangeBeforeData_ReturnsEmpty()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 5;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = 100; i <= 150; i++)
+        {
+            btree.Insert(i, new DocumentLocation(i, 0));
+        }
+
+        List<BTreeEntry> results = btree.SearchRange(1, 50, true, true);
+
+        pageIO.Dispose();
+
+        Assert.IsEmpty(results);
+    }
+
+    [TestMethod]
+    public void SearchRange_SingleKeyRange_ReturnsOneItem()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 10;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 20; i++)
+        {
+            btree.Insert(i, new DocumentLocation(100 + i, 0));
+        }
+
+        List<BTreeEntry> results = btree.SearchRange(10, 10, true, true);
+
+        pageIO.Dispose();
+
+        Assert.HasCount(1, results);
+        Assert.AreEqual(10, results[0].Key);
+    }
+
+    [TestMethod]
+    public void SearchRange_SingleKeyRange_BothExclusive_ReturnsEmpty()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 10;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 20; i++)
+        {
+            btree.Insert(i, new DocumentLocation(100 + i, 0));
+        }
+
+        List<BTreeEntry> results = btree.SearchRange(10, 10, false, false);
+
+        pageIO.Dispose();
+
+        Assert.IsEmpty(results);
+    }
+
+    [TestMethod]
+    public void SearchRange_LargeTree_SmallRange_Efficient()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 5;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 1000; i++)
+        {
+            btree.Insert(i, new DocumentLocation(i, 0));
+        }
+
+        List<BTreeEntry> results = btree.SearchRange(500, 510, true, true);
+
+        pageIO.Dispose();
+
+        Assert.HasCount(11, results);
+
+        bool allInRange = true;
+        foreach (BTreeEntry entry in results)
+        {
+            if (entry.Key < 500 || entry.Key > 510)
+            {
+                allInRange = false;
+                break;
+            }
+        }
+
+        Assert.IsTrue(allInRange);
+    }
+
+    [TestMethod]
+    public void SearchRange_NegativeKeys_WorksCorrectly()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 5;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = -50; i <= 50; i++)
+        {
+            btree.Insert(i, new DocumentLocation(i + 1000, 0));
+        }
+
+        List<BTreeEntry> results = btree.SearchRange(-20, 20, true, true);
+
+        pageIO.Dispose();
+
+        Assert.HasCount(41, results);
+
+        bool allInRange = true;
+        foreach (BTreeEntry entry in results)
+        {
+            if (entry.Key < -20 || entry.Key > 20)
+            {
+                allInRange = false;
+                break;
+            }
+        }
+
+        Assert.IsTrue(allInRange);
+    }
+
+    [TestMethod]
+    public void SearchRange_AfterDeletes_ReturnsCorrectRange()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 5;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 30; i++)
+        {
+            btree.Insert(i, new DocumentLocation(100 + i, 0));
+        }
+
+        btree.Delete(10);
+        btree.Delete(15);
+        btree.Delete(20);
+
+        List<BTreeEntry> results = btree.SearchRange(8, 22, true, true);
+
+        pageIO.Dispose();
+
+        Assert.HasCount(12, results);
+
+        bool hasDeleted = false;
+        foreach (BTreeEntry entry in results)
+        {
+            if (entry.Key == 10 || entry.Key == 15 || entry.Key == 20)
+            {
+                hasDeleted = true;
+                break;
+            }
+        }
+
+        Assert.IsFalse(hasDeleted);
+    }
+
+    // =====================================================
+    // SearchRangeAsync Tests
+    // =====================================================
+
+    [TestMethod]
+    public async Task SearchRangeAsync_EmptyTree_ReturnsEmpty()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 10;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        List<BTreeEntry> results = await btree.SearchRangeAsync(1, 10, true, true);
+
+        pageIO.Dispose();
+
+        Assert.IsEmpty(results);
+    }
+
+    [TestMethod]
+    public async Task SearchRangeAsync_MultipleItems_ReturnsOnlyInRange()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 10;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 20; i++)
+        {
+            await btree.InsertAsync(i, new DocumentLocation(100 + i, 0));
+        }
+
+        List<BTreeEntry> results = await btree.SearchRangeAsync(5, 15, true, true);
+
+        pageIO.Dispose();
+
+        Assert.HasCount(11, results);
+
+        bool allInRange = true;
+        foreach (BTreeEntry entry in results)
+        {
+            if (entry.Key < 5 || entry.Key > 15)
+            {
+                allInRange = false;
+                break;
+            }
+        }
+
+        Assert.IsTrue(allInRange);
+    }
+
+    [TestMethod]
+    public async Task SearchRangeAsync_MultiLevelTree_ReturnsCorrectRange()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 5;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 100; i++)
+        {
+            await btree.InsertAsync(i, new DocumentLocation(100 + i, 0));
+        }
+
+        List<BTreeEntry> results = await btree.SearchRangeAsync(25, 75, true, true);
+
+        pageIO.Dispose();
+
+        Assert.HasCount(51, results);
+
+        bool allInRange = true;
+        foreach (BTreeEntry entry in results)
+        {
+            if (entry.Key < 25 || entry.Key > 75)
+            {
+                allInRange = false;
+                break;
+            }
+        }
+
+        Assert.IsTrue(allInRange);
+    }
+
+    [TestMethod]
+    public async Task SearchRangeAsync_IncludeStartFalse_ExcludesStartKey()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 10;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 10; i++)
+        {
+            await btree.InsertAsync(i, new DocumentLocation(100 + i, 0));
+        }
+
+        List<BTreeEntry> results = await btree.SearchRangeAsync(5, 10, false, true);
+
+        pageIO.Dispose();
+
+        Assert.HasCount(5, results);
+
+        bool hasKey5 = false;
+        foreach (BTreeEntry entry in results)
+        {
+            if (entry.Key == 5)
+            {
+                hasKey5 = true;
+                break;
+            }
+        }
+
+        Assert.IsFalse(hasKey5);
+    }
+
+    [TestMethod]
+    public async Task SearchRangeAsync_IncludeEndFalse_ExcludesEndKey()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 10;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 10; i++)
+        {
+            await btree.InsertAsync(i, new DocumentLocation(100 + i, 0));
+        }
+
+        List<BTreeEntry> results = await btree.SearchRangeAsync(1, 5, true, false);
+
+        pageIO.Dispose();
+
+        Assert.HasCount(4, results);
+
+        bool hasKey5 = false;
+        foreach (BTreeEntry entry in results)
+        {
+            if (entry.Key == 5)
+            {
+                hasKey5 = true;
+                break;
+            }
+        }
+
+        Assert.IsFalse(hasKey5);
+    }
+
+    [TestMethod]
+    public async Task SearchRangeAsync_LargeTree_SmallRange()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        int pageSize = 8192;
+        int order = 5;
+        IPageIO pageIO = null;
+        PageManager pageManager = null;
+
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 500; i++)
+        {
+            await btree.InsertAsync(i, new DocumentLocation(i, 0));
+        }
+
+        List<BTreeEntry> results = await btree.SearchRangeAsync(200, 250, true, true);
+
+        pageIO.Dispose();
+
+        Assert.HasCount(51, results);
+
+        bool allInRange = true;
+        foreach (BTreeEntry entry in results)
+        {
+            if (entry.Key < 200 || entry.Key > 250)
+            {
+                allInRange = false;
+                break;
+            }
+        }
+
+        Assert.IsTrue(allInRange);
+    }
 }
