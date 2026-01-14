@@ -64,18 +64,34 @@ public class Transaction : IDisposable
 
     public QueryBuilder<T> Query<T>()
     {
-        GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
-
         EnsureActive();
 
-        TransactionQueryExecutor<T> executor = new TransactionQueryExecutor<T>(
-            this,
-            _db,
-            _versionIndex,
-            SnapshotTxId,
-            typeInfo,
-            _jsonSerializer,
-            _jsonOptions);
+        IGaldrTypeInfo typeInfo = GaldrTypeRegistry.Get(typeof(T));
+        IQueryExecutor<T> executor;
+
+        if (typeInfo is IGaldrProjectionTypeInfo projTypeInfo)
+        {
+            executor = new ProjectionQueryExecutor<T>(
+                this,
+                _db,
+                _versionIndex,
+                SnapshotTxId,
+                projTypeInfo,
+                _jsonSerializer,
+                _jsonOptions);
+        }
+        else
+        {
+            executor = new TransactionQueryExecutor<T>(
+                this,
+                _db,
+                _versionIndex,
+                SnapshotTxId,
+                (GaldrTypeInfo<T>)typeInfo,
+                _jsonSerializer,
+                _jsonOptions);
+        }
+
         QueryBuilder<T> queryBuilder = new QueryBuilder<T>(executor);
 
         return queryBuilder;

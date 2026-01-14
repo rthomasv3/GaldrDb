@@ -71,4 +71,28 @@ public static class GaldrTypeRegistry
     {
         return _registry.Values;
     }
+
+    public static bool IsProjection<T>()
+    {
+        bool result = false;
+
+        if (_registry.TryGetValue(typeof(T), out IGaldrTypeInfo info))
+        {
+            result = info is IGaldrProjectionTypeInfo;
+        }
+
+        return result;
+    }
+
+    public static bool IsProjection(Type type)
+    {
+        bool result = false;
+
+        if (_registry.TryGetValue(type, out IGaldrTypeInfo info))
+        {
+            result = info is IGaldrProjectionTypeInfo;
+        }
+
+        return result;
+    }
 }

@@ -29,6 +29,11 @@ public sealed class InFilter<TDocument, TField> : IFieldFilter
         get { return FieldOp.In; }
     }
 
+    public Type DocumentType
+    {
+        get { return typeof(TDocument); }
+    }
+
     public IReadOnlyCollection<TField> Values
     {
         get { return _valuesArray; }

@@ -29,6 +29,11 @@ public sealed class BetweenFilter<TDocument, TField> : IFieldFilter where TField
         get { return FieldOp.Between; }
     }
 
+    public Type DocumentType
+    {
+        get { return typeof(TDocument); }
+    }
+
     public TField MinValue
     {
         get { return _minValue; }

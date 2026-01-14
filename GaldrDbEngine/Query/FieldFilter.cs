@@ -29,6 +29,11 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
         get { return _op; }
     }
 
+    public Type DocumentType
+    {
+        get { return typeof(TDocument); }
+    }
+
     public TField Value
     {
         get { return _value; }

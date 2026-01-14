@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace GaldrDbEngine.Query;
@@ -26,6 +27,11 @@ public sealed class NotInFilter<TDocument, TField> : IFieldFilter
     public FieldOp Operation
     {
         get { return FieldOp.NotIn; }
+    }
+
+    public Type DocumentType
+    {
+        get { return typeof(TDocument); }
     }
 
     public IReadOnlyCollection<TField> Values

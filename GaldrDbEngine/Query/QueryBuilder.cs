@@ -45,6 +45,11 @@ public sealed class QueryBuilder<T>
         return this;
     }
 
+    internal void AddFilter(IFieldFilter filter)
+    {
+        _filters.Add(filter);
+    }
+
     public QueryBuilder<T> Limit(int count)
     {
         _limit = count;

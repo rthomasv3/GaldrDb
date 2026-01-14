@@ -36,9 +36,49 @@ namespace GaldrDbSourceGenerators
             defaultSeverity: DiagnosticSeverity.Error,
             isEnabledByDefault: true);
 
+        private static readonly DiagnosticDescriptor ProjectionNotPartial = new DiagnosticDescriptor(
+            id: "GALDR020",
+            title: "Projection class not partial",
+            messageFormat: "Projection type '{0}' must be declared as partial",
+            category: "GaldrDb",
+            defaultSeverity: DiagnosticSeverity.Error,
+            isEnabledByDefault: true);
+
+        private static readonly DiagnosticDescriptor ProjectionSourceNotCollection = new DiagnosticDescriptor(
+            id: "GALDR021",
+            title: "Source type not a collection",
+            messageFormat: "Source type '{0}' for projection '{1}' must have [GaldrDbCollection] attribute",
+            category: "GaldrDb",
+            defaultSeverity: DiagnosticSeverity.Error,
+            isEnabledByDefault: true);
+
+        private static readonly DiagnosticDescriptor ProjectionPropertyNotOnSource = new DiagnosticDescriptor(
+            id: "GALDR022",
+            title: "Property not on source",
+            messageFormat: "Property '{0}' on projection '{1}' does not exist on source type '{2}'",
+            category: "GaldrDb",
+            defaultSeverity: DiagnosticSeverity.Error,
+            isEnabledByDefault: true);
+
+        private static readonly DiagnosticDescriptor ProjectionPropertyTypeMismatch = new DiagnosticDescriptor(
+            id: "GALDR023",
+            title: "Property type mismatch",
+            messageFormat: "Property '{0}' on projection '{1}' has type '{2}' but source '{3}.{0}' has type '{4}'",
+            category: "GaldrDb",
+            defaultSeverity: DiagnosticSeverity.Error,
+            isEnabledByDefault: true);
+
+        private static readonly DiagnosticDescriptor ProjectionMissingIdProperty = new DiagnosticDescriptor(
+            id: "GALDR024",
+            title: "Projection missing Id property",
+            messageFormat: "Projection '{0}' must include the 'Id' property from source type '{1}'",
+            category: "GaldrDb",
+            defaultSeverity: DiagnosticSeverity.Error,
+            isEnabledByDefault: true);
+
         public void Initialize(IncrementalGeneratorInitializationContext context)
         {
-            // Collect all classes with [GaldrJsonSerializable] attribute
+            // Collect all classes with [GaldrDbCollection] attribute
             IncrementalValuesProvider<ClassInfo> classDeclarations = context.SyntaxProvider
                 .ForAttributeWithMetadataName(
                     "GaldrJson.GaldrDbCollectionAttribute",
@@ -47,10 +87,24 @@ namespace GaldrDbSourceGenerators
                 .Where(static info => info != null)
                 .Select(static (info, _) => info!);
 
-            // Collect into array and generate
-            IncrementalValueProvider<ImmutableArray<ClassInfo>> collected = classDeclarations.Collect();
+            // Collect all classes with [GaldrDbProjection] attribute
+            IncrementalValuesProvider<ProjectionInfo> projectionDeclarations = context.SyntaxProvider
+                .ForAttributeWithMetadataName(
+                    "GaldrJson.GaldrDbProjectionAttribute",
+                    predicate: static (node, _) => node is ClassDeclarationSyntax,
+                    transform: static (ctx, _) => GetProjectionInfo(ctx))
+                .Where(static info => info != null)
+                .Select(static (info, _) => info!);
 
-            context.RegisterSourceOutput(collected, GenerateAllTypes);
+            // Collect both into arrays
+            IncrementalValueProvider<ImmutableArray<ClassInfo>> collectedClasses = classDeclarations.Collect();
+            IncrementalValueProvider<ImmutableArray<ProjectionInfo>> collectedProjections = projectionDeclarations.Collect();
+
+            // Combine and generate
+            IncrementalValueProvider<(ImmutableArray<ClassInfo> Classes, ImmutableArray<ProjectionInfo> Projections)> combined =
+                collectedClasses.Combine(collectedProjections);
+
+            context.RegisterSourceOutput(combined, GenerateAllTypes);
         }
 
         private static ClassInfo GetClassInfo(GeneratorAttributeSyntaxContext context)
@@ -167,6 +221,114 @@ namespace GaldrDbSourceGenerators
                 IdValidationResult.Valid);
         }
 
+        private static ProjectionInfo GetProjectionInfo(GeneratorAttributeSyntaxContext context)
+        {
+            INamedTypeSymbol classSymbol = (INamedTypeSymbol)context.TargetSymbol;
+            ClassDeclarationSyntax classSyntax = (ClassDeclarationSyntax)context.TargetNode;
+
+            // Check if class is partial
+            bool isPartial = classSyntax.Modifiers.Any(m => m.Text == "partial");
+
+            // Get the source type from the attribute
+            AttributeData projectionAttr = classSymbol.GetAttributes()
+                .FirstOrDefault(a => a.AttributeClass?.Name == "GaldrDbProjectionAttribute");
+
+            INamedTypeSymbol sourceType = null;
+            if (projectionAttr != null && projectionAttr.ConstructorArguments.Length > 0)
+            {
+                TypedConstant arg = projectionAttr.ConstructorArguments[0];
+                if (arg.Value is INamedTypeSymbol typeSymbol)
+                {
+                    sourceType = typeSymbol;
+                }
+            }
+
+            // Check if source type has [GaldrDbCollection] attribute
+            bool sourceHasCollectionAttribute = false;
+            if (sourceType != null)
+            {
+                sourceHasCollectionAttribute = sourceType.GetAttributes()
+                    .Any(a => a.AttributeClass?.Name == "GaldrDbCollectionAttribute");
+            }
+
+            // Get source type properties for validation
+            Dictionary<string, IPropertySymbol> sourceProperties = new Dictionary<string, IPropertySymbol>();
+            if (sourceType != null)
+            {
+                foreach (IPropertySymbol prop in sourceType.GetMembers().OfType<IPropertySymbol>())
+                {
+                    if (prop.DeclaredAccessibility == Accessibility.Public && prop.GetMethod != null)
+                    {
+                        sourceProperties[prop.Name] = prop;
+                    }
+                }
+            }
+
+            // Collect projection properties and validate against source
+            ImmutableArray<PropertyInfo>.Builder properties = ImmutableArray.CreateBuilder<PropertyInfo>();
+            ImmutableArray<ProjectionValidationError>.Builder validationErrors = ImmutableArray.CreateBuilder<ProjectionValidationError>();
+            bool hasIdProperty = false;
+
+            foreach (IPropertySymbol prop in classSymbol.GetMembers().OfType<IPropertySymbol>())
+            {
+                if (prop.DeclaredAccessibility != Accessibility.Public)
+                {
+                    continue;
+                }
+                if (prop.GetMethod == null)
+                {
+                    continue;
+                }
+
+                if (prop.Name == "Id")
+                {
+                    hasIdProperty = true;
+                }
+
+                // Validate property exists on source
+                if (sourceType != null)
+                {
+                    if (!sourceProperties.TryGetValue(prop.Name, out IPropertySymbol sourceProp))
+                    {
+                        validationErrors.Add(new ProjectionValidationError(
+                            ProjectionValidationErrorKind.PropertyNotOnSource,
+                            prop.Name,
+                            prop.Locations.FirstOrDefault()));
+                    }
+                    else if (!SymbolEqualityComparer.Default.Equals(prop.Type, sourceProp.Type))
+                    {
+                        validationErrors.Add(new ProjectionValidationError(
+                            ProjectionValidationErrorKind.PropertyTypeMismatch,
+                            prop.Name,
+                            prop.Locations.FirstOrDefault(),
+                            GetFullyQualifiedTypeName(prop.Type),
+                            GetFullyQualifiedTypeName(sourceProp.Type)));
+                    }
+                }
+
+                GaldrFieldTypeInfo fieldType = GetFieldType(prop.Type);
+                properties.Add(new PropertyInfo(
+                    prop.Name,
+                    GetFullyQualifiedTypeName(prop.Type),
+                    fieldType,
+                    false,
+                    false));
+            }
+
+            return new ProjectionInfo(
+                classSymbol.Name,
+                classSymbol.ContainingNamespace?.ToDisplayString() ?? "",
+                GetFullyQualifiedName(classSymbol),
+                sourceType != null ? GetFullyQualifiedName(sourceType) : null,
+                sourceType?.Name,
+                properties.ToImmutable(),
+                classSymbol.Locations.FirstOrDefault(),
+                isPartial,
+                sourceHasCollectionAttribute,
+                hasIdProperty,
+                validationErrors.ToImmutable());
+        }
+
         private static string GetFullyQualifiedName(INamedTypeSymbol symbol)
         {
             string ns = symbol.ContainingNamespace?.ToDisplayString();
@@ -231,51 +393,129 @@ namespace GaldrDbSourceGenerators
             return new GaldrFieldTypeInfo("GaldrFieldType.Complex", null);
         }
 
-        private static void GenerateAllTypes(SourceProductionContext context, ImmutableArray<ClassInfo> classes)
+        private static void GenerateAllTypes(
+            SourceProductionContext context,
+            (ImmutableArray<ClassInfo> Classes, ImmutableArray<ProjectionInfo> Projections) input)
         {
-            if (classes.IsDefaultOrEmpty)
+            ImmutableArray<ClassInfo> classes = input.Classes;
+            ImmutableArray<ProjectionInfo> projections = input.Projections;
+
+            // Report diagnostics for invalid collection types
+            if (!classes.IsDefaultOrEmpty)
             {
-                return;
+                foreach (ClassInfo classInfo in classes)
+                {
+                    switch (classInfo.IdValidation)
+                    {
+                        case IdValidationResult.Missing:
+                            context.ReportDiagnostic(Diagnostic.Create(
+                                MissingIdProperty,
+                                classInfo.DiagnosticLocation,
+                                classInfo.ClassName));
+                            break;
+                        case IdValidationResult.WrongType:
+                            context.ReportDiagnostic(Diagnostic.Create(
+                                InvalidIdPropertyType,
+                                classInfo.DiagnosticLocation,
+                                classInfo.ClassName));
+                            break;
+                        case IdValidationResult.NotPublic:
+                            context.ReportDiagnostic(Diagnostic.Create(
+                                IdPropertyNotPublic,
+                                classInfo.DiagnosticLocation,
+                                classInfo.ClassName));
+                            break;
+                    }
+                }
             }
 
-            // First, report any diagnostics for invalid types
-            foreach (ClassInfo classInfo in classes)
+            // Report diagnostics for invalid projections
+            if (!projections.IsDefaultOrEmpty)
             {
-                switch (classInfo.IdValidation)
+                foreach (ProjectionInfo projInfo in projections)
                 {
-                    case IdValidationResult.Missing:
+                    if (!projInfo.IsPartial)
+                    {
                         context.ReportDiagnostic(Diagnostic.Create(
-                            MissingIdProperty,
-                            classInfo.DiagnosticLocation,
-                            classInfo.ClassName));
-                        break;
-                    case IdValidationResult.WrongType:
+                            ProjectionNotPartial,
+                            projInfo.DiagnosticLocation,
+                            projInfo.ClassName));
+                    }
+
+                    if (!projInfo.SourceHasCollectionAttribute)
+                    {
                         context.ReportDiagnostic(Diagnostic.Create(
-                            InvalidIdPropertyType,
-                            classInfo.DiagnosticLocation,
-                            classInfo.ClassName));
-                        break;
-                    case IdValidationResult.NotPublic:
+                            ProjectionSourceNotCollection,
+                            projInfo.DiagnosticLocation,
+                            projInfo.SourceClassName ?? "unknown",
+                            projInfo.ClassName));
+                    }
+
+                    if (!projInfo.HasIdProperty)
+                    {
                         context.ReportDiagnostic(Diagnostic.Create(
-                            IdPropertyNotPublic,
-                            classInfo.DiagnosticLocation,
-                            classInfo.ClassName));
-                        break;
+                            ProjectionMissingIdProperty,
+                            projInfo.DiagnosticLocation,
+                            projInfo.ClassName,
+                            projInfo.SourceClassName ?? "unknown"));
+                    }
+
+                    foreach (ProjectionValidationError error in projInfo.ValidationErrors)
+                    {
+                        switch (error.Kind)
+                        {
+                            case ProjectionValidationErrorKind.PropertyNotOnSource:
+                                context.ReportDiagnostic(Diagnostic.Create(
+                                    ProjectionPropertyNotOnSource,
+                                    error.Location,
+                                    error.PropertyName,
+                                    projInfo.ClassName,
+                                    projInfo.SourceClassName ?? "unknown"));
+                                break;
+                            case ProjectionValidationErrorKind.PropertyTypeMismatch:
+                                context.ReportDiagnostic(Diagnostic.Create(
+                                    ProjectionPropertyTypeMismatch,
+                                    error.Location,
+                                    error.PropertyName,
+                                    projInfo.ClassName,
+                                    error.ProjectionPropertyType,
+                                    projInfo.SourceClassName ?? "unknown",
+                                    error.SourcePropertyType));
+                                break;
+                        }
+                    }
                 }
             }
 
             // Filter to only valid types
-            List<ClassInfo> validClasses = classes.Where(c => c.IdValidation == IdValidationResult.Valid).ToList();
+            List<ClassInfo> validClasses = classes.IsDefaultOrEmpty
+                ? new List<ClassInfo>()
+                : classes.Where(c => c.IdValidation == IdValidationResult.Valid).ToList();
 
-            if (validClasses.Count == 0)
+            List<ProjectionInfo> validProjections = projections.IsDefaultOrEmpty
+                ? new List<ProjectionInfo>()
+                : projections.Where(p => p.IsValid).ToList();
+
+            if (validClasses.Count == 0 && validProjections.Count == 0)
             {
                 return;
             }
 
-            // Resolve name collisions
-            Dictionary<string, string> resolvedNames = ResolveCollisions(validClasses);
+            // Resolve name collisions for classes
+            Dictionary<string, string> resolvedNames = new Dictionary<string, string>();
+            if (validClasses.Count > 0)
+            {
+                resolvedNames = ResolveCollisions(validClasses);
+            }
 
-            // Generate Meta class for each valid type
+            // Resolve name collisions for projections
+            Dictionary<string, string> resolvedProjectionNames = new Dictionary<string, string>();
+            if (validProjections.Count > 0)
+            {
+                resolvedProjectionNames = ResolveProjectionCollisions(validProjections);
+            }
+
+            // Generate Meta class for each valid collection type
             foreach (ClassInfo classInfo in validClasses)
             {
                 string resolvedName = resolvedNames[classInfo.FullyQualifiedName];
@@ -283,8 +523,25 @@ namespace GaldrDbSourceGenerators
                 context.AddSource($"{resolvedName}Meta.g.cs", source);
             }
 
+            // Generate partial class and Meta class for each valid projection
+            foreach (ProjectionInfo projInfo in validProjections)
+            {
+                string resolvedName = resolvedProjectionNames[projInfo.FullyQualifiedName];
+                string sourceResolvedName = resolvedNames.TryGetValue(projInfo.SourceFullyQualifiedName, out string srcName)
+                    ? srcName
+                    : projInfo.SourceClassName;
+
+                // Generate partial class with IProjectionOf interface
+                string partialSource = GenerateProjectionPartialClass(projInfo);
+                context.AddSource($"{resolvedName}.g.cs", partialSource);
+
+                // Generate Meta class
+                string metaSource = GenerateProjectionMetaClass(projInfo, resolvedName, sourceResolvedName);
+                context.AddSource($"{resolvedName}Meta.g.cs", metaSource);
+            }
+
             // Generate the registry
-            string registrySource = GenerateRegistry(validClasses, resolvedNames);
+            string registrySource = GenerateRegistry(validClasses, resolvedNames, validProjections, resolvedProjectionNames);
             context.AddSource("GaldrTypeRegistry.g.cs", registrySource);
         }
 
@@ -495,11 +752,199 @@ namespace GaldrDbSourceGenerators
             return sb.ToString();
         }
 
-        private static string GenerateRegistry(List<ClassInfo> classes, Dictionary<string, string> resolvedNames)
+        private static Dictionary<string, string> ResolveProjectionCollisions(List<ProjectionInfo> projections)
+        {
+            Dictionary<string, string> result = new Dictionary<string, string>();
+            IEnumerable<IGrouping<string, ProjectionInfo>> groups = projections.GroupBy(p => p.ClassName);
+
+            foreach (IGrouping<string, ProjectionInfo> group in groups)
+            {
+                List<ProjectionInfo> items = group.ToList();
+
+                if (items.Count == 1)
+                {
+                    result[items[0].FullyQualifiedName] = items[0].ClassName;
+                }
+                else
+                {
+                    ResolveProjectionCollisionGroup(items, result);
+                }
+            }
+
+            return result;
+        }
+
+        private static void ResolveProjectionCollisionGroup(List<ProjectionInfo> items, Dictionary<string, string> result)
+        {
+            int segmentsNeeded = 1;
+            int maxSegments = items.Max(p => p.Namespace?.Split('.').Length ?? 0);
+
+            while (segmentsNeeded <= maxSegments + 1)
+            {
+                List<string> candidateNames = items
+                    .Select(p => BuildProjectionNameWithSegments(p, segmentsNeeded))
+                    .ToList();
+
+                if (candidateNames.Distinct().Count() == items.Count)
+                {
+                    for (int i = 0; i < items.Count; i++)
+                    {
+                        result[items[i].FullyQualifiedName] = candidateNames[i];
+                    }
+                    return;
+                }
+
+                segmentsNeeded++;
+            }
+
+            foreach (ProjectionInfo item in items)
+            {
+                string safeName = item.FullyQualifiedName.Replace(".", "");
+                result[item.FullyQualifiedName] = safeName;
+            }
+        }
+
+        private static string BuildProjectionNameWithSegments(ProjectionInfo projInfo, int segmentCount)
+        {
+            if (string.IsNullOrEmpty(projInfo.Namespace))
+            {
+                return projInfo.ClassName;
+            }
+
+            string[] segments = projInfo.Namespace.Split('.');
+            int startIndex = Math.Max(0, segments.Length - segmentCount);
+            StringBuilder sb = new StringBuilder();
+
+            for (int i = startIndex; i < segments.Length; i++)
+            {
+                sb.Append(segments[i]);
+            }
+            sb.Append(projInfo.ClassName);
+
+            return sb.ToString();
+        }
+
+        private static string GenerateProjectionPartialClass(ProjectionInfo projInfo)
         {
             StringBuilder sb = new StringBuilder();
 
-            // Header
+            sb.AppendLine("// <auto-generated/>");
+            sb.AppendLine();
+            sb.AppendLine("using GaldrDbEngine.Query;");
+            sb.AppendLine();
+
+            if (!string.IsNullOrEmpty(projInfo.Namespace))
+            {
+                sb.AppendLine($"namespace {projInfo.Namespace}");
+                sb.AppendLine("{");
+                sb.AppendLine($"    public partial class {projInfo.ClassName} : IProjectionOf<{projInfo.SourceFullyQualifiedName}>");
+                sb.AppendLine("    {");
+                sb.AppendLine("    }");
+                sb.AppendLine("}");
+            }
+            else
+            {
+                sb.AppendLine($"public partial class {projInfo.ClassName} : IProjectionOf<{projInfo.SourceFullyQualifiedName}>");
+                sb.AppendLine("{");
+                sb.AppendLine("}");
+            }
+
+            return sb.ToString();
+        }
+
+        private static string GenerateProjectionMetaClass(ProjectionInfo projInfo, string resolvedName, string sourceResolvedName)
+        {
+            StringBuilder sb = new StringBuilder();
+
+            sb.AppendLine("// <auto-generated/>");
+            sb.AppendLine();
+            sb.AppendLine("using System;");
+            sb.AppendLine("using System.Collections.Generic;");
+            sb.AppendLine("using GaldrDbEngine.Query;");
+            sb.AppendLine();
+            sb.AppendLine("namespace GaldrDbEngine.Generated");
+            sb.AppendLine("{");
+
+            sb.AppendLine($"    /// <summary>");
+            sb.AppendLine($"    /// Metadata and field accessors for projection {projInfo.FullyQualifiedName}.");
+            sb.AppendLine($"    /// </summary>");
+            sb.AppendLine($"    public static class {resolvedName}Meta");
+            sb.AppendLine("    {");
+
+            // CollectionName - delegates to source
+            sb.AppendLine($"        /// <summary>");
+            sb.AppendLine($"        /// The database collection name (from source type {projInfo.SourceClassName}).");
+            sb.AppendLine($"        /// </summary>");
+            sb.AppendLine($"        public static string CollectionName => {sourceResolvedName}Meta.CollectionName;");
+            sb.AppendLine();
+
+            // SourceType
+            sb.AppendLine($"        /// <summary>");
+            sb.AppendLine($"        /// The source type this projection is based on.");
+            sb.AppendLine($"        /// </summary>");
+            sb.AppendLine($"        public static Type SourceType => typeof({projInfo.SourceFullyQualifiedName});");
+            sb.AppendLine();
+
+            // IndexedFieldNames - projections don't have their own indexes
+            sb.AppendLine($"        /// <summary>");
+            sb.AppendLine($"        /// Projections do not have their own indexes.");
+            sb.AppendLine($"        /// </summary>");
+            sb.AppendLine($"        public static IReadOnlyList<string> IndexedFieldNames {{ get; }} = Array.Empty<string>();");
+            sb.AppendLine();
+
+            // UniqueIndexFieldNames
+            sb.AppendLine($"        /// <summary>");
+            sb.AppendLine($"        /// Projections do not have their own unique indexes.");
+            sb.AppendLine($"        /// </summary>");
+            sb.AppendLine($"        public static IReadOnlyList<string> UniqueIndexFieldNames {{ get; }} = Array.Empty<string>();");
+            sb.AppendLine();
+
+            // GaldrField properties for each property
+            foreach (PropertyInfo prop in projInfo.Properties)
+            {
+                sb.AppendLine($"        /// <summary>");
+                sb.AppendLine($"        /// Field accessor for {prop.Name}.");
+                sb.AppendLine($"        /// </summary>");
+                sb.AppendLine($"        public static GaldrField<{projInfo.FullyQualifiedName}, {prop.TypeName}> {prop.Name} {{ get; }} =");
+                sb.AppendLine($"            new GaldrField<{projInfo.FullyQualifiedName}, {prop.TypeName}>(\"{prop.Name}\", {prop.FieldType.FieldTypeEnum}, false, static p => p.{prop.Name});");
+                sb.AppendLine();
+            }
+
+            // TypeInfo property with inline converter lambda
+            sb.AppendLine($"        /// <summary>");
+            sb.AppendLine($"        /// Type info instance for registry.");
+            sb.AppendLine($"        /// </summary>");
+            sb.AppendLine($"        public static GaldrProjectionTypeInfo<{projInfo.FullyQualifiedName}, {projInfo.SourceFullyQualifiedName}> TypeInfo {{ get; }} =");
+            sb.AppendLine($"            new GaldrProjectionTypeInfo<{projInfo.FullyQualifiedName}, {projInfo.SourceFullyQualifiedName}>(");
+            sb.AppendLine($"                collectionName: CollectionName,");
+            sb.AppendLine($"                indexedFieldNames: IndexedFieldNames,");
+            sb.AppendLine($"                uniqueIndexFieldNames: UniqueIndexFieldNames,");
+            sb.AppendLine($"                converter: static source => new {projInfo.FullyQualifiedName}");
+            sb.AppendLine("                {");
+
+            // Generate property assignments in converter
+            foreach (PropertyInfo prop in projInfo.Properties)
+            {
+                sb.AppendLine($"                    {prop.Name} = source.{prop.Name},");
+            }
+
+            sb.AppendLine("                },");
+            sb.AppendLine($"                sourceIdGetter: {sourceResolvedName}Meta.GetId);");
+
+            sb.AppendLine("    }");
+            sb.AppendLine("}");
+
+            return sb.ToString();
+        }
+
+        private static string GenerateRegistry(
+            List<ClassInfo> classes,
+            Dictionary<string, string> resolvedNames,
+            List<ProjectionInfo> projections,
+            Dictionary<string, string> resolvedProjectionNames)
+        {
+            StringBuilder sb = new StringBuilder();
+
             sb.AppendLine("// <auto-generated/>");
             sb.AppendLine();
             sb.AppendLine("using System.Runtime.CompilerServices;");
@@ -508,7 +953,7 @@ namespace GaldrDbSourceGenerators
             sb.AppendLine("namespace GaldrDbEngine.Generated");
             sb.AppendLine("{");
             sb.AppendLine("    /// <summary>");
-            sb.AppendLine("    /// Module initializer that registers all GaldrJsonSerializable types with the GaldrTypeRegistry.");
+            sb.AppendLine("    /// Module initializer that registers all GaldrDb types with the GaldrTypeRegistry.");
             sb.AppendLine("    /// </summary>");
             sb.AppendLine("    internal static class GaldrTypeRegistryInitializer");
             sb.AppendLine("    {");
@@ -516,9 +961,17 @@ namespace GaldrDbSourceGenerators
             sb.AppendLine("        internal static void Initialize()");
             sb.AppendLine("        {");
 
+            // Register collection types
             foreach (ClassInfo classInfo in classes)
             {
                 string resolvedName = resolvedNames[classInfo.FullyQualifiedName];
+                sb.AppendLine($"            global::GaldrDbEngine.Query.GaldrTypeRegistry.Register({resolvedName}Meta.TypeInfo);");
+            }
+
+            // Register projection types
+            foreach (ProjectionInfo projInfo in projections)
+            {
+                string resolvedName = resolvedProjectionNames[projInfo.FullyQualifiedName];
                 sb.AppendLine($"            global::GaldrDbEngine.Query.GaldrTypeRegistry.Register({resolvedName}Meta.TypeInfo);");
             }
 
