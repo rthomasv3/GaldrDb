@@ -151,20 +151,20 @@ public sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         int endId = plan.EndDocId ?? int.MaxValue;
 
         List<int> rangeDocIds = _db.SearchDocIdRange(collectionName, startId, endId, plan.IncludeStart, plan.IncludeEnd);
-        List<DocIdVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
 
         List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
 
-        foreach (DocIdVersion docVersion in visibleVersions)
+        foreach (DocumentVersion version in visibleVersions)
         {
-            byte[] jsonBytes = _db.ReadDocumentByLocation(docVersion.Version.Location);
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
             string json = Encoding.UTF8.GetString(jsonBytes);
             object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
 
             if (PassesFilters(sourceDoc, remainingFilters))
             {
                 results.Add(sourceDoc);
-                docIds.Add(docVersion.DocId);
+                docIds.Add(version.DocumentId);
             }
         }
 
@@ -180,20 +180,20 @@ public sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         int endId = plan.EndDocId ?? int.MaxValue;
 
         List<int> rangeDocIds = await _db.SearchDocIdRangeAsync(collectionName, startId, endId, plan.IncludeStart, plan.IncludeEnd, cancellationToken).ConfigureAwait(false);
-        List<DocIdVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
 
         List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
 
-        foreach (DocIdVersion docVersion in visibleVersions)
+        foreach (DocumentVersion version in visibleVersions)
         {
-            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(docVersion.Version.Location, cancellationToken).ConfigureAwait(false);
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
             string json = Encoding.UTF8.GetString(jsonBytes);
             object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
 
             if (PassesFilters(sourceDoc, remainingFilters))
             {
                 results.Add(sourceDoc);
-                docIds.Add(docVersion.DocId);
+                docIds.Add(version.DocumentId);
             }
         }
 

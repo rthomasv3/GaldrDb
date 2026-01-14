@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using GaldrDbEngine.Storage;
 
 namespace GaldrDbEngine.Query;
 
@@ -28,5 +29,15 @@ public sealed class GaldrTypeInfo<T> : IGaldrTypeInfo
         IdSetter = idSetter;
         IdGetter = idGetter;
         ExtractIndexedFields = extractIndexedFields;
+    }
+
+    public void ExtractIndexedFieldsFrom(object document, IndexFieldWriter writer)
+    {
+        ExtractIndexedFields((T)document, writer);
+    }
+
+    public int GetIdFrom(object document)
+    {
+        return IdGetter((T)document);
     }
 }

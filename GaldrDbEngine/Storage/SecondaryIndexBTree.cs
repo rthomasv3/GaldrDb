@@ -361,34 +361,52 @@ public class SecondaryIndexBTree
 
                 if (!rebalanced)
                 {
+                    bool merged = false;
+
                     if (childIndex > 0)
                     {
                         int leftSiblingPageId = parent.ChildPageIds[childIndex - 1];
                         _pageIO.ReadPage(leftSiblingPageId, siblingBuffer);
                         SecondaryIndexNode.DeserializeTo(siblingBuffer, sibling);
 
-                        MergeWithLeftSibling(parentPageId, parent, parentBuffer,
-                                             leftSiblingPageId, sibling, siblingBuffer,
-                                             currentPageId, node, childIndex);
+                        int separatorKeyLength = parent.Keys[childIndex - 1].Length;
+                        if (sibling.CanMergeWith(node, separatorKeyLength))
+                        {
+                            MergeWithLeftSibling(parentPageId, parent, parentBuffer,
+                                                 leftSiblingPageId, sibling, siblingBuffer,
+                                                 currentPageId, node, childIndex);
 
-                        currentPageId = parentPageId;
-                        _pageIO.ReadPage(parentPageId, parentBuffer);
-                        SecondaryIndexNode.DeserializeTo(parentBuffer, node);
+                            currentPageId = parentPageId;
+                            _pageIO.ReadPage(parentPageId, parentBuffer);
+                            SecondaryIndexNode.DeserializeTo(parentBuffer, node);
+                            merged = true;
+                        }
                     }
-                    else
+
+                    if (!merged && childIndex < parent.KeyCount)
                     {
                         int rightSiblingPageId = parent.ChildPageIds[childIndex + 1];
                         _pageIO.ReadPage(rightSiblingPageId, siblingBuffer);
                         SecondaryIndexNode.DeserializeTo(siblingBuffer, sibling);
 
-                        MergeWithRightSibling(parentPageId, parent, parentBuffer,
-                                              currentPageId, node,
-                                              rightSiblingPageId, sibling, siblingBuffer,
-                                              childIndex);
+                        int separatorKeyLength = parent.Keys[childIndex].Length;
+                        if (node.CanMergeWith(sibling, separatorKeyLength))
+                        {
+                            MergeWithRightSibling(parentPageId, parent, parentBuffer,
+                                                  currentPageId, node,
+                                                  rightSiblingPageId, sibling, siblingBuffer,
+                                                  childIndex);
 
-                        currentPageId = parentPageId;
-                        _pageIO.ReadPage(parentPageId, parentBuffer);
-                        SecondaryIndexNode.DeserializeTo(parentBuffer, node);
+                            currentPageId = parentPageId;
+                            _pageIO.ReadPage(parentPageId, parentBuffer);
+                            SecondaryIndexNode.DeserializeTo(parentBuffer, node);
+                            merged = true;
+                        }
+                    }
+
+                    if (!merged)
+                    {
+                        break;
                     }
                 }
                 else
@@ -751,7 +769,11 @@ public class SecondaryIndexBTree
             int newChildPageId = _pageManager.AllocatePage();
             newChild = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, fullChild.NodeType);
 
-            int mid = (_maxKeys) / 2;
+            int mid = Math.Min(_maxKeys / 2, fullChild.KeyCount / 2);
+            if (mid >= fullChild.KeyCount)
+            {
+                mid = fullChild.KeyCount - 1;
+            }
             KeyBuffer keyToPromote = fullChild.Keys[mid];
 
             for (int j = mid + 1; j < fullChild.KeyCount; j++)
@@ -844,7 +866,7 @@ public class SecondaryIndexBTree
     public static int CalculateMaxKeys(int pageSize)
     {
         int usableSpace = pageSize - 10;
-        int avgKeySize = 20;
+        int avgKeySize = 64;
         int valueSize = 8;
 
         int maxKeys = usableSpace / (2 + avgKeySize + valueSize);

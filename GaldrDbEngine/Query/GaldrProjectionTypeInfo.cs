@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using GaldrDbEngine.Storage;
 using GaldrJson;
 
 namespace GaldrDbEngine.Query;
@@ -45,5 +46,15 @@ public sealed class GaldrProjectionTypeInfo<TProjection, TSource> : IGaldrProjec
     public int GetSourceId(object source)
     {
         return _sourceIdGetter((TSource)source);
+    }
+
+    public void ExtractIndexedFieldsFrom(object document, IndexFieldWriter writer)
+    {
+        throw new NotSupportedException("Projections do not support index field extraction");
+    }
+
+    public int GetIdFrom(object document)
+    {
+        throw new NotSupportedException("Projections do not support direct ID access");
     }
 }

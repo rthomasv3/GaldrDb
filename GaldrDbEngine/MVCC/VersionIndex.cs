@@ -97,7 +97,7 @@ public sealed class VersionIndex
                 }
             }
 
-            DocumentVersion newVersion = new DocumentVersion(createdBy, location, previousVersion);
+            DocumentVersion newVersion = new DocumentVersion(documentId, createdBy, location, previousVersion);
             collection[documentId] = newVersion;
         }
     }
@@ -193,9 +193,9 @@ public sealed class VersionIndex
         return results;
     }
 
-    public List<DocIdVersion> GetVisibleVersionsForDocIds(string collectionName, IEnumerable<int> docIds, TxId snapshotTxId)
+    public List<DocumentVersion> GetVisibleVersionsForDocIds(string collectionName, IEnumerable<int> docIds, TxId snapshotTxId)
     {
-        List<DocIdVersion> results = new List<DocIdVersion>();
+        List<DocumentVersion> results = new List<DocumentVersion>();
 
         lock (_lock)
         {
@@ -209,7 +209,7 @@ public sealed class VersionIndex
                         {
                             if (currentVersion.IsVisibleTo(snapshotTxId))
                             {
-                                results.Add(new DocIdVersion(docId, currentVersion));
+                                results.Add(currentVersion);
                                 break;
                             }
 

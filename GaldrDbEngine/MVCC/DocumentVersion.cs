@@ -5,13 +5,15 @@ namespace GaldrDbEngine.MVCC;
 
 public class DocumentVersion
 {
+    public int DocumentId { get; }
     public TxId CreatedBy { get; }
     public TxId DeletedBy { get; private set; }
     public DocumentLocation Location { get; }
     public DocumentVersion PreviousVersion { get; private set; }
 
-    public DocumentVersion(TxId createdBy, DocumentLocation location, DocumentVersion previousVersion)
+    public DocumentVersion(int documentId, TxId createdBy, DocumentLocation location, DocumentVersion previousVersion)
     {
+        DocumentId = documentId;
         CreatedBy = createdBy;
         DeletedBy = TxId.MaxValue;
         Location = location;

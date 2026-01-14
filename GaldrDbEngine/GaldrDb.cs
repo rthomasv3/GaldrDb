@@ -195,6 +195,176 @@ public class GaldrDb : IDisposable
         return Task.FromResult(Vacuum());
     }
 
+    public DatabaseCompactResult CompactTo(string targetPath)
+    {
+        EnsureTransactionManager();
+        EnsureVersionIndex();
+
+        if (_txManager.ActiveTransactionCount > 0)
+        {
+            throw new InvalidOperationException("Cannot compact database while transactions are active");
+        }
+
+        if (File.Exists(targetPath))
+        {
+            throw new InvalidOperationException($"Target file already exists: {targetPath}");
+        }
+        
+        Checkpoint();
+
+        long sourceSize = new FileInfo(_filePath).Length;
+        int documentsCopied = 0;
+        int collectionsCopied = 0;
+        TxId currentSnapshot = _txManager.GetSnapshotTxId();
+
+        using (GaldrDb targetDb = GaldrDb.Create(targetPath, _options))
+        {
+            foreach (IGaldrTypeInfo typeInfo in GaldrTypeRegistry.GetAll())
+            {
+                if (typeInfo is IGaldrProjectionTypeInfo)
+                {
+                    continue;
+                }
+
+                string collectionName = typeInfo.CollectionName;
+                CollectionEntry sourceCollection = _collectionsMetadata.FindCollection(collectionName);
+                if (sourceCollection == null)
+                {
+                    continue;
+                }
+
+                List<DocumentVersion> liveVersions = _versionIndex.GetAllVisibleVersions(collectionName, currentSnapshot);
+                if (liveVersions == null || liveVersions.Count == 0)
+                {
+                    continue;
+                }
+
+                CollectionEntry targetCollection = targetDb._collectionsMetadata.FindCollection(collectionName);
+                if (targetCollection == null)
+                {
+                    targetDb.CreateCollection(collectionName);
+                    targetCollection = targetDb._collectionsMetadata.FindCollection(collectionName);
+                }
+                targetCollection.NextId = sourceCollection.NextId;
+
+                foreach (IndexDefinition sourceIndex in sourceCollection.Indexes)
+                {
+                    IndexDefinition newIndex = new IndexDefinition
+                    {
+                        FieldName = sourceIndex.FieldName,
+                        FieldType = sourceIndex.FieldType,
+                        RootPageId = -1,
+                        IsUnique = sourceIndex.IsUnique
+                    };
+                    targetCollection.Indexes.Add(newIndex);
+                }
+
+                targetDb._collectionsMetadata.UpdateCollection(targetCollection);
+                targetDb._collectionsMetadata.WriteToDisk();
+
+                foreach (DocumentVersion version in liveVersions)
+                {
+                    byte[] docBytes = _documentStorage.ReadDocument(version.Location.PageId, version.Location.SlotIndex);
+                    InsertRawForCompaction(targetDb, collectionName, version.DocumentId, docBytes, typeInfo);
+                    documentsCopied++;
+                }
+
+                collectionsCopied++;
+            }
+
+            targetDb.Checkpoint();
+        }
+
+        long targetSize = new FileInfo(targetPath).Length;
+
+        return new DatabaseCompactResult(collectionsCopied, documentsCopied, sourceSize, targetSize);
+    }
+
+    public async Task<DatabaseCompactResult> CompactToAsync(string targetPath, CancellationToken cancellationToken = default)
+    {
+        EnsureTransactionManager();
+        EnsureVersionIndex();
+
+        if (_txManager.ActiveTransactionCount > 0)
+        {
+            throw new InvalidOperationException("Cannot compact database while transactions are active");
+        }
+
+        if (File.Exists(targetPath))
+        {
+            throw new InvalidOperationException($"Target file already exists: {targetPath}");
+        }
+        
+        await CheckpointAsync(cancellationToken).ConfigureAwait(false);
+
+        long sourceSize = new FileInfo(_filePath).Length;
+        int documentsCopied = 0;
+        int collectionsCopied = 0;
+        TxId currentSnapshot = _txManager.GetSnapshotTxId();
+
+        using (GaldrDb targetDb = GaldrDb.Create(targetPath, _options))
+        {
+            foreach (IGaldrTypeInfo typeInfo in GaldrTypeRegistry.GetAll())
+            {
+                if (typeInfo is IGaldrProjectionTypeInfo)
+                {
+                    continue;
+                }
+
+                string collectionName = typeInfo.CollectionName;
+                CollectionEntry sourceCollection = _collectionsMetadata.FindCollection(collectionName);
+                if (sourceCollection == null)
+                {
+                    continue;
+                }
+
+                List<DocumentVersion> liveVersions = _versionIndex.GetAllVisibleVersions(collectionName, currentSnapshot);
+                if (liveVersions == null || liveVersions.Count == 0)
+                {
+                    continue;
+                }
+
+                CollectionEntry targetCollection = targetDb._collectionsMetadata.FindCollection(collectionName);
+                if (targetCollection == null)
+                {
+                    targetDb.CreateCollection(collectionName);
+                    targetCollection = targetDb._collectionsMetadata.FindCollection(collectionName);
+                }
+                targetCollection.NextId = sourceCollection.NextId;
+
+                foreach (IndexDefinition sourceIndex in sourceCollection.Indexes)
+                {
+                    IndexDefinition newIndex = new IndexDefinition
+                    {
+                        FieldName = sourceIndex.FieldName,
+                        FieldType = sourceIndex.FieldType,
+                        RootPageId = -1,
+                        IsUnique = sourceIndex.IsUnique
+                    };
+                    targetCollection.Indexes.Add(newIndex);
+                }
+
+                targetDb._collectionsMetadata.UpdateCollection(targetCollection);
+                targetDb._collectionsMetadata.WriteToDisk();
+
+                foreach (DocumentVersion version in liveVersions)
+                {
+                    byte[] docBytes = await _documentStorage.ReadDocumentAsync(version.Location.PageId, version.Location.SlotIndex, cancellationToken).ConfigureAwait(false);
+                    await InsertRawForCompactionAsync(targetDb, collectionName, version.DocumentId, docBytes, typeInfo, cancellationToken).ConfigureAwait(false);
+                    documentsCopied++;
+                }
+
+                collectionsCopied++;
+            }
+
+            await targetDb.CheckpointAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        long targetSize = new FileInfo(targetPath).Length;
+
+        return new DatabaseCompactResult(collectionsCopied, documentsCopied, sourceSize, targetSize);
+    }
+
     public Transaction BeginTransaction()
     {
         EnsureTransactionManager();
@@ -1266,6 +1436,120 @@ public class GaldrDb : IDisposable
             collection.DocumentCount--;
             _collectionsMetadata.UpdateCollection(collection);
             _collectionsMetadata.WriteToDisk();
+        }
+    }
+
+    #endregion
+
+    #region Compaction Methods
+
+    private void InsertRawForCompaction(GaldrDb targetDb, string collectionName, int docId, byte[] docBytes, IGaldrTypeInfo typeInfo)
+    {
+        CollectionEntry collection = targetDb._collectionsMetadata.FindCollection(collectionName);
+
+        DocumentLocation location = targetDb._documentStorage.WriteDocument(docBytes);
+
+        int order = CalculateBTreeOrder(targetDb._options.PageSize);
+        BTree btree = new BTree(targetDb._pageIO, targetDb._pageManager, collection.RootPage, targetDb._options.PageSize, order);
+        btree.Insert(docId, location);
+
+        int newRootPageId = btree.GetRootPageId();
+        if (newRootPageId != collection.RootPage)
+        {
+            collection.RootPage = newRootPageId;
+        }
+
+        if (collection.Indexes.Count > 0)
+        {
+            string json = Encoding.UTF8.GetString(docBytes);
+            if (_jsonSerializer.TryDeserialize(json, typeInfo.DocumentType, out object document, _jsonOptions))
+            {
+                IndexFieldWriter writer = new IndexFieldWriter();
+                typeInfo.ExtractIndexedFieldsFrom(document, writer);
+                IReadOnlyList<IndexFieldEntry> indexFields = writer.GetFields();
+
+                InsertIntoIndexesForCompaction(targetDb, collection, docId, location, indexFields);
+            }
+        }
+
+        collection.DocumentCount++;
+        targetDb._collectionsMetadata.UpdateCollection(collection);
+        targetDb._collectionsMetadata.WriteToDisk();
+    }
+
+    private async Task InsertRawForCompactionAsync(GaldrDb targetDb, string collectionName, int docId, byte[] docBytes, IGaldrTypeInfo typeInfo, CancellationToken cancellationToken)
+    {
+        CollectionEntry collection = targetDb._collectionsMetadata.FindCollection(collectionName);
+
+        DocumentLocation location = await targetDb._documentStorage.WriteDocumentAsync(docBytes, cancellationToken).ConfigureAwait(false);
+
+        int order = CalculateBTreeOrder(targetDb._options.PageSize);
+        BTree btree = new BTree(targetDb._pageIO, targetDb._pageManager, collection.RootPage, targetDb._options.PageSize, order);
+        await btree.InsertAsync(docId, location, cancellationToken).ConfigureAwait(false);
+
+        int newRootPageId = btree.GetRootPageId();
+        if (newRootPageId != collection.RootPage)
+        {
+            collection.RootPage = newRootPageId;
+        }
+
+        if (collection.Indexes.Count > 0)
+        {
+            string json = Encoding.UTF8.GetString(docBytes);
+            if (_jsonSerializer.TryDeserialize(json, typeInfo.DocumentType, out object document, _jsonOptions))
+            {
+                IndexFieldWriter writer = new IndexFieldWriter();
+                typeInfo.ExtractIndexedFieldsFrom(document, writer);
+                IReadOnlyList<IndexFieldEntry> indexFields = writer.GetFields();
+
+                InsertIntoIndexesForCompaction(targetDb, collection, docId, location, indexFields);
+            }
+        }
+
+        collection.DocumentCount++;
+        targetDb._collectionsMetadata.UpdateCollection(collection);
+        targetDb._collectionsMetadata.WriteToDisk();
+    }
+
+    private void InsertIntoIndexesForCompaction(GaldrDb targetDb, CollectionEntry collection, int docId, DocumentLocation location, IReadOnlyList<IndexFieldEntry> indexFields)
+    {
+        foreach (IndexFieldEntry field in indexFields)
+        {
+            IndexDefinition indexDef = collection.FindIndex(field.FieldName);
+            if (indexDef != null)
+            {
+                if (indexDef.RootPageId == -1)
+                {
+                    int rootPageId = targetDb._pageManager.AllocatePage();
+                    int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(targetDb._options.PageSize);
+                    SecondaryIndexNode rootNode = new SecondaryIndexNode(targetDb._options.PageSize, maxKeys, BTreeNodeType.Leaf);
+
+                    byte[] rootBuffer = BufferPool.Rent(targetDb._options.PageSize);
+                    try
+                    {
+                        rootNode.SerializeTo(rootBuffer);
+                        targetDb._pageIO.WritePage(rootPageId, rootBuffer);
+                    }
+                    finally
+                    {
+                        BufferPool.Return(rootBuffer);
+                    }
+
+                    indexDef.RootPageId = rootPageId;
+                }
+
+                int maxKeysForTree = SecondaryIndexBTree.CalculateMaxKeys(targetDb._options.PageSize);
+                SecondaryIndexBTree indexTree = new SecondaryIndexBTree(targetDb._pageIO, targetDb._pageManager, indexDef.RootPageId, targetDb._options.PageSize, maxKeysForTree);
+
+                byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(field.KeyBytes, docId);
+                indexTree.Insert(compositeKey, location);
+
+                int newRootPageId = indexTree.GetRootPageId();
+                if (newRootPageId != indexDef.RootPageId)
+                {
+                    indexDef.RootPageId = newRootPageId;
+                }
+            }
         }
     }
 

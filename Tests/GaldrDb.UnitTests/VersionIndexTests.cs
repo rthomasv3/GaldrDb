@@ -14,7 +14,7 @@ public class VersionIndexTests
         TxId createdBy = new TxId(5);
         TxId snapshotTxId = new TxId(10);
         DocumentLocation location = new DocumentLocation(1, 0);
-        DocumentVersion version = new DocumentVersion(createdBy, location, null);
+        DocumentVersion version = new DocumentVersion(1, createdBy, location, null);
 
         bool result = version.IsVisibleTo(snapshotTxId);
 
@@ -27,7 +27,7 @@ public class VersionIndexTests
         TxId createdBy = new TxId(15);
         TxId snapshotTxId = new TxId(10);
         DocumentLocation location = new DocumentLocation(1, 0);
-        DocumentVersion version = new DocumentVersion(createdBy, location, null);
+        DocumentVersion version = new DocumentVersion(1, createdBy, location, null);
 
         bool result = version.IsVisibleTo(snapshotTxId);
 
@@ -40,7 +40,7 @@ public class VersionIndexTests
         TxId createdBy = new TxId(10);
         TxId snapshotTxId = new TxId(10);
         DocumentLocation location = new DocumentLocation(1, 0);
-        DocumentVersion version = new DocumentVersion(createdBy, location, null);
+        DocumentVersion version = new DocumentVersion(1, createdBy, location, null);
 
         bool result = version.IsVisibleTo(snapshotTxId);
 
@@ -54,7 +54,7 @@ public class VersionIndexTests
         TxId deletedBy = new TxId(15);
         TxId snapshotTxId = new TxId(10);
         DocumentLocation location = new DocumentLocation(1, 0);
-        DocumentVersion version = new DocumentVersion(createdBy, location, null);
+        DocumentVersion version = new DocumentVersion(1, createdBy, location, null);
         version.MarkDeleted(deletedBy);
 
         bool result = version.IsVisibleTo(snapshotTxId);
@@ -69,7 +69,7 @@ public class VersionIndexTests
         TxId deletedBy = new TxId(8);
         TxId snapshotTxId = new TxId(10);
         DocumentLocation location = new DocumentLocation(1, 0);
-        DocumentVersion version = new DocumentVersion(createdBy, location, null);
+        DocumentVersion version = new DocumentVersion(1, createdBy, location, null);
         version.MarkDeleted(deletedBy);
 
         bool result = version.IsVisibleTo(snapshotTxId);
@@ -84,7 +84,7 @@ public class VersionIndexTests
         TxId deletedBy = new TxId(10);
         TxId snapshotTxId = new TxId(10);
         DocumentLocation location = new DocumentLocation(1, 0);
-        DocumentVersion version = new DocumentVersion(createdBy, location, null);
+        DocumentVersion version = new DocumentVersion(1, createdBy, location, null);
         version.MarkDeleted(deletedBy);
 
         bool result = version.IsVisibleTo(snapshotTxId);
@@ -97,7 +97,7 @@ public class VersionIndexTests
     {
         TxId createdBy = new TxId(5);
         DocumentLocation location = new DocumentLocation(1, 0);
-        DocumentVersion version = new DocumentVersion(createdBy, location, null);
+        DocumentVersion version = new DocumentVersion(1, createdBy, location, null);
 
         Assert.IsFalse(version.IsDeleted);
     }
@@ -107,7 +107,7 @@ public class VersionIndexTests
     {
         TxId createdBy = new TxId(5);
         DocumentLocation location = new DocumentLocation(1, 0);
-        DocumentVersion version = new DocumentVersion(createdBy, location, null);
+        DocumentVersion version = new DocumentVersion(1, createdBy, location, null);
         version.MarkDeleted(new TxId(10));
 
         Assert.IsTrue(version.IsDeleted);
@@ -121,8 +121,8 @@ public class VersionIndexTests
         DocumentLocation location1 = new DocumentLocation(1, 0);
         DocumentLocation location2 = new DocumentLocation(2, 0);
 
-        DocumentVersion version1 = new DocumentVersion(tx1, location1, null);
-        DocumentVersion version2 = new DocumentVersion(tx2, location2, version1);
+        DocumentVersion version1 = new DocumentVersion(1, tx1, location1, null);
+        DocumentVersion version2 = new DocumentVersion(1, tx2, location2, version1);
 
         Assert.IsNull(version1.PreviousVersion);
         Assert.AreEqual(version1, version2.PreviousVersion);

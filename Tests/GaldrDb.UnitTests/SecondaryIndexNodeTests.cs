@@ -637,4 +637,166 @@ public class SecondaryIndexNodeTests
     }
 
     #endregion
+
+    #region Large Key Stress Tests
+
+    [TestMethod]
+    public void SecondaryIndexBTree_LargeKeys_ManyInserts_NoOverflow()
+    {
+        string dbPath = Path.Combine(_testDirectory, "large_keys_insert.db");
+        int pageSize = 8192;
+        int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(pageSize);
+
+        IPageIO pageIO;
+        PageManager pageManager;
+        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(dbPath, pageSize, maxKeys, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 200; i++)
+        {
+            string largeKeyString = $"VeryLongKeyNameThatExceedsTheAssumedAverageKeySize_{i:D5}_ExtraDataToMakeItEvenLonger";
+            byte[] key = Encoding.UTF8.GetBytes(largeKeyString);
+            byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(key, i);
+            DocumentLocation location = new DocumentLocation(i, i % 10);
+
+            tree.Insert(compositeKey, location);
+        }
+
+        for (int i = 1; i <= 200; i++)
+        {
+            string largeKeyString = $"VeryLongKeyNameThatExceedsTheAssumedAverageKeySize_{i:D5}_ExtraDataToMakeItEvenLonger";
+            byte[] key = Encoding.UTF8.GetBytes(largeKeyString);
+            byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(key, i);
+
+            DocumentLocation? found = tree.Search(compositeKey);
+            Assert.IsNotNull(found, $"Key {i} should exist");
+            Assert.AreEqual(i, found.Value.PageId);
+        }
+
+        pageIO.Dispose();
+    }
+
+    [TestMethod]
+    public void SecondaryIndexBTree_LargeKeys_InsertAndDelete_NoOverflow()
+    {
+        string dbPath = Path.Combine(_testDirectory, "large_keys_delete.db");
+        int pageSize = 8192;
+        int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(pageSize);
+
+        IPageIO pageIO;
+        PageManager pageManager;
+        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(dbPath, pageSize, maxKeys, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 300; i++)
+        {
+            string largeKeyString = $"LargeKey_{i:D5}_WithLotsOfExtraCharactersToExceedNormalKeySize";
+            byte[] key = Encoding.UTF8.GetBytes(largeKeyString);
+            byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(key, i);
+            DocumentLocation location = new DocumentLocation(i, 0);
+
+            tree.Insert(compositeKey, location);
+        }
+
+        for (int i = 1; i <= 250; i++)
+        {
+            string largeKeyString = $"LargeKey_{i:D5}_WithLotsOfExtraCharactersToExceedNormalKeySize";
+            byte[] key = Encoding.UTF8.GetBytes(largeKeyString);
+            byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(key, i);
+
+            bool deleted = tree.Delete(compositeKey);
+            Assert.IsTrue(deleted, $"Failed to delete key {i}");
+        }
+
+        for (int i = 251; i <= 300; i++)
+        {
+            string largeKeyString = $"LargeKey_{i:D5}_WithLotsOfExtraCharactersToExceedNormalKeySize";
+            byte[] key = Encoding.UTF8.GetBytes(largeKeyString);
+            byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(key, i);
+
+            DocumentLocation? found = tree.Search(compositeKey);
+            Assert.IsNotNull(found, $"Key {i} should still exist");
+        }
+
+        for (int i = 1; i <= 250; i++)
+        {
+            string largeKeyString = $"LargeKey_{i:D5}_WithLotsOfExtraCharactersToExceedNormalKeySize";
+            byte[] key = Encoding.UTF8.GetBytes(largeKeyString);
+            byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(key, i);
+
+            DocumentLocation? found = tree.Search(compositeKey);
+            Assert.IsNull(found, $"Key {i} should be deleted");
+        }
+
+        pageIO.Dispose();
+    }
+
+    [TestMethod]
+    public void SecondaryIndexBTree_VeryLargeKeys_HandledCorrectly()
+    {
+        string dbPath = Path.Combine(_testDirectory, "very_large_keys.db");
+        int pageSize = 8192;
+        int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(pageSize);
+
+        IPageIO pageIO;
+        PageManager pageManager;
+        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(dbPath, pageSize, maxKeys, out pageIO, out pageManager);
+
+        for (int i = 1; i <= 50; i++)
+        {
+            string veryLargeKeyString = new string('X', 150) + $"_{i:D5}";
+            byte[] key = Encoding.UTF8.GetBytes(veryLargeKeyString);
+            byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(key, i);
+            DocumentLocation location = new DocumentLocation(i, 0);
+
+            tree.Insert(compositeKey, location);
+        }
+
+        for (int i = 1; i <= 50; i++)
+        {
+            string veryLargeKeyString = new string('X', 150) + $"_{i:D5}";
+            byte[] key = Encoding.UTF8.GetBytes(veryLargeKeyString);
+            byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(key, i);
+
+            DocumentLocation? found = tree.Search(compositeKey);
+            Assert.IsNotNull(found, $"Very large key {i} should exist");
+        }
+
+        pageIO.Dispose();
+    }
+
+    [TestMethod]
+    public void Database_LargeIndexedFieldValues_InsertDeleteCycle()
+    {
+        string dbPath = Path.Combine(_testDirectory, "large_field_cycle.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false, UseMmap = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            for (int i = 0; i < 500; i++)
+            {
+                Person person = new Person
+                {
+                    Name = $"Person_{i:D5}_WithAVeryLongNameToTestLargeIndexKeys",
+                    Age = 20 + (i % 50),
+                    Email = $"person{i}@example.com"
+                };
+                db.Insert(person);
+            }
+
+            for (int i = 1; i <= 400; i++)
+            {
+                db.Delete<Person>(i);
+            }
+
+            for (int i = 401; i <= 500; i++)
+            {
+                Person person = db.GetById<Person>(i);
+                Assert.IsNotNull(person, $"Person {i} should exist");
+            }
+
+            System.Collections.Generic.List<Person> remaining = db.Query<Person>().ToList();
+            Assert.HasCount(100, remaining);
+        }
+    }
+
+    #endregion
 }

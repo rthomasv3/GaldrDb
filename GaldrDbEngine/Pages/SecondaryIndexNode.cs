@@ -47,7 +47,67 @@ public class SecondaryIndexNode
 
     public bool IsFull()
     {
-        return KeyCount >= _maxKeys;
+        bool full = KeyCount >= _maxKeys;
+        if (!full)
+        {
+            full = GetCurrentSerializedSize() >= _pageSize - 128;
+        }
+        return full;
+    }
+
+    public int GetCurrentSerializedSize()
+    {
+        int size = 10;
+
+        for (int i = 0; i < KeyCount; i++)
+        {
+            size += 2 + Keys[i].Length;
+        }
+
+        if (NodeType == BTreeNodeType.Internal)
+        {
+            size += (KeyCount + 1) * 4;
+        }
+        else
+        {
+            size += KeyCount * 8;
+        }
+
+        return size;
+    }
+
+    public bool CanMergeWith(SecondaryIndexNode other, int separatorKeyLength)
+    {
+        int baseOverhead = 10;
+        int combinedKeySize = 0;
+
+        for (int i = 0; i < KeyCount; i++)
+        {
+            combinedKeySize += 2 + Keys[i].Length;
+        }
+
+        for (int i = 0; i < other.KeyCount; i++)
+        {
+            combinedKeySize += 2 + other.Keys[i].Length;
+        }
+
+        if (NodeType == BTreeNodeType.Internal)
+        {
+            combinedKeySize += 2 + separatorKeyLength;
+        }
+
+        int combinedValueSize;
+        if (NodeType == BTreeNodeType.Internal)
+        {
+            combinedValueSize = (KeyCount + other.KeyCount + 2) * 4;
+        }
+        else
+        {
+            combinedValueSize = (KeyCount + other.KeyCount) * 8;
+        }
+
+        int totalSize = baseOverhead + combinedKeySize + combinedValueSize;
+        return totalSize <= _pageSize - 64;
     }
 
     public int GetMinKeys()
