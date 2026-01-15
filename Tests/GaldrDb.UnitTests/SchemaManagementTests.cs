@@ -4,6 +4,8 @@ using System.IO;
 using System.Linq;
 using GaldrDb.UnitTests.TestModels;
 using GaldrDbEngine;
+using GaldrDbEngine.Schema;
+using GaldrDbEngine.Storage;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using GaldrDbInstance = GaldrDbEngine.GaldrDb;
 
@@ -241,6 +243,180 @@ public class SchemaManagementTests
             {
                 db.GetIndexNames("Person");
             });
+        }
+    }
+
+    #endregion
+
+    #region GetOrphanedSchema Tests
+
+    [TestMethod]
+    public void GetOrphanedSchema_NoOrphans_ReturnsEmpty()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Test", Age = 25, Email = "test@example.com" });
+
+            OrphanedSchemaInfo orphans = db.GetOrphanedSchema();
+
+            Assert.IsFalse(orphans.HasOrphans);
+            Assert.IsEmpty(orphans.Collections);
+            Assert.IsEmpty(orphans.Indexes);
+        }
+    }
+
+    [TestMethod]
+    public void GetOrphanedSchema_OrphanedCollection_ReturnsCollection()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.CreateCollection("OrphanedTestCollection");
+
+            OrphanedSchemaInfo orphans = db.GetOrphanedSchema();
+
+            Assert.IsTrue(orphans.HasOrphans);
+            Assert.HasCount(1, orphans.Collections);
+            Assert.AreEqual("OrphanedTestCollection", orphans.Collections[0]);
+        }
+    }
+
+    [TestMethod]
+    public void GetOrphanedSchema_OrphanedIndex_ReturnsIndex()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Test", Age = 25, Email = "test@example.com" });
+
+            db.AddIndexForTesting("Person", "OrphanedField");
+
+            OrphanedSchemaInfo orphans = db.GetOrphanedSchema();
+
+            Assert.IsTrue(orphans.HasOrphans);
+            Assert.IsEmpty(orphans.Collections);
+            Assert.HasCount(1, orphans.Indexes);
+            Assert.AreEqual("Person", orphans.Indexes[0].CollectionName);
+            Assert.AreEqual("OrphanedField", orphans.Indexes[0].FieldName);
+        }
+    }
+
+    #endregion
+
+    #region CleanupOrphanedSchema Tests
+
+    [TestMethod]
+    public void CleanupOrphanedSchema_OrphanedCollection_RemovesCollection()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.CreateCollection("OrphanedTestCollection");
+
+            int countBefore = db.GetCollectionNames().Count;
+
+            OrphanedSchemaInfo cleaned = db.CleanupOrphanedSchema();
+
+            int countAfter = db.GetCollectionNames().Count;
+
+            Assert.HasCount(1, cleaned.Collections);
+            Assert.AreEqual("OrphanedTestCollection", cleaned.Collections[0]);
+            Assert.AreEqual(countBefore - 1, countAfter);
+            Assert.IsFalse(db.GetCollectionNames().Contains("OrphanedTestCollection"));
+        }
+    }
+
+    [TestMethod]
+    public void CleanupOrphanedSchema_OrphanedIndex_RemovesIndex()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Test", Age = 25, Email = "test@example.com" });
+            db.AddIndexForTesting("Person", "OrphanedField");
+
+            IReadOnlyList<string> indexesBefore = db.GetIndexNames("Person");
+            Assert.IsTrue(indexesBefore.Contains("OrphanedField"));
+
+            OrphanedSchemaInfo cleaned = db.CleanupOrphanedSchema();
+
+            IReadOnlyList<string> indexesAfter = db.GetIndexNames("Person");
+
+            Assert.HasCount(1, cleaned.Indexes);
+            Assert.AreEqual("OrphanedField", cleaned.Indexes[0].FieldName);
+            Assert.IsFalse(indexesAfter.Contains("OrphanedField"));
+            Assert.IsTrue(indexesAfter.Contains("Name"));
+        }
+    }
+
+    [TestMethod]
+    public void CleanupOrphanedSchema_OrphanedCollectionWithDocuments_ThrowsWithoutFlag()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.CreateCollection("OrphanedTestCollection");
+
+            CollectionEntry collection = db.GetCollection("OrphanedTestCollection");
+            collection.DocumentCount = 5;
+
+            Assert.Throws<InvalidOperationException>(() =>
+            {
+                db.CleanupOrphanedSchema();
+            });
+        }
+    }
+
+    [TestMethod]
+    public void CleanupOrphanedSchema_OrphanedCollectionWithDocuments_RemovesWithFlag()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.CreateCollection("OrphanedTestCollection");
+
+            OrphanedSchemaInfo cleaned = db.CleanupOrphanedSchema(deleteDocuments: true);
+
+            Assert.HasCount(1, cleaned.Collections);
+            Assert.IsFalse(db.GetCollectionNames().Contains("OrphanedTestCollection"));
+        }
+    }
+
+    [TestMethod]
+    public void CleanupOrphanedSchema_ReturnsCleanedItems()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Test", Age = 25, Email = "test@example.com" });
+            db.CreateCollection("OrphanedCollection1");
+            db.CreateCollection("OrphanedCollection2");
+            db.AddIndexForTesting("Person", "OrphanedIndex1");
+            db.AddIndexForTesting("Person", "OrphanedIndex2");
+
+            OrphanedSchemaInfo cleaned = db.CleanupOrphanedSchema();
+
+            Assert.HasCount(2, cleaned.Collections);
+            Assert.HasCount(2, cleaned.Indexes);
+            Assert.IsTrue(cleaned.Collections.Contains("OrphanedCollection1"));
+            Assert.IsTrue(cleaned.Collections.Contains("OrphanedCollection2"));
         }
     }
 

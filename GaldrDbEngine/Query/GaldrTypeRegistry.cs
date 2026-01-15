@@ -95,4 +95,14 @@ public static class GaldrTypeRegistry
 
         return result;
     }
+
+    internal static bool Unregister(Type type)
+    {
+        return _registry.Remove(type);
+    }
+
+    internal static void RestoreRegistration(IGaldrTypeInfo typeInfo)
+    {
+        _registry[typeInfo.DocumentType] = typeInfo;
+    }
 }

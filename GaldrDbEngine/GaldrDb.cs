@@ -8,6 +8,7 @@ using GaldrDbEngine.IO;
 using GaldrDbEngine.MVCC;
 using GaldrDbEngine.Pages;
 using GaldrDbEngine.Query;
+using GaldrDbEngine.Schema;
 using GaldrDbEngine.Storage;
 using GaldrDbEngine.Utilities;
 using GaldrDbEngine.Transactions;
@@ -411,7 +412,7 @@ public class GaldrDb : IDisposable
         return tx;
     }
 
-    private void CreateCollection(string collectionName)
+    internal void CreateCollection(string collectionName)
     {
         CollectionEntry existingCollection = _collectionsMetadata.FindCollection(collectionName);
         if (existingCollection != null)
@@ -614,6 +615,80 @@ public class GaldrDb : IDisposable
         }
     }
 
+    public OrphanedSchemaInfo GetOrphanedSchema()
+    {
+        List<string> orphanedCollections = new List<string>();
+        List<OrphanedIndexInfo> orphanedIndexes = new List<OrphanedIndexInfo>();
+
+        HashSet<string> registeredCollectionNames = new HashSet<string>();
+        Dictionary<string, HashSet<string>> registeredIndexesByCollection = new Dictionary<string, HashSet<string>>();
+
+        if (GaldrTypeRegistry.IsInitialized)
+        {
+            foreach (IGaldrTypeInfo typeInfo in GaldrTypeRegistry.GetAll())
+            {
+                if (typeInfo is IGaldrProjectionTypeInfo)
+                {
+                    continue;
+                }
+
+                registeredCollectionNames.Add(typeInfo.CollectionName);
+
+                HashSet<string> indexedFields = new HashSet<string>();
+                for (int i = 0; i < typeInfo.IndexedFieldNames.Count; i++)
+                {
+                    indexedFields.Add(typeInfo.IndexedFieldNames[i]);
+                }
+                registeredIndexesByCollection[typeInfo.CollectionName] = indexedFields;
+            }
+        }
+
+        List<CollectionEntry> allCollections = _collectionsMetadata.GetAllCollections();
+
+        for (int i = 0; i < allCollections.Count; i++)
+        {
+            CollectionEntry collection = allCollections[i];
+
+            if (!registeredCollectionNames.Contains(collection.Name))
+            {
+                orphanedCollections.Add(collection.Name);
+            }
+            else
+            {
+                HashSet<string> registeredIndexes = registeredIndexesByCollection[collection.Name];
+
+                for (int j = 0; j < collection.Indexes.Count; j++)
+                {
+                    IndexDefinition index = collection.Indexes[j];
+                    if (!registeredIndexes.Contains(index.FieldName))
+                    {
+                        orphanedIndexes.Add(new OrphanedIndexInfo(collection.Name, index.FieldName));
+                    }
+                }
+            }
+        }
+
+        return new OrphanedSchemaInfo(orphanedCollections, orphanedIndexes);
+    }
+
+    public OrphanedSchemaInfo CleanupOrphanedSchema(bool deleteDocuments = false)
+    {
+        OrphanedSchemaInfo orphans = GetOrphanedSchema();
+
+        for (int i = 0; i < orphans.Collections.Count; i++)
+        {
+            DropCollection(orphans.Collections[i], deleteDocuments);
+        }
+
+        for (int i = 0; i < orphans.Indexes.Count; i++)
+        {
+            OrphanedIndexInfo index = orphans.Indexes[i];
+            DropIndex(index.CollectionName, index.FieldName);
+        }
+
+        return orphans;
+    }
+
     #endregion
 
     #region Type-Safe CRUD Operations
@@ -788,6 +863,58 @@ public class GaldrDb : IDisposable
         }
     }
     
+    internal void AddIndexForTesting(string collectionName, string fieldName)
+    {
+        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist.");
+        }
+
+        if (collection.FindIndex(fieldName) != null)
+        {
+            throw new InvalidOperationException($"Index '{fieldName}' already exists on collection '{collectionName}'.");
+        }
+
+        EnsureTransactionManager();
+        ulong walTxId = _txManager.AllocateTxId().Value;
+        BeginWalTransaction(walTxId);
+
+        byte[] rootBuffer = BufferPool.Rent(_options.PageSize);
+        try
+        {
+            int rootPageId = _pageManager.AllocatePage();
+            int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
+            SecondaryIndexNode rootNode = new SecondaryIndexNode(_options.PageSize, maxKeys, BTreeNodeType.Leaf);
+
+            rootNode.SerializeTo(rootBuffer);
+            _pageIO.WritePage(rootPageId, rootBuffer);
+
+            IndexDefinition newIndex = new IndexDefinition
+            {
+                FieldName = fieldName,
+                FieldType = GaldrFieldType.String,
+                RootPageId = rootPageId,
+                IsUnique = false
+            };
+
+            collection.Indexes.Add(newIndex);
+            _collectionsMetadata.UpdateCollection(collection);
+            _collectionsMetadata.WriteToDisk();
+
+            CommitWalTransaction();
+        }
+        catch
+        {
+            AbortWalTransaction();
+            throw;
+        }
+        finally
+        {
+            BufferPool.Return(rootBuffer);
+        }
+    }
+
     private void CheckUniqueConstraint(IndexDefinition indexDef, string fieldName, byte[] keyBytes)
     {
         int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);

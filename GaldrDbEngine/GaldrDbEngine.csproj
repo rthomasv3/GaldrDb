@@ -9,4 +9,8 @@
       <PackageReference Include="GaldrJson" Version="1.1.1" />
     </ItemGroup>
 
+    <ItemGroup>
+      <InternalsVisibleTo Include="GaldrDb.UnitTests" />
+    </ItemGroup>
+
 </Project>
