@@ -572,18 +572,15 @@ public class QueryPlannerTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
-            {
-                tx.Insert(new Person { Name = "Test", Age = 25, Email = "test@example.com" });
+            db.Insert(new Person { Name = "Test", Age = 25, Email = "test@example.com" });
 
-                QueryExplanation explanation = tx.Query<Person>()
-                    .WhereBetween(PersonMeta.Id, 1, 100)
-                    .Explain();
+            QueryExplanation explanation = db.Query<Person>()
+                .WhereBetween(PersonMeta.Id, 1, 100)
+                .Explain();
 
-                Assert.AreEqual(QueryScanType.PrimaryKeyRange, explanation.ScanType);
-                Assert.AreEqual("1", explanation.RangeStart);
-                Assert.AreEqual("100", explanation.RangeEnd);
-            }
+            Assert.AreEqual(QueryScanType.PrimaryKeyRange, explanation.ScanType);
+            Assert.AreEqual("1", explanation.RangeStart);
+            Assert.AreEqual("100", explanation.RangeEnd);
         }
     }
 

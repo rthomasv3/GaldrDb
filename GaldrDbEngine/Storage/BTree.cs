@@ -177,6 +177,42 @@ public class BTree
         return entries;
     }
 
+    public List<int> CollectAllPageIds()
+    {
+        List<int> pageIds = new List<int>();
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+        Stack<int> pageStack = new Stack<int>();
+        pageStack.Push(_rootPageId);
+
+        try
+        {
+            while (pageStack.Count > 0)
+            {
+                int currentPageId = pageStack.Pop();
+                pageIds.Add(currentPageId);
+
+                _pageIO.ReadPage(currentPageId, buffer);
+                BTreeNode.DeserializeTo(buffer, node, _order);
+
+                if (node.NodeType == BTreeNodeType.Internal)
+                {
+                    for (int i = node.KeyCount; i >= 0; i--)
+                    {
+                        pageStack.Push(node.ChildPageIds[i]);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            BufferPool.Return(buffer);
+            BTreeNodePool.Return(node);
+        }
+
+        return pageIds;
+    }
+
     private void CollectAllEntries(int pageId, List<BTreeEntry> entries)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);

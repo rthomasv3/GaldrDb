@@ -456,6 +456,166 @@ public class GaldrDb : IDisposable
 
     #endregion
 
+    #region Schema Management
+
+    public IReadOnlyList<string> GetCollectionNames()
+    {
+        List<CollectionEntry> collections = _collectionsMetadata.GetAllCollections();
+        List<string> names = new List<string>(collections.Count);
+
+        for (int i = 0; i < collections.Count; i++)
+        {
+            names.Add(collections[i].Name);
+        }
+
+        return names;
+    }
+
+    public IReadOnlyList<string> GetIndexNames(string collectionName)
+    {
+        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist.");
+        }
+
+        List<string> names = new List<string>(collection.Indexes.Count);
+
+        for (int i = 0; i < collection.Indexes.Count; i++)
+        {
+            names.Add(collection.Indexes[i].FieldName);
+        }
+
+        return names;
+    }
+
+    public void DropIndex(string collectionName, string fieldName)
+    {
+        lock (_ddlLock)
+        {
+            CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+            if (collection == null)
+            {
+                throw new InvalidOperationException($"Collection '{collectionName}' does not exist.");
+            }
+
+            IndexDefinition indexToRemove = null;
+            int indexPosition = -1;
+
+            for (int i = 0; i < collection.Indexes.Count; i++)
+            {
+                if (collection.Indexes[i].FieldName == fieldName)
+                {
+                    indexToRemove = collection.Indexes[i];
+                    indexPosition = i;
+                    break;
+                }
+            }
+
+            if (indexToRemove == null)
+            {
+                throw new InvalidOperationException($"Index '{fieldName}' does not exist on collection '{collectionName}'.");
+            }
+
+            EnsureTransactionManager();
+            ulong walTxId = _txManager.AllocateTxId().Value;
+            BeginWalTransaction(walTxId);
+
+            try
+            {
+                int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
+                SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexToRemove.RootPageId, _options.PageSize, maxKeys);
+
+                List<int> pageIds = indexTree.CollectAllPageIds();
+                for (int i = 0; i < pageIds.Count; i++)
+                {
+                    _pageManager.DeallocatePage(pageIds[i]);
+                }
+
+                collection.Indexes.RemoveAt(indexPosition);
+                _collectionsMetadata.UpdateCollection(collection);
+                _collectionsMetadata.WriteToDisk();
+
+                CommitWalTransaction();
+            }
+            catch
+            {
+                AbortWalTransaction();
+                throw;
+            }
+        }
+    }
+
+    public void DropCollection(string collectionName, bool deleteDocuments = false)
+    {
+        lock (_ddlLock)
+        {
+            CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+            if (collection == null)
+            {
+                throw new InvalidOperationException($"Collection '{collectionName}' does not exist.");
+            }
+
+            if (collection.DocumentCount > 0 && !deleteDocuments)
+            {
+                throw new InvalidOperationException($"Collection '{collectionName}' contains {collection.DocumentCount} document(s). Set deleteDocuments to true to delete the collection and all its documents.");
+            }
+
+            EnsureTransactionManager();
+            ulong walTxId = _txManager.AllocateTxId().Value;
+            BeginWalTransaction(walTxId);
+
+            try
+            {
+                for (int i = 0; i < collection.Indexes.Count; i++)
+                {
+                    IndexDefinition index = collection.Indexes[i];
+                    int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
+                    SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, index.RootPageId, _options.PageSize, maxKeys);
+
+                    List<int> indexPageIds = indexTree.CollectAllPageIds();
+                    for (int j = 0; j < indexPageIds.Count; j++)
+                    {
+                        _pageManager.DeallocatePage(indexPageIds[j]);
+                    }
+                }
+
+                int order = CalculateBTreeOrder(_options.PageSize);
+                BTree primaryTree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
+
+                if (deleteDocuments)
+                {
+                    List<BTreeEntry> allEntries = primaryTree.GetAllEntries();
+                    for (int i = 0; i < allEntries.Count; i++)
+                    {
+                        DocumentLocation location = allEntries[i].Location;
+                        _documentStorage.DeleteDocument(location.PageId, location.SlotIndex);
+                    }
+                }
+
+                List<int> treePageIds = primaryTree.CollectAllPageIds();
+                for (int i = 0; i < treePageIds.Count; i++)
+                {
+                    _pageManager.DeallocatePage(treePageIds[i]);
+                }
+
+                _collectionsMetadata.RemoveCollection(collectionName);
+                _collectionsMetadata.WriteToDisk();
+
+                _ensuredCollections.Remove(collectionName);
+
+                CommitWalTransaction();
+            }
+            catch
+            {
+                AbortWalTransaction();
+                throw;
+            }
+        }
+    }
+
+    #endregion
+
     #region Type-Safe CRUD Operations
 
     public int Insert<T>(T document)

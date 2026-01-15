@@ -91,6 +91,42 @@ public class SecondaryIndexBTree
         return DeleteFromNode(_rootPageId, key);
     }
 
+    public List<int> CollectAllPageIds()
+    {
+        List<int> pageIds = new List<int>();
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
+        Stack<int> pageStack = new Stack<int>();
+        pageStack.Push(_rootPageId);
+
+        try
+        {
+            while (pageStack.Count > 0)
+            {
+                int currentPageId = pageStack.Pop();
+                pageIds.Add(currentPageId);
+
+                _pageIO.ReadPage(currentPageId, buffer);
+                SecondaryIndexNode.DeserializeTo(buffer, node);
+
+                if (node.NodeType == BTreeNodeType.Internal)
+                {
+                    for (int i = node.KeyCount; i >= 0; i--)
+                    {
+                        pageStack.Push(node.ChildPageIds[i]);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            BufferPool.Return(buffer);
+            SecondaryIndexNodePool.Return(node);
+        }
+
+        return pageIds;
+    }
+
     private DocumentLocation? SearchNode(int pageId, byte[] key)
     {
         DocumentLocation? result = null;
