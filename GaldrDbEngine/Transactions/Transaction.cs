@@ -153,7 +153,6 @@ public class Transaction : IDisposable
         {
             assignedId = currentId;
 
-            // Check for write-write conflict on explicit ID insert
             DocumentVersion existingVersion = _versionIndex.GetLatestVersion(collectionName, assignedId);
             if (existingVersion != null && !existingVersion.IsDeleted)
             {
@@ -372,16 +371,13 @@ public class Transaction : IDisposable
         {
             State = TransactionState.Committing;
 
-            // Final validation: check for write-write conflicts
             ValidateWriteSet();
 
-            // Begin WAL transaction - all page writes will be batched
             _db.BeginWalTransaction(TxId.Value);
             _hasActiveWalTransaction = true;
 
             try
             {
-                // Apply write set to database and update version index
                 foreach (KeyValuePair<(string CollectionName, int DocId), WriteSetEntry> kvp in _writeSet)
                 {
                     WriteSetEntry entry = kvp.Value;
@@ -406,7 +402,6 @@ public class Transaction : IDisposable
                     }
                 }
 
-                // Commit WAL transaction - writes all batched pages with commit flag and fsyncs
                 _db.CommitWalTransaction();
                 _hasActiveWalTransaction = false;
 
@@ -414,15 +409,12 @@ public class Transaction : IDisposable
                 _txManager.MarkCommitted(TxId);
                 _writeSet.Clear();
 
-                // Try to run garbage collection if threshold is met
                 _db.TryRunGarbageCollection();
 
-                // Try to run auto-checkpoint if WAL threshold is met
                 _db.TryRunAutoCheckpoint();
             }
             catch
             {
-                // Abort WAL transaction on any failure
                 _db.AbortWalTransaction();
                 _hasActiveWalTransaction = false;
                 State = TransactionState.Aborted;

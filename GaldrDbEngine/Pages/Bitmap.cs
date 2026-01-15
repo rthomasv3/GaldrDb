@@ -1,4 +1,6 @@
 using System;
+using System.Buffers.Binary;
+using System.Numerics;
 using GaldrDbEngine.IO;
 using GaldrDbEngine.Utilities;
 
@@ -71,13 +73,48 @@ public class Bitmap
     public int FindFreePage()
     {
         int result = -1;
+        int byteLength = _bitmap.Length;
+        int ulongCount = byteLength / 8;
 
-        for (int pageId = 0; pageId < _totalPages; pageId++)
+        // Process 64 bits at a time using hardware intrinsics
+        for (int i = 0; i < ulongCount; i++)
         {
-            if (!IsAllocated(pageId))
+            int offset = i * 8;
+            ulong chunk = BinaryPrimitives.ReadUInt64LittleEndian(_bitmap.AsSpan(offset, 8));
+
+            if (chunk != ulong.MaxValue)
             {
-                result = pageId;
+                // Invert to find first 0 bit (becomes first 1 bit after inversion)
+                ulong inverted = ~chunk;
+                int bitPosition = BitOperations.TrailingZeroCount(inverted);
+                int pageId = i * 64 + bitPosition;
+
+                if (pageId < _totalPages)
+                {
+                    result = pageId;
+                }
                 break;
+            }
+        }
+
+        // Handle remaining bytes that don't fill a complete ulong
+        if (result == -1)
+        {
+            int startByte = ulongCount * 8;
+            for (int byteIndex = startByte; byteIndex < byteLength; byteIndex++)
+            {
+                byte b = _bitmap[byteIndex];
+                if (b != 0xFF)
+                {
+                    int bitPosition = BitOperations.TrailingZeroCount((uint)(byte)~b);
+                    int pageId = byteIndex * 8 + bitPosition;
+
+                    if (pageId < _totalPages)
+                    {
+                        result = pageId;
+                    }
+                    break;
+                }
             }
         }
 

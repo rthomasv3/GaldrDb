@@ -156,6 +156,18 @@ public class GaldrDb : IDisposable
 
     public GarbageCollectionResult Vacuum()
     {
+        GarbageCollectionResult gcResult = CollectGarbageInternal();
+        int pagesCompacted = CompactFragmentedPages();
+
+        return new GarbageCollectionResult(
+            gcResult.VersionsCollected,
+            gcResult.DocumentsProcessed,
+            gcResult.CollectableVersions,
+            pagesCompacted);
+    }
+
+    private GarbageCollectionResult CollectGarbageInternal()
+    {
         EnsureGarbageCollector();
         GarbageCollectionResult gcResult = _garbageCollector.Collect();
 
@@ -182,13 +194,7 @@ public class GaldrDb : IDisposable
             _garbageCollector.UnlinkVersions(gcResult.CollectableVersions);
         }
 
-        int pagesCompacted = CompactFragmentedPages();
-
-        return new GarbageCollectionResult(
-            gcResult.VersionsCollected,
-            gcResult.DocumentsProcessed,
-            gcResult.CollectableVersions,
-            pagesCompacted);
+        return gcResult;
     }
 
     public Task<GarbageCollectionResult> VacuumAsync(CancellationToken cancellationToken = default)
@@ -1284,7 +1290,7 @@ public class GaldrDb : IDisposable
 
         if (commitsSinceLastGC >= _options.GarbageCollectionThreshold)
         {
-            Vacuum();
+            CollectGarbageInternal();
             _lastGCCommitCount = currentCommitCount;
         }
     }
@@ -1600,6 +1606,12 @@ public class GaldrDb : IDisposable
 
                 byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(field.KeyBytes, docId);
                 indexTree.Delete(compositeKey);
+
+                int newRootPageId = indexTree.GetRootPageId();
+                if (newRootPageId != indexDef.RootPageId)
+                {
+                    indexDef.RootPageId = newRootPageId;
+                }
             }
         }
     }

@@ -340,4 +340,79 @@ public class IndexedQueryTests
             Assert.HasCount(5, results);
         }
     }
+
+    [TestMethod]
+    public void SecondaryIndex_RootPageUpdatedAfterDeletes_InsertsStillWork()
+    {
+        // This test verifies that after deleting many documents (causing secondary index
+        // B+ tree rebalancing/shrinking), subsequent inserts still work correctly.
+        // Bug: DeleteFromIndexesInternal was not updating indexDef.RootPageId after deletes,
+        // causing the tree to use a stale (deallocated) root page on subsequent operations.
+        string dbPath = Path.Combine(_testDirectory, "delete_rebalance.db");
+
+        // Match exact conditions from diagnostic test that reproduced the bug
+        GaldrDbOptions options = new GaldrDbOptions
+        {
+            UseWal = true,
+            AutoGarbageCollection = false,
+            AutoCheckpoint = false
+        };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            // Phase 1: Insert 200 documents with indexed Name field
+            List<int> ids = new List<int>();
+            for (int i = 0; i < 200; i++)
+            {
+                Person person = new Person
+                {
+                    Name = $"Person {i}",
+                    Age = 25,
+                    Email = "test@example.com"
+                };
+                ids.Add(db.Insert(person));
+            }
+
+            // Phase 2: Delete the last 100 documents (triggers tree rebalancing)
+            for (int i = 100; i < 200; i++)
+            {
+                db.Delete<Person>(ids[i]);
+            }
+
+            // Phase 3: Insert 1000 new documents - this would crash before the fix
+            // because the secondary index root page was stale after tree shrinking
+            for (int i = 0; i < 1000; i++)
+            {
+                Person person = new Person
+                {
+                    Name = $"NewPerson {i}",
+                    Age = 30,
+                    Email = "new@example.com"
+                };
+                db.Insert(person);
+            }
+
+            // Phase 4: Verify the index still works correctly
+            List<Person> originalPersons = db.Query<Person>()
+                .Where(PersonMeta.Name, FieldOp.StartsWith, "Person ")
+                .ToList();
+
+            List<Person> newPersons = db.Query<Person>()
+                .Where(PersonMeta.Name, FieldOp.StartsWith, "NewPerson ")
+                .ToList();
+
+            // Should have 100 original persons
+            Assert.HasCount(100, originalPersons);
+
+            // Should have 1000 new persons
+            Assert.HasCount(1000, newPersons);
+
+            // Verify we can look up specific entries
+            Person specific = db.Query<Person>()
+                .Where(PersonMeta.Name, FieldOp.Equals, "NewPerson 500")
+                .FirstOrDefault();
+            Assert.IsNotNull(specific);
+            Assert.AreEqual("NewPerson 500", specific.Name);
+        }
+    }
 }

@@ -5,7 +5,7 @@ namespace GaldrDbEngine.WAL;
 
 public class WalFrame
 {
-    public const int FRAME_HEADER_SIZE = 32;
+    public const int FRAME_HEADER_SIZE = 40;
 
     public long FrameNumber { get; set; }
     public ulong TxId { get; set; }
@@ -13,6 +13,8 @@ public class WalFrame
     public byte PageType { get; set; }
     public WalFrameFlags Flags { get; set; }
     public int DataLength { get; set; }
+    public uint Salt1 { get; set; }
+    public uint Salt2 { get; set; }
     public uint Checksum { get; set; }
     public byte[] Data { get; set; }
 
@@ -49,6 +51,12 @@ public class WalFrame
         BinaryHelper.WriteInt32LE(buffer, offset, Data.Length);
         offset += 4;
 
+        BinaryHelper.WriteUInt32LE(buffer, offset, Salt1);
+        offset += 4;
+
+        BinaryHelper.WriteUInt32LE(buffer, offset, Salt2);
+        offset += 4;
+
         // Checksum placeholder - will be calculated after data is written
         offset += 4;
 
@@ -58,7 +66,7 @@ public class WalFrame
             Array.Copy(Data, 0, buffer, offset, Data.Length);
         }
 
-        // Calculate checksum over entire frame (excluding checksum field at bytes 28-31)
+        // Calculate checksum over entire frame (excluding checksum field at bytes 36-39)
         Checksum = CalculateFrameChecksumInPlace(buffer, totalSize);
         BinaryHelper.WriteUInt32LE(buffer, FRAME_HEADER_SIZE - 4, Checksum);
 
@@ -89,6 +97,12 @@ public class WalFrame
         offset += 2;
 
         frame.DataLength = BinaryHelper.ReadInt32LE(headerBuffer, offset);
+        offset += 4;
+
+        frame.Salt1 = BinaryHelper.ReadUInt32LE(headerBuffer, offset);
+        offset += 4;
+
+        frame.Salt2 = BinaryHelper.ReadUInt32LE(headerBuffer, offset);
         offset += 4;
 
         frame.Checksum = BinaryHelper.ReadUInt32LE(headerBuffer, offset);
@@ -122,9 +136,7 @@ public class WalFrame
             int totalSize = SerializeTo(buffer);
             uint calculatedChecksum = CalculateFrameChecksumInPlace(buffer, totalSize);
 
-            bool result = calculatedChecksum == Checksum;
-
-            return result;
+            return calculatedChecksum == Checksum;
         }
         finally
         {
@@ -134,24 +146,20 @@ public class WalFrame
 
     public bool IsCommit()
     {
-        bool result = (Flags & WalFrameFlags.Commit) != 0;
-
-        return result;
+        return (Flags & WalFrameFlags.Commit) != 0;
     }
 
     public bool IsCheckpoint()
     {
-        bool result = (Flags & WalFrameFlags.Checkpoint) != 0;
-
-        return result;
+        return (Flags & WalFrameFlags.Checkpoint) != 0;
     }
 
     private static uint CalculateFrameChecksumInPlace(byte[] buffer, int totalSize)
     {
-        // Calculate checksum over frame header (excluding checksum field at bytes 28-31) + data
-        // Segment 1: bytes 0-27 (header before checksum)
-        // Segment 2: bytes 32+ (data after header)
-        int headerBeforeChecksum = FRAME_HEADER_SIZE - 4; // 28 bytes
+        // Calculate checksum over frame header (excluding checksum field at bytes 36-39) + data
+        // Segment 1: bytes 0-35 (header before checksum)
+        // Segment 2: bytes 40+ (data after header)
+        int headerBeforeChecksum = FRAME_HEADER_SIZE - 4; // 36 bytes
         int dataLength = totalSize - FRAME_HEADER_SIZE;
 
         uint checksum;

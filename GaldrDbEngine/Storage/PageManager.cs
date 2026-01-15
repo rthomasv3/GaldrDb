@@ -49,9 +49,7 @@ public class PageManager
             FsmStartPage = fsmStartPage,
             FsmPageCount = fsmPageCount,
             CollectionsMetadataPage = collectionsMetadataPage,
-            MmapHint = 1,
-            LastCommitFrame = 0,
-            WalChecksum = 0
+            MmapHint = 1
         };
 
         byte[] headerBytes = _header.Serialize(_pageSize);
@@ -124,9 +122,7 @@ public class PageManager
         _bitmap.WriteToDisk();
         _fsm.WriteToDisk();
 
-        int result = pageId;
-
-        return result;
+        return pageId;
     }
 
     public int[] AllocatePages(int count)
@@ -181,16 +177,12 @@ public class PageManager
 
     public bool IsAllocated(int pageId)
     {
-        bool result = _bitmap.IsAllocated(pageId);
-
-        return result;
+        return _bitmap.IsAllocated(pageId);
     }
 
     public FreeSpaceLevel GetFreeSpaceLevel(int pageId)
     {
-        FreeSpaceLevel result = _fsm.GetFreeSpaceLevel(pageId);
-
-        return result;
+        return _fsm.GetFreeSpaceLevel(pageId);
     }
 
     public void SetFreeSpaceLevel(int pageId, FreeSpaceLevel level)
@@ -201,9 +193,7 @@ public class PageManager
 
     public int FindPageWithSpace(FreeSpaceLevel minLevel)
     {
-        int result = _fsm.FindPageWithSpace(minLevel);
-
-        return result;
+        return _fsm.FindPageWithSpace(minLevel);
     }
 
     public void Flush()
@@ -252,8 +242,6 @@ public class PageManager
     private int CalculateExpansionSize(int currentPageCount)
     {
         int calculated = (int)(currentPageCount * (_growthFactor - 1.0));
-        int result = Math.Max(_minimumExpansion, calculated);
-
-        return result;
+        return Math.Max(_minimumExpansion, calculated);
     }
 }

@@ -8,7 +8,7 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.WAL;
 
-public class WalPageIO : IPageIO
+internal class WalPageIO : IPageIO
 {
     private readonly IPageIO _innerPageIO;
     private readonly WriteAheadLog _wal;
@@ -68,17 +68,10 @@ public class WalPageIO : IPageIO
                 throw new InvalidOperationException("No transaction in progress");
             }
 
-            // Write all pending pages to WAL
-            for (int i = 0; i < _pendingWrites.Count; i++)
+            _wal.WriteTransactionBatch(_activeTxId, _pendingWrites);
+
+            foreach (PendingPageWrite write in _pendingWrites)
             {
-                PendingPageWrite write = _pendingWrites[i];
-                bool isLastWrite = (i == _pendingWrites.Count - 1);
-                WalFrameFlags flags = isLastWrite ? WalFrameFlags.Commit : WalFrameFlags.None;
-
-                _wal.WriteFrame(_activeTxId, write.PageId, write.PageType, write.Data, flags);
-
-                // Update cache with committed data
-                // Return old buffer to pool if this page was already in cache
                 if (_walPageCache.TryGetValue(write.PageId, out byte[] oldBuffer))
                 {
                     BufferPool.Return(oldBuffer);
@@ -86,11 +79,8 @@ public class WalPageIO : IPageIO
                 _walPageCache[write.PageId] = write.Data;
             }
 
-            // Ensure WAL is fsynced to disk before acknowledging commit
             _wal.Flush();
 
-            // Buffers moved to cache - clear tracking but don't return to pool
-            // They'll be returned during Checkpoint
             _rentedBuffers.Clear();
             _pendingWrites.Clear();
             _inTransaction = false;

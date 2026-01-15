@@ -36,7 +36,8 @@ public class WalTests
         {
             PageSize = 8192,
             CheckpointTxId = 12345,
-            FrameCount = 100
+            Salt1 = 42,
+            Salt2 = 999
         };
 
         byte[] buffer = new byte[WalHeader.HEADER_SIZE];
@@ -47,7 +48,8 @@ public class WalTests
         Assert.AreEqual(1, deserialized.Version);
         Assert.AreEqual(8192, deserialized.PageSize);
         Assert.AreEqual(12345ul, deserialized.CheckpointTxId);
-        Assert.AreEqual(100, deserialized.FrameCount);
+        Assert.AreEqual(42u, deserialized.Salt1);
+        Assert.AreEqual(999u, deserialized.Salt2);
     }
 
     [TestMethod]
@@ -57,7 +59,8 @@ public class WalTests
         {
             PageSize = 4096,
             CheckpointTxId = 999,
-            FrameCount = 50
+            Salt1 = 1,
+            Salt2 = 12345
         };
 
         byte[] buffer = new byte[WalHeader.HEADER_SIZE];
@@ -221,10 +224,10 @@ public class WalTests
     }
 
     [TestMethod]
-    public void WalFrame_FrameHeaderSize_Is32Bytes()
+    public void WalFrame_FrameHeaderSize_Is40Bytes()
     {
 #pragma warning disable MSTEST0032
-        Assert.AreEqual(32, WalFrame.FRAME_HEADER_SIZE);
+        Assert.AreEqual(40, WalFrame.FRAME_HEADER_SIZE);
 #pragma warning restore MSTEST0032
     }
 
@@ -256,7 +259,8 @@ public class WalTests
 
             Assert.AreEqual(8192, wal.Header.PageSize);
             Assert.AreEqual(0ul, wal.Header.CheckpointTxId);
-            Assert.AreEqual(0, wal.Header.FrameCount);
+            Assert.AreEqual(1u, wal.Header.Salt1);
+            Assert.AreNotEqual(0u, wal.Header.Salt2);
             Assert.AreEqual(0, wal.CurrentFrameNumber);
         }
     }
@@ -368,7 +372,6 @@ public class WalTests
             Assert.AreEqual(1, frame1);
             Assert.AreEqual(2, frame2);
             Assert.AreEqual(2, wal.CurrentFrameNumber);
-            Assert.AreEqual(2, wal.Header.FrameCount);
         }
     }
 
@@ -392,8 +395,6 @@ public class WalTests
         using (WriteAheadLog wal = new WriteAheadLog(walPath, 8192))
         {
             wal.Open();
-
-            Assert.AreEqual(1, wal.Header.FrameCount);
 
             List<WalFrame> frames = wal.ReadAllFrames();
 
@@ -484,15 +485,19 @@ public class WalTests
         using (WriteAheadLog wal = new WriteAheadLog(walPath, 4096))
         {
             wal.Create();
+            uint originalSalt1 = wal.Header.Salt1;
+            uint originalSalt2 = wal.Header.Salt2;
+
             wal.WriteFrame(1, 0, 0x01, testData, WalFrameFlags.None);
             wal.WriteFrame(1, 1, 0x01, testData, WalFrameFlags.Commit);
 
-            Assert.AreEqual(2, wal.Header.FrameCount);
+            Assert.AreEqual(2, wal.CurrentFrameNumber);
 
             wal.Truncate();
 
-            Assert.AreEqual(0, wal.Header.FrameCount);
             Assert.AreEqual(0, wal.CurrentFrameNumber);
+            Assert.AreEqual(originalSalt1 + 1, wal.Header.Salt1);
+            Assert.AreNotEqual(originalSalt2, wal.Header.Salt2);
 
             List<WalFrame> frames = wal.ReadAllFrames();
             Assert.IsEmpty(frames);
@@ -661,6 +666,142 @@ public class WalTests
             Assert.AreEqual(100, frames[0].DataLength);
             Assert.HasCount(100, frames[0].Data);
             CollectionAssert.AreEqual(smallData, frames[0].Data);
+        }
+    }
+
+    #endregion
+
+    #region Salt Mechanism Tests
+
+    [TestMethod]
+    public void WriteAheadLog_Frames_ContainHeaderSalts()
+    {
+        string walPath = Path.Combine(_testDirectory, "test.wal");
+        byte[] testData = new byte[4096];
+
+        using (WriteAheadLog wal = new WriteAheadLog(walPath, 4096))
+        {
+            wal.Create();
+            uint expectedSalt1 = wal.Header.Salt1;
+            uint expectedSalt2 = wal.Header.Salt2;
+
+            wal.WriteFrame(1, 0, 0x01, testData, WalFrameFlags.Commit);
+
+            List<WalFrame> frames = wal.ReadAllFrames();
+
+            Assert.HasCount(1, frames);
+            Assert.AreEqual(expectedSalt1, frames[0].Salt1);
+            Assert.AreEqual(expectedSalt2, frames[0].Salt2);
+        }
+    }
+
+    [TestMethod]
+    public void WriteAheadLog_SaltMismatch_StopsFrameScan()
+    {
+        string walPath = Path.Combine(_testDirectory, "test.wal");
+        int pageSize = 4096;
+        byte[] testData = new byte[pageSize];
+
+        using (WriteAheadLog wal = new WriteAheadLog(walPath, pageSize))
+        {
+            wal.Create();
+            wal.WriteFrame(1, 0, 0x01, testData, WalFrameFlags.Commit);
+            wal.WriteFrame(2, 1, 0x01, testData, WalFrameFlags.Commit);
+            wal.Flush();
+        }
+
+        using (WriteAheadLog wal = new WriteAheadLog(walPath, pageSize))
+        {
+            wal.Open();
+            wal.Truncate();
+            wal.WriteFrame(3, 2, 0x01, testData, WalFrameFlags.Commit);
+
+            List<WalFrame> frames = wal.ReadAllFrames();
+
+            Assert.HasCount(1, frames);
+            Assert.AreEqual(3ul, frames[0].TxId);
+        }
+    }
+
+    [TestMethod]
+    public void WriteAheadLog_AfterTruncate_OldFramesNotVisible()
+    {
+        string walPath = Path.Combine(_testDirectory, "test.wal");
+        int pageSize = 4096;
+        byte[] testData = new byte[pageSize];
+
+        using (WriteAheadLog wal = new WriteAheadLog(walPath, pageSize))
+        {
+            wal.Create();
+            wal.WriteFrame(1, 0, 0x01, testData, WalFrameFlags.Commit);
+            wal.WriteFrame(2, 1, 0x01, testData, WalFrameFlags.Commit);
+
+            Assert.AreEqual(2, wal.CurrentFrameNumber);
+
+            wal.Truncate();
+
+            List<WalFrame> frames = wal.ReadAllFrames();
+            Assert.IsEmpty(frames);
+        }
+    }
+
+    [TestMethod]
+    public void WriteAheadLog_MultipleCheckpoints_SaltsIncrement()
+    {
+        string walPath = Path.Combine(_testDirectory, "test.wal");
+        byte[] testData = new byte[4096];
+
+        using (WriteAheadLog wal = new WriteAheadLog(walPath, 4096))
+        {
+            wal.Create();
+            uint salt1After0 = wal.Header.Salt1;
+
+            wal.WriteFrame(1, 0, 0x01, testData, WalFrameFlags.Commit);
+            wal.Truncate();
+            uint salt1After1 = wal.Header.Salt1;
+
+            wal.WriteFrame(2, 1, 0x01, testData, WalFrameFlags.Commit);
+            wal.Truncate();
+            uint salt1After2 = wal.Header.Salt1;
+
+            Assert.AreEqual(salt1After0 + 1, salt1After1);
+            Assert.AreEqual(salt1After1 + 1, salt1After2);
+        }
+    }
+
+    [TestMethod]
+    public void WriteAheadLog_WriteTransactionBatch_AllFramesHaveCorrectSalts()
+    {
+        string walPath = Path.Combine(_testDirectory, "test.wal");
+        int pageSize = 4096;
+
+        using (WriteAheadLog wal = new WriteAheadLog(walPath, pageSize))
+        {
+            wal.Create();
+            uint expectedSalt1 = wal.Header.Salt1;
+            uint expectedSalt2 = wal.Header.Salt2;
+
+            List<PendingPageWrite> writes = new List<PendingPageWrite>
+            {
+                new PendingPageWrite(0, new byte[pageSize], 0x01),
+                new PendingPageWrite(1, new byte[pageSize], 0x01),
+                new PendingPageWrite(2, new byte[pageSize], 0x01)
+            };
+
+            wal.WriteTransactionBatch(1, writes);
+
+            List<WalFrame> frames = wal.ReadAllFrames();
+
+            Assert.HasCount(3, frames);
+            foreach (WalFrame frame in frames)
+            {
+                Assert.AreEqual(expectedSalt1, frame.Salt1);
+                Assert.AreEqual(expectedSalt2, frame.Salt2);
+            }
+
+            Assert.AreEqual(WalFrameFlags.None, frames[0].Flags);
+            Assert.AreEqual(WalFrameFlags.None, frames[1].Flags);
+            Assert.AreEqual(WalFrameFlags.Commit, frames[2].Flags);
         }
     }
 

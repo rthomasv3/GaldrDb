@@ -5,7 +5,7 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.WAL;
 
-public class WriteAheadLog : IDisposable
+internal class WriteAheadLog : IDisposable
 {
     private readonly string _walPath;
     private readonly int _pageSize;
@@ -40,7 +40,8 @@ public class WriteAheadLog : IDisposable
         {
             PageSize = _pageSize,
             CheckpointTxId = 0,
-            FrameCount = 0
+            Salt1 = 1,
+            Salt2 = GenerateRandomSalt()
         };
 
         WriteHeader();
@@ -61,6 +62,8 @@ public class WriteAheadLog : IDisposable
         {
             _header = new WalHeader();
             _header.PageSize = _pageSize;
+            _header.Salt1 = 1;
+            _header.Salt2 = GenerateRandomSalt();
             byte[] headerBuffer = BufferPool.Rent(WalHeader.HEADER_SIZE);
             try
             {
@@ -104,7 +107,10 @@ public class WriteAheadLog : IDisposable
                 throw new InvalidOperationException($"WAL page size mismatch: expected {_pageSize}, found {_header.PageSize}");
             }
 
-            _currentFrameNumber = _header.FrameCount;
+            // Calculate frame count from file size
+            long dataSize = _walStream.Length - WalHeader.HEADER_SIZE;
+            int frameSize = WalFrame.FRAME_HEADER_SIZE + _pageSize;
+            _currentFrameNumber = dataSize > 0 ? dataSize / frameSize : 0;
         }
     }
 
@@ -123,6 +129,8 @@ public class WriteAheadLog : IDisposable
                 PageId = pageId,
                 PageType = pageType,
                 Flags = flags,
+                Salt1 = _header.Salt1,
+                Salt2 = _header.Salt2,
                 Data = frameData
             };
 
@@ -150,52 +158,137 @@ public class WriteAheadLog : IDisposable
                 BufferPool.Return(frameBuffer);
             }
 
-            _header.FrameCount = _currentFrameNumber;
-            WriteHeader();
-
             return _currentFrameNumber;
+        }
+    }
+
+    public void WriteFramesBatch(byte[] batchBuffer, int frameCount)
+    {
+        lock (_writeLock)
+        {
+            int frameSize = WalFrame.FRAME_HEADER_SIZE + _pageSize;
+            long startPosition = WalHeader.HEADER_SIZE + _currentFrameNumber * frameSize;
+
+            _walStream.Position = startPosition;
+            _walStream.Write(batchBuffer, 0, frameCount * frameSize);
+
+            _currentFrameNumber += frameCount;
+        }
+    }
+
+    public void WriteTransactionBatch(ulong txId, List<PendingPageWrite> pendingWrites)
+    {
+        if (pendingWrites.Count == 0)
+        {
+            return;
+        }
+
+        lock (_writeLock)
+        {
+            int frameSize = WalFrame.FRAME_HEADER_SIZE + _pageSize;
+            int totalSize = frameSize * pendingWrites.Count;
+            byte[] batchBuffer = BufferPool.Rent(totalSize);
+
+            try
+            {
+                int bufferOffset = 0;
+
+                for (int i = 0; i < pendingWrites.Count; i++)
+                {
+                    _currentFrameNumber++;
+                    PendingPageWrite write = pendingWrites[i];
+                    bool isLastFrame = (i == pendingWrites.Count - 1);
+
+                    WalFrame frame = new WalFrame
+                    {
+                        FrameNumber = _currentFrameNumber,
+                        TxId = txId,
+                        PageId = write.PageId,
+                        PageType = write.PageType,
+                        Flags = isLastFrame ? WalFrameFlags.Commit : WalFrameFlags.None,
+                        Salt1 = _header.Salt1,
+                        Salt2 = _header.Salt2,
+                        Data = write.Data ?? Array.Empty<byte>()
+                    };
+
+                    // Serialize frame header + data
+                    byte[] frameBuffer = BufferPool.Rent(frameSize);
+                    try
+                    {
+                        int bytesWritten = frame.SerializeTo(frameBuffer);
+
+                        // Copy to batch buffer
+                        Array.Copy(frameBuffer, 0, batchBuffer, bufferOffset, bytesWritten);
+
+                        // Pad to full frame size if data is smaller
+                        int paddingNeeded = frameSize - bytesWritten;
+                        if (paddingNeeded > 0)
+                        {
+                            Array.Clear(batchBuffer, bufferOffset + bytesWritten, paddingNeeded);
+                        }
+                    }
+                    finally
+                    {
+                        BufferPool.Return(frameBuffer);
+                    }
+
+                    bufferOffset += frameSize;
+                }
+
+                // Write all frames in a single I/O operation
+                long startPosition = WalHeader.HEADER_SIZE + (_currentFrameNumber - pendingWrites.Count) * frameSize;
+                _walStream.Position = startPosition;
+                _walStream.Write(batchBuffer, 0, totalSize);
+            }
+            finally
+            {
+                BufferPool.Return(batchBuffer);
+            }
         }
     }
 
     public List<WalFrame> ReadAllFrames()
     {
         List<WalFrame> frames = new List<WalFrame>();
+        int frameSize = WalFrame.FRAME_HEADER_SIZE + _pageSize;
+        byte[] frameBuffer = BufferPool.Rent(frameSize);
 
-        if (_header.FrameCount > 0)
+        try
         {
-            int frameSize = WalFrame.FRAME_HEADER_SIZE + _pageSize;
-            byte[] frameBuffer = BufferPool.Rent(frameSize);
+            long framePosition = WalHeader.HEADER_SIZE;
 
-            try
+            while (true)
             {
-                bool continueReading = true;
-                for (long i = 1; i <= _header.FrameCount && continueReading; i++)
+                _walStream.Position = framePosition;
+                int bytesRead = _walStream.Read(frameBuffer, 0, frameSize);
+
+                // Stop at EOF
+                if (bytesRead < WalFrame.FRAME_HEADER_SIZE)
                 {
-                    long framePosition = WalHeader.HEADER_SIZE + (i - 1) * frameSize;
-                    _walStream.Position = framePosition;
-
-                    int bytesRead = _walStream.Read(frameBuffer, 0, frameSize);
-                    if (bytesRead < WalFrame.FRAME_HEADER_SIZE)
-                    {
-                        continueReading = false;
-                    }
-                    else
-                    {
-                        WalFrame frame = WalFrame.Deserialize(frameBuffer);
-
-                        if (!frame.ValidateChecksum(_pageSize))
-                        {
-                            throw new InvalidOperationException($"WAL frame {i} has invalid checksum");
-                        }
-
-                        frames.Add(frame);
-                    }
+                    break;
                 }
+
+                WalFrame frame = WalFrame.Deserialize(frameBuffer);
+
+                // Stop at salt mismatch (stale data from before checkpoint)
+                if (frame.Salt1 != _header.Salt1 || frame.Salt2 != _header.Salt2)
+                {
+                    break;
+                }
+
+                // Stop at bad checksum (corruption or partial write)
+                if (!frame.ValidateChecksum(_pageSize))
+                {
+                    break;
+                }
+
+                frames.Add(frame);
+                framePosition += frameSize;
             }
-            finally
-            {
-                BufferPool.Return(frameBuffer);
-            }
+        }
+        finally
+        {
+            BufferPool.Return(frameBuffer);
         }
 
         return frames;
@@ -204,43 +297,46 @@ public class WriteAheadLog : IDisposable
     public List<WalFrame> ReadFramesFromPosition(long startFrameNumber)
     {
         List<WalFrame> frames = new List<WalFrame>();
+        long actualStart = startFrameNumber < 1 ? 1 : startFrameNumber;
+        int frameSize = WalFrame.FRAME_HEADER_SIZE + _pageSize;
+        byte[] frameBuffer = BufferPool.Rent(frameSize);
 
-        if (_header.FrameCount > 0 && startFrameNumber <= _header.FrameCount)
+        try
         {
-            long actualStart = startFrameNumber < 1 ? 1 : startFrameNumber;
-            int frameSize = WalFrame.FRAME_HEADER_SIZE + _pageSize;
-            byte[] frameBuffer = BufferPool.Rent(frameSize);
+            long framePosition = WalHeader.HEADER_SIZE + (actualStart - 1) * frameSize;
 
-            try
+            while (true)
             {
-                bool continueReading = true;
-                for (long i = actualStart; i <= _header.FrameCount && continueReading; i++)
+                _walStream.Position = framePosition;
+                int bytesRead = _walStream.Read(frameBuffer, 0, frameSize);
+
+                // Stop at EOF
+                if (bytesRead < WalFrame.FRAME_HEADER_SIZE)
                 {
-                    long framePosition = WalHeader.HEADER_SIZE + (i - 1) * frameSize;
-                    _walStream.Position = framePosition;
-
-                    int bytesRead = _walStream.Read(frameBuffer, 0, frameSize);
-                    if (bytesRead < WalFrame.FRAME_HEADER_SIZE)
-                    {
-                        continueReading = false;
-                    }
-                    else
-                    {
-                        WalFrame frame = WalFrame.Deserialize(frameBuffer);
-
-                        if (!frame.ValidateChecksum(_pageSize))
-                        {
-                            throw new InvalidOperationException($"WAL frame {i} has invalid checksum");
-                        }
-
-                        frames.Add(frame);
-                    }
+                    break;
                 }
+
+                WalFrame frame = WalFrame.Deserialize(frameBuffer);
+
+                // Stop at salt mismatch (stale data from before checkpoint)
+                if (frame.Salt1 != _header.Salt1 || frame.Salt2 != _header.Salt2)
+                {
+                    break;
+                }
+
+                // Stop at bad checksum (corruption or partial write)
+                if (!frame.ValidateChecksum(_pageSize))
+                {
+                    break;
+                }
+
+                frames.Add(frame);
+                framePosition += frameSize;
             }
-            finally
-            {
-                BufferPool.Return(frameBuffer);
-            }
+        }
+        finally
+        {
+            BufferPool.Return(frameBuffer);
         }
 
         return frames;
@@ -259,8 +355,9 @@ public class WriteAheadLog : IDisposable
         lock (_writeLock)
         {
             _walStream.SetLength(WalHeader.HEADER_SIZE);
-            _header.FrameCount = 0;
             _currentFrameNumber = 0;
+            _header.Salt1++;
+            _header.Salt2 = GenerateRandomSalt();
             WriteHeader();
             _walStream.Flush(true);
         }
@@ -338,5 +435,10 @@ public class WriteAheadLog : IDisposable
         {
             BufferPool.Return(headerBuffer);
         }
+    }
+
+    private static uint GenerateRandomSalt()
+    {
+        return (uint)Random.Shared.Next();
     }
 }

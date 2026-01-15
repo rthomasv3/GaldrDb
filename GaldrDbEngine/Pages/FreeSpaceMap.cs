@@ -1,4 +1,6 @@
 using System;
+using System.Buffers.Binary;
+using System.Numerics;
 using GaldrDbEngine.IO;
 using GaldrDbEngine.Utilities;
 
@@ -63,15 +65,62 @@ public class FreeSpaceMap
     public int FindPageWithSpace(FreeSpaceLevel minLevel)
     {
         int result = -1;
+        int byteLength = _fsm.Length;
+        int ulongCount = byteLength / 8;
 
-        for (int pageId = 0; pageId < _totalPages; pageId++)
+        // Each ulong contains 32 pages (64 bits / 2 bits per page)
+        // Mask to isolate the low bit of each 2-bit pair
+        const ulong lowBitMask = 0x5555555555555555UL;
+
+        for (int i = 0; i < ulongCount; i++)
         {
-            FreeSpaceLevel level = GetFreeSpaceLevel(pageId);
+            int offset = i * 8;
+            ulong chunk = BinaryPrimitives.ReadUInt64LittleEndian(_fsm.AsSpan(offset, 8));
 
-            if (level >= minLevel)
+            ulong mask;
+            if (minLevel == FreeSpaceLevel.High)
             {
-                result = pageId;
+                // Both bits must be 1 (11): AND chunk with shifted version, isolate low bits
+                mask = (chunk & (chunk >> 1)) & lowBitMask;
+            }
+            else if (minLevel == FreeSpaceLevel.Medium)
+            {
+                // High bit must be 1 (10 or 11): shift to get high bits, isolate
+                mask = (chunk >> 1) & lowBitMask;
+            }
+            else
+            {
+                // At least one bit must be 1 (01, 10, or 11): OR chunk with shifted version
+                mask = (chunk | (chunk >> 1)) & lowBitMask;
+            }
+
+            if (mask != 0)
+            {
+                int bitPosition = BitOperations.TrailingZeroCount(mask);
+                int pageWithinChunk = bitPosition / 2;
+                int pageId = i * 32 + pageWithinChunk;
+
+                if (pageId < _totalPages)
+                {
+                    result = pageId;
+                }
                 break;
+            }
+        }
+
+        // Handle remaining bytes that don't fill a complete ulong
+        if (result == -1)
+        {
+            int startPage = ulongCount * 32;
+            for (int pageId = startPage; pageId < _totalPages; pageId++)
+            {
+                FreeSpaceLevel level = GetFreeSpaceLevel(pageId);
+
+                if (level >= minLevel)
+                {
+                    result = pageId;
+                    break;
+                }
             }
         }
 

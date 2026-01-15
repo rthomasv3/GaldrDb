@@ -12,7 +12,8 @@ public class WalHeader
     public int Version { get; set; }
     public int PageSize { get; set; }
     public ulong CheckpointTxId { get; set; }
-    public long FrameCount { get; set; }
+    public uint Salt1 { get; set; }
+    public uint Salt2 { get; set; }
     public uint Checksum { get; set; }
 
     public WalHeader()
@@ -37,8 +38,11 @@ public class WalHeader
         BinaryHelper.WriteUInt64LE(buffer, offset, CheckpointTxId);
         offset += 8;
 
-        BinaryHelper.WriteUInt64LE(buffer, offset, (ulong)FrameCount);
-        offset += 8;
+        BinaryHelper.WriteUInt32LE(buffer, offset, Salt1);
+        offset += 4;
+
+        BinaryHelper.WriteUInt32LE(buffer, offset, Salt2);
+        offset += 4;
 
         // Calculate checksum over header bytes (excluding checksum field itself)
         Checksum = BinaryHelper.CalculateCRC32(buffer.Slice(0, HEADER_SIZE - 4));
@@ -63,8 +67,11 @@ public class WalHeader
         header.CheckpointTxId = BinaryHelper.ReadUInt64LE(buffer, offset);
         offset += 8;
 
-        header.FrameCount = (long)BinaryHelper.ReadUInt64LE(buffer, offset);
-        offset += 8;
+        header.Salt1 = BinaryHelper.ReadUInt32LE(buffer, offset);
+        offset += 4;
+
+        header.Salt2 = BinaryHelper.ReadUInt32LE(buffer, offset);
+        offset += 4;
 
         header.Checksum = BinaryHelper.ReadUInt32LE(buffer, offset);
 
@@ -79,9 +86,7 @@ public class WalHeader
             SerializeTo(buffer);
             uint calculatedChecksum = BinaryHelper.CalculateCRC32(buffer, 0, HEADER_SIZE - 4);
 
-            bool result = calculatedChecksum == Checksum;
-
-            return result;
+            return calculatedChecksum == Checksum;
         }
         finally
         {
@@ -91,8 +96,6 @@ public class WalHeader
 
     public bool ValidateMagicNumber()
     {
-        bool result = MagicNumber == WAL_MAGIC_NUMBER;
-
-        return result;
+        return MagicNumber == WAL_MAGIC_NUMBER;
     }
 }

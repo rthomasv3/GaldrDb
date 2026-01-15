@@ -165,7 +165,7 @@ public class SingleOperationBenchmarks
             return id;
         }
     }
-
+    
     [Benchmark(Description = "SQLite EF Core Insert")]
     [BenchmarkCategory("Insert")]
     public int SqliteEf_Insert()
@@ -178,10 +178,10 @@ public class SingleOperationBenchmarks
             Address = "456 Oak Ave",
             Phone = "555-5678"
         };
-
+    
         _efContext.People.Add(person);
         _efContext.SaveChanges();
-
+    
         return person.Id;
     }
 
@@ -189,54 +189,54 @@ public class SingleOperationBenchmarks
 
     #region Read By ID Benchmarks
 
-    // [Benchmark(Description = "GaldrDb Read")]
-    // [BenchmarkCategory("Read")]
-    // public BenchmarkPerson GaldrDb_ReadById()
-    // {
-    //     BenchmarkPerson person = _galdrDb.GetById<BenchmarkPerson>(_existingId);
-    //     return person;
-    // }
-    //
-    // [Benchmark(Description = "SQLite ADO.NET Read")]
-    // [BenchmarkCategory("Read")]
-    // public SqlitePerson SqliteAdo_ReadById()
-    // {
-    //     using (SqliteCommand cmd = _sqliteConnection.CreateCommand())
-    //     {
-    //         cmd.CommandText = "SELECT Id, Name, Age, Email, Address, Phone FROM Person WHERE Id = @id";
-    //         cmd.Parameters.AddWithValue("@id", 1);
-    //
-    //         using (SqliteDataReader reader = cmd.ExecuteReader())
-    //         {
-    //             if (reader.Read())
-    //             {
-    //                 SqlitePerson person = new SqlitePerson
-    //                 {
-    //                     Id = reader.GetInt32(0),
-    //                     Name = reader.GetString(1),
-    //                     Age = reader.GetInt32(2),
-    //                     Email = reader.GetString(3),
-    //                     Address = reader.GetString(4),
-    //                     Phone = reader.GetString(5)
-    //                 };
-    //                 return person;
-    //             }
-    //         }
-    //     }
-    //
-    //     return null;
-    // }
-    //
-    // [Benchmark(Description = "SQLite EF Core Read")]
-    // [BenchmarkCategory("Read")]
-    // public SqlitePerson SqliteEf_ReadById()
-    // {
-    //     // Use AsNoTracking to bypass change tracker cache and actually hit the database
-    //     SqlitePerson person = _efContext.People
-    //         .AsNoTracking()
-    //         .FirstOrDefault(p => p.Id == 1);
-    //     return person;
-    // }
+    [Benchmark(Description = "GaldrDb Read")]
+    [BenchmarkCategory("Read")]
+    public BenchmarkPerson GaldrDb_ReadById()
+    {
+        BenchmarkPerson person = _galdrDb.GetById<BenchmarkPerson>(_existingId);
+        return person;
+    }
+    
+    [Benchmark(Description = "SQLite ADO.NET Read")]
+    [BenchmarkCategory("Read")]
+    public SqlitePerson SqliteAdo_ReadById()
+    {
+        using (SqliteCommand cmd = _sqliteConnection.CreateCommand())
+        {
+            cmd.CommandText = "SELECT Id, Name, Age, Email, Address, Phone FROM Person WHERE Id = @id";
+            cmd.Parameters.AddWithValue("@id", 1);
+    
+            using (SqliteDataReader reader = cmd.ExecuteReader())
+            {
+                if (reader.Read())
+                {
+                    SqlitePerson person = new SqlitePerson
+                    {
+                        Id = reader.GetInt32(0),
+                        Name = reader.GetString(1),
+                        Age = reader.GetInt32(2),
+                        Email = reader.GetString(3),
+                        Address = reader.GetString(4),
+                        Phone = reader.GetString(5)
+                    };
+                    return person;
+                }
+            }
+        }
+    
+        return null;
+    }
+    
+    [Benchmark(Description = "SQLite EF Core Read")]
+    [BenchmarkCategory("Read")]
+    public SqlitePerson SqliteEf_ReadById()
+    {
+        // Use AsNoTracking to bypass change tracker cache and actually hit the database
+        SqlitePerson person = _efContext.People
+            .AsNoTracking()
+            .FirstOrDefault(p => p.Id == 1);
+        return person;
+    }
 
     #endregion
 
@@ -282,7 +282,7 @@ public class SingleOperationBenchmarks
             return rowsAffected;
         }
     }
-
+    
     [Benchmark(Description = "SQLite EF Core Update")]
     [BenchmarkCategory("Update")]
     public int SqliteEf_Update()
@@ -296,7 +296,7 @@ public class SingleOperationBenchmarks
                 .SetProperty(p => p.Email, "updated@example.com")
                 .SetProperty(p => p.Address, "789 Pine Rd")
                 .SetProperty(p => p.Phone, "555-9999"));
-
+    
         return result;
     }
 
@@ -304,86 +304,86 @@ public class SingleOperationBenchmarks
 
     #region Delete Benchmarks
 
-    // private int _deleteIdGaldr = 10000;
-    // private int _deleteIdAdo = 10000;
-    // private int _deleteIdEf = 10000;
-    //
-    // [IterationSetup(Target = nameof(GaldrDb_Delete))]
-    // public void SetupGaldrDelete()
-    // {
-    //     _deleteIdGaldr = _galdrDb.Insert(new BenchmarkPerson
-    //     {
-    //         Name = "To Delete",
-    //         Age = 99,
-    //         Email = "delete@example.com",
-    //         Address = "Delete St",
-    //         Phone = "555-0000"
-    //     });
-    // }
-    //
-    // [Benchmark(Description = "GaldrDb Delete")]
-    // [BenchmarkCategory("Delete")]
-    // public bool GaldrDb_Delete()
-    // {
-    //     bool result = _galdrDb.Delete<BenchmarkPerson>(_deleteIdGaldr);
-    //     return result;
-    // }
-    //
-    // [IterationSetup(Target = nameof(SqliteAdo_Delete))]
-    // public void SetupAdoDelete()
-    // {
-    //     using (SqliteCommand cmd = _sqliteConnection.CreateCommand())
-    //     {
-    //         cmd.CommandText = @"
-    //             INSERT INTO Person (Name, Age, Email, Address, Phone)
-    //             VALUES ('To Delete', 99, 'delete@example.com', 'Delete St', '555-0000');
-    //             SELECT last_insert_rowid();
-    //         ";
-    //         _deleteIdAdo = (int)(long)cmd.ExecuteScalar();
-    //     }
-    // }
-    //
-    // [Benchmark(Description = "SQLite ADO.NET Delete")]
-    // [BenchmarkCategory("Delete")]
-    // public int SqliteAdo_Delete()
-    // {
-    //     using (SqliteCommand cmd = _sqliteConnection.CreateCommand())
-    //     {
-    //         cmd.CommandText = "DELETE FROM Person WHERE Id = @id";
-    //         cmd.Parameters.AddWithValue("@id", _deleteIdAdo);
-    //
-    //         int rowsAffected = cmd.ExecuteNonQuery();
-    //         return rowsAffected;
-    //     }
-    // }
-    //
-    // [IterationSetup(Target = nameof(SqliteEf_Delete))]
-    // public void SetupEfDelete()
-    // {
-    //     SqlitePerson person = new SqlitePerson
-    //     {
-    //         Name = "To Delete",
-    //         Age = 99,
-    //         Email = "delete@example.com",
-    //         Address = "Delete St",
-    //         Phone = "555-0000"
-    //     };
-    //     _efContext.People.Add(person);
-    //     _efContext.SaveChanges();
-    //     _deleteIdEf = person.Id;
-    // }
-    //
-    // [Benchmark(Description = "SQLite EF Core Delete")]
-    // [BenchmarkCategory("Delete")]
-    // public int SqliteEf_Delete()
-    // {
-    //     // Use ExecuteDelete for direct SQL delete without loading/tracking entity
-    //     int result = _efContext.People
-    //         .Where(p => p.Id == _deleteIdEf)
-    //         .ExecuteDelete();
-    //
-    //     return result;
-    // }
+    private int _deleteIdGaldr = 10000;
+    private int _deleteIdAdo = 10000;
+    private int _deleteIdEf = 10000;
+    
+    [IterationSetup(Target = nameof(GaldrDb_Delete))]
+    public void SetupGaldrDelete()
+    {
+        _deleteIdGaldr = _galdrDb.Insert(new BenchmarkPerson
+        {
+            Name = "To Delete",
+            Age = 99,
+            Email = "delete@example.com",
+            Address = "Delete St",
+            Phone = "555-0000"
+        });
+    }
+    
+    [Benchmark(Description = "GaldrDb Delete")]
+    [BenchmarkCategory("Delete")]
+    public bool GaldrDb_Delete()
+    {
+        bool result = _galdrDb.Delete<BenchmarkPerson>(_deleteIdGaldr);
+        return result;
+    }
+    
+    [IterationSetup(Target = nameof(SqliteAdo_Delete))]
+    public void SetupAdoDelete()
+    {
+        using (SqliteCommand cmd = _sqliteConnection.CreateCommand())
+        {
+            cmd.CommandText = @"
+                INSERT INTO Person (Name, Age, Email, Address, Phone)
+                VALUES ('To Delete', 99, 'delete@example.com', 'Delete St', '555-0000');
+                SELECT last_insert_rowid();
+            ";
+            _deleteIdAdo = (int)(long)cmd.ExecuteScalar();
+        }
+    }
+    
+    [Benchmark(Description = "SQLite ADO.NET Delete")]
+    [BenchmarkCategory("Delete")]
+    public int SqliteAdo_Delete()
+    {
+        using (SqliteCommand cmd = _sqliteConnection.CreateCommand())
+        {
+            cmd.CommandText = "DELETE FROM Person WHERE Id = @id";
+            cmd.Parameters.AddWithValue("@id", _deleteIdAdo);
+    
+            int rowsAffected = cmd.ExecuteNonQuery();
+            return rowsAffected;
+        }
+    }
+    
+    [IterationSetup(Target = nameof(SqliteEf_Delete))]
+    public void SetupEfDelete()
+    {
+        SqlitePerson person = new SqlitePerson
+        {
+            Name = "To Delete",
+            Age = 99,
+            Email = "delete@example.com",
+            Address = "Delete St",
+            Phone = "555-0000"
+        };
+        _efContext.People.Add(person);
+        _efContext.SaveChanges();
+        _deleteIdEf = person.Id;
+    }
+    
+    [Benchmark(Description = "SQLite EF Core Delete")]
+    [BenchmarkCategory("Delete")]
+    public int SqliteEf_Delete()
+    {
+        // Use ExecuteDelete for direct SQL delete without loading/tracking entity
+        int result = _efContext.People
+            .Where(p => p.Id == _deleteIdEf)
+            .ExecuteDelete();
+    
+        return result;
+    }
 
     #endregion
 }

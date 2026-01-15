@@ -1,11 +1,11 @@
 using System;
+using System.IO.Hashing;
 using System.Text;
 
 namespace GaldrDbEngine.Utilities;
 
 public static class BinaryHelper
 {
-    private static readonly uint[] _crc32Table = GenerateCrc32Table();
     private static readonly ulong[] _crc64Table = GenerateCrc64Table();
 
     public static void WriteInt32LE(byte[] buffer, int offset, int value)
@@ -135,71 +135,25 @@ public static class BinaryHelper
 
     public static uint CalculateCRC32(byte[] data)
     {
-        uint crc = 0xFFFFFFFF;
-
-        for (int i = 0; i < data.Length; i++)
-        {
-            byte index = (byte)((crc ^ data[i]) & 0xFF);
-            crc = (crc >> 8) ^ _crc32Table[index];
-        }
-
-        uint result = crc ^ 0xFFFFFFFF;
-
-        return result;
+        return Crc32.HashToUInt32(data);
     }
 
     public static uint CalculateCRC32(ReadOnlySpan<byte> data)
     {
-        uint crc = 0xFFFFFFFF;
-
-        for (int i = 0; i < data.Length; i++)
-        {
-            byte index = (byte)((crc ^ data[i]) & 0xFF);
-            crc = (crc >> 8) ^ _crc32Table[index];
-        }
-
-        uint result = crc ^ 0xFFFFFFFF;
-
-        return result;
+        return Crc32.HashToUInt32(data);
     }
 
     public static uint CalculateCRC32(byte[] data, int offset, int length)
     {
-        uint crc = 0xFFFFFFFF;
-
-        int end = offset + length;
-        for (int i = offset; i < end; i++)
-        {
-            byte index = (byte)((crc ^ data[i]) & 0xFF);
-            crc = (crc >> 8) ^ _crc32Table[index];
-        }
-
-        uint result = crc ^ 0xFFFFFFFF;
-
-        return result;
+        return Crc32.HashToUInt32(data.AsSpan(offset, length));
     }
 
     public static uint CalculateCRC32Segmented(byte[] data, int segment1Start, int segment1Length, int segment2Start, int segment2Length)
     {
-        uint crc = 0xFFFFFFFF;
-
-        int end1 = segment1Start + segment1Length;
-        for (int i = segment1Start; i < end1; i++)
-        {
-            byte index = (byte)((crc ^ data[i]) & 0xFF);
-            crc = (crc >> 8) ^ _crc32Table[index];
-        }
-
-        int end2 = segment2Start + segment2Length;
-        for (int i = segment2Start; i < end2; i++)
-        {
-            byte index = (byte)((crc ^ data[i]) & 0xFF);
-            crc = (crc >> 8) ^ _crc32Table[index];
-        }
-
-        uint result = crc ^ 0xFFFFFFFF;
-
-        return result;
+        Crc32 crc = new Crc32();
+        crc.Append(data.AsSpan(segment1Start, segment1Length));
+        crc.Append(data.AsSpan(segment2Start, segment2Length));
+        return crc.GetCurrentHashAsUInt32();
     }
 
     public static ulong CalculateCRC64(byte[] data)
@@ -215,33 +169,6 @@ public static class BinaryHelper
         ulong result = crc ^ 0xFFFFFFFFFFFFFFFF;
 
         return result;
-    }
-
-    private static uint[] GenerateCrc32Table()
-    {
-        uint[] table = new uint[256];
-        uint polynomial = 0xEDB88320;
-
-        for (uint i = 0; i < 256; i++)
-        {
-            uint crc = i;
-
-            for (int j = 0; j < 8; j++)
-            {
-                if ((crc & 1) != 0)
-                {
-                    crc = (crc >> 1) ^ polynomial;
-                }
-                else
-                {
-                    crc = crc >> 1;
-                }
-            }
-
-            table[i] = crc;
-        }
-
-        return table;
     }
 
     private static ulong[] GenerateCrc64Table()

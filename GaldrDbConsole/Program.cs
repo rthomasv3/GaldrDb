@@ -35,6 +35,10 @@ class Program
             case "-ta":
                 AllocationTracingTest.Run();
                 break;
+            case "--test-diag":
+            case "-td":
+                DiagnosticTest.Run();
+                break;
             case "--help":
             case "-h":
                 PrintUsage();
@@ -67,6 +71,14 @@ class Program
             case "single":
                 Console.WriteLine("Running single operation benchmarks...");
                 BenchmarkRunner.Run<SingleOperationBenchmarks>(config);
+                break;
+            case "insert":
+                Console.WriteLine("Running insert-only benchmarks...");
+                BenchmarkRunner.Run<InsertOnlyBenchmarks>(config);
+                break;
+            case "delete":
+                Console.WriteLine("Running delete-only benchmarks...");
+                BenchmarkRunner.Run<DeleteOnlyBenchmarks>(config);
                 break;
             case "serialize":
                 Console.WriteLine("Running serialization comparison benchmarks...");
@@ -105,6 +117,8 @@ class Program
     {
         Console.WriteLine("Available benchmark suites:");
         Console.WriteLine("  single      Single operation benchmarks (insert, read, update, delete)");
+        Console.WriteLine("  insert      Insert-only benchmarks (isolated GaldrDb insert)");
+        Console.WriteLine("  delete      Delete-only benchmarks (isolated GaldrDb delete)");
         Console.WriteLine("  query       Query benchmarks (Phase 2 - not yet implemented)");
         Console.WriteLine("  bulk        Bulk operation benchmarks (Phase 3 - not yet implemented)");
         Console.WriteLine("  concurrent  Concurrent operation benchmarks (Phase 4 - not yet implemented)");

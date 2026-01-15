@@ -14,8 +14,6 @@ public class HeaderPage
     public int FsmPageCount { get; set; }
     public int CollectionsMetadataPage { get; set; }
     public byte MmapHint { get; set; }
-    public int LastCommitFrame { get; set; }
-    public ulong WalChecksum { get; set; }
 
     public byte[] Serialize(int pageSize)
     {
@@ -50,13 +48,6 @@ public class HeaderPage
         offset += 4;
 
         buffer[offset] = MmapHint;
-        offset += 1;
-
-        BinaryHelper.WriteInt32LE(buffer, offset, LastCommitFrame);
-        offset += 4;
-
-        BinaryHelper.WriteUInt64LE(buffer, offset, WalChecksum);
-        offset += 8;
 
         byte[] result = buffer;
 
@@ -96,13 +87,6 @@ public class HeaderPage
         offset += 4;
 
         header.MmapHint = buffer[offset];
-        offset += 1;
-
-        header.LastCommitFrame = BinaryHelper.ReadInt32LE(buffer, offset);
-        offset += 4;
-
-        header.WalChecksum = BinaryHelper.ReadUInt64LE(buffer, offset);
-        offset += 8;
 
         HeaderPage result = header;
 
