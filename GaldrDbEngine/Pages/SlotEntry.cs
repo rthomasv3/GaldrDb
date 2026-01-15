@@ -16,7 +16,7 @@ public struct SlotEntry
 
         if (PageIds != null)
         {
-            size += 4 * PageIds.Length;
+            size += 4 * PageCount;
         }
 
         int result = size;
@@ -31,9 +31,9 @@ public struct SlotEntry
         BinaryHelper.WriteInt32LE(buffer, offset, PageCount);
         offset += 4;
 
-        if (PageIds != null && PageIds.Length > 0)
+        if (PageIds != null && PageCount > 0)
         {
-            for (int i = 0; i < PageIds.Length; i++)
+            for (int i = 0; i < PageCount; i++)
             {
                 BinaryHelper.WriteInt32LE(buffer, offset, PageIds[i]);
                 offset += 4;
@@ -59,7 +59,7 @@ public struct SlotEntry
 
         if (entry.PageCount > 0)
         {
-            entry.PageIds = new int[entry.PageCount];
+            entry.PageIds = IntArrayPool.Rent(entry.PageCount);
 
             for (int i = 0; i < entry.PageCount; i++)
             {
@@ -80,5 +80,14 @@ public struct SlotEntry
         SlotEntry result = entry;
 
         return result;
+    }
+
+    public void ReturnPageIdsToPool()
+    {
+        if (PageIds != null)
+        {
+            IntArrayPool.Return(PageIds);
+            PageIds = null;
+        }
     }
 }

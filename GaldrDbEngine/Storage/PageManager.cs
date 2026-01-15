@@ -136,7 +136,7 @@ public class PageManager
             throw new ArgumentOutOfRangeException(nameof(count), "Count must be greater than zero");
         }
 
-        int[] pageIds = new int[count];
+        int[] pageIds = IntArrayPool.Rent(count);
         int allocated = 0;
 
         while (allocated < count)
@@ -240,10 +240,10 @@ public class PageManager
         _bitmap.Resize(newTotalPages);
         _fsm.Resize(newTotalPages);
 
-        for (int pageId = oldTotalPages; pageId < newTotalPages; pageId++)
-        {
-            _fsm.SetFreeSpaceLevel(pageId, FreeSpaceLevel.High);
-        }
+        // for (int pageId = oldTotalPages; pageId < newTotalPages; pageId++)
+        // {
+        //     _fsm.SetFreeSpaceLevel(pageId, FreeSpaceLevel.High);
+        // }
 
         _bitmap.WriteToDisk();
         _fsm.WriteToDisk();

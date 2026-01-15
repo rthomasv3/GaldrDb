@@ -34,7 +34,7 @@ public class DocumentStorage : IDisposable
             pagesNeeded = (documentSize + usablePageSize - 1) / usablePageSize;
         }
 
-        int[] pageIds = new int[pagesNeeded];
+        int[] pageIds = IntArrayPool.Rent(pagesNeeded);
         DocumentLocation result;
 
         if (pagesNeeded == 1)
@@ -74,12 +74,12 @@ public class DocumentStorage : IDisposable
                     }
                 }
 
-                int slotIndex = _reusablePage.Value.AddDocument(documentBytes, pageIds, documentSize);
+                int slotIndex = _reusablePage.Value.AddDocument(documentBytes, pageIds, pagesNeeded, documentSize);
 
                 _reusablePage.Value.SerializeTo(pageBuffer);
                 _pageIO.WritePage(pageId, pageBuffer);
 
-                UpdateFSM(pageId, _reusablePage.Value.GetFreeSpaceBytes());
+                UpdateFSMForDocumentPage(pageId, _reusablePage.Value);
 
                 result = new DocumentLocation(pageId, slotIndex);
             }
@@ -97,7 +97,7 @@ public class DocumentStorage : IDisposable
             int firstPageDataSize = Math.Min(documentSize, usablePageSize);
 
             _reusablePage.Value.Reset(_pageSize);
-            int slotIndexResult = _reusablePage.Value.AddDocument(documentBytes.AsSpan(0, firstPageDataSize), pageIds, documentSize);
+            int slotIndexResult = _reusablePage.Value.AddDocument(documentBytes.AsSpan(0, firstPageDataSize), pageIds, pagesNeeded, documentSize);
 
             byte[] pageBuffer = BufferPool.Rent(_pageSize);
             try
@@ -105,6 +105,8 @@ public class DocumentStorage : IDisposable
                 _reusablePage.Value.SerializeTo(pageBuffer);
                 _pageIO.WritePage(firstPageId, pageBuffer);
 
+                // For multi-page documents, use contiguous free space for FSM since
+                // continuation pages are raw data buffers marked as FreeSpaceLevel.None
                 UpdateFSM(firstPageId, _reusablePage.Value.GetFreeSpaceBytes());
 
                 offset += firstPageDataSize;
@@ -218,6 +220,11 @@ public class DocumentStorage : IDisposable
                 }
             }
 
+            if (entry.PageIds != null)
+            {
+                IntArrayPool.Return(entry.PageIds);
+            }
+
             _reusablePage.Value.Slots[slotIndex] = new SlotEntry
             {
                 PageCount = 0,
@@ -230,7 +237,7 @@ public class DocumentStorage : IDisposable
             _reusablePage.Value.SerializeTo(pageBuffer);
             _pageIO.WritePage(pageId, pageBuffer);
 
-            UpdateFSM(pageId, _reusablePage.Value.GetFreeSpaceBytes());
+            UpdateFSMForDocumentPage(pageId, _reusablePage.Value);
         }
         finally
         {
@@ -262,15 +269,7 @@ public class DocumentStorage : IDisposable
 
         if (pageId == -1 || !_pageManager.IsAllocated(pageId) || pageId < PageConstants.FIRST_DATA_PAGE_ID)
         {
-            int compactablePageId = FindCompactablePageForDocument(requiredSpace);
-            if (compactablePageId != -1)
-            {
-                pageId = compactablePageId;
-            }
-            else
-            {
-                pageId = _pageManager.AllocatePage();
-            }
+            pageId = _pageManager.AllocatePage();
         }
 
         return pageId;
@@ -278,36 +277,31 @@ public class DocumentStorage : IDisposable
 
     private int FindCompactablePageForDocument(int requiredSpace)
     {
+        int result = -1;
         int totalPages = _pageManager.Header.TotalPageCount;
         byte[] pageBuffer = BufferPool.Rent(_pageSize);
 
         try
         {
-            for (int pageId = PageConstants.FIRST_DATA_PAGE_ID; pageId < totalPages; pageId++)
+            for (int pageId = PageConstants.FIRST_DATA_PAGE_ID; pageId < totalPages && result == -1; pageId++)
             {
-                if (!_pageManager.IsAllocated(pageId))
+                if (_pageManager.IsAllocated(pageId))
                 {
-                    continue;
-                }
+                    FreeSpaceLevel level = _pageManager.GetFreeSpaceLevel(pageId);
+                    if (level != FreeSpaceLevel.High)
+                    {
+                        _pageIO.ReadPage(pageId, pageBuffer);
 
-                FreeSpaceLevel level = _pageManager.GetFreeSpaceLevel(pageId);
-                if (level == FreeSpaceLevel.High)
-                {
-                    continue;
-                }
+                        if (IsPageInitialized(pageBuffer))
+                        {
+                            int logicalFreeSpace = DocumentPage.GetLogicalFreeSpaceFromBuffer(pageBuffer, _pageSize);
 
-                _pageIO.ReadPage(pageId, pageBuffer);
-
-                if (!IsPageInitialized(pageBuffer))
-                {
-                    continue;
-                }
-
-                DocumentPage.DeserializeTo(pageBuffer, _reusablePage.Value, _pageSize);
-
-                if (_reusablePage.Value.GetLogicalFreeSpace() >= requiredSpace)
-                {
-                    return pageId;
+                            if (logicalFreeSpace >= requiredSpace)
+                            {
+                                result = pageId;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -316,12 +310,38 @@ public class DocumentStorage : IDisposable
             BufferPool.Return(pageBuffer);
         }
 
-        return -1;
+        return result;
     }
 
     private void UpdateFSM(int pageId, int freeSpaceBytes)
     {
         double freeSpacePercentage = (double)freeSpaceBytes / _pageSize;
+        FreeSpaceLevel level = FreeSpaceLevel.None;
+
+        if (freeSpacePercentage >= 0.70)
+        {
+            level = FreeSpaceLevel.High;
+        }
+        else if (freeSpacePercentage >= 0.40)
+        {
+            level = FreeSpaceLevel.Medium;
+        }
+        else if (freeSpacePercentage >= 0.10)
+        {
+            level = FreeSpaceLevel.Low;
+        }
+        else
+        {
+            level = FreeSpaceLevel.None;
+        }
+
+        _pageManager.SetFreeSpaceLevel(pageId, level);
+    }
+
+    private void UpdateFSMForDocumentPage(int pageId, DocumentPage page)
+    {
+        int logicalFreeSpace = page.GetLogicalFreeSpace();
+        double freeSpacePercentage = (double)logicalFreeSpace / _pageSize;
         FreeSpaceLevel level = FreeSpaceLevel.None;
 
         if (freeSpacePercentage >= 0.70)
@@ -362,7 +382,7 @@ public class DocumentStorage : IDisposable
             pagesNeeded = (documentSize + usablePageSize - 1) / usablePageSize;
         }
 
-        int[] pageIds = new int[pagesNeeded];
+        int[] pageIds = IntArrayPool.Rent(pagesNeeded);
         DocumentLocation result;
 
         if (pagesNeeded == 1)
@@ -370,6 +390,7 @@ public class DocumentStorage : IDisposable
             int pageId = FindOrAllocatePageForDocument(documentSize);
             pageIds[0] = pageId;
 
+            DocumentPage page = _reusablePage.Value;
             byte[] pageBuffer = BufferPool.Rent(_pageSize);
             try
             {
@@ -377,36 +398,36 @@ public class DocumentStorage : IDisposable
 
                 if (IsPageInitialized(pageBuffer))
                 {
-                    DocumentPage.DeserializeTo(pageBuffer, _reusablePage.Value, _pageSize);
+                    DocumentPage.DeserializeTo(pageBuffer, page, _pageSize);
                 }
                 else
                 {
-                    _reusablePage.Value.Reset(_pageSize);
+                    page.Reset(_pageSize);
                 }
 
-                if (!_reusablePage.Value.CanFit(documentSize))
+                if (!page.CanFit(documentSize))
                 {
                     int slotOverhead = 16;
                     int requiredSpace = documentSize + slotOverhead;
 
-                    if (_reusablePage.Value.GetLogicalFreeSpace() >= requiredSpace)
+                    if (page.GetLogicalFreeSpace() >= requiredSpace)
                     {
-                        _reusablePage.Value.Compact();
+                        page.Compact();
                     }
                     else
                     {
                         pageId = _pageManager.AllocatePage();
                         pageIds[0] = pageId;
-                        _reusablePage.Value.Reset(_pageSize);
+                        page.Reset(_pageSize);
                     }
                 }
 
-                int slotIndex = _reusablePage.Value.AddDocument(documentBytes, pageIds, documentSize);
+                int slotIndex = page.AddDocument(documentBytes, pageIds, pagesNeeded, documentSize);
 
-                _reusablePage.Value.SerializeTo(pageBuffer);
+                page.SerializeTo(pageBuffer);
                 await _pageIO.WritePageAsync(pageId, pageBuffer, cancellationToken).ConfigureAwait(false);
 
-                UpdateFSM(pageId, _reusablePage.Value.GetFreeSpaceBytes());
+                UpdateFSMForDocumentPage(pageId, page);
 
                 result = new DocumentLocation(pageId, slotIndex);
             }
@@ -423,16 +444,19 @@ public class DocumentStorage : IDisposable
             int offset = 0;
             int firstPageDataSize = Math.Min(documentSize, usablePageSize);
 
-            _reusablePage.Value.Reset(_pageSize);
-            int slotIndexResult = _reusablePage.Value.AddDocument(documentBytes.AsSpan(0, firstPageDataSize), pageIds, documentSize);
+            DocumentPage page = _reusablePage.Value;
+            page.Reset(_pageSize);
+            int slotIndexResult = page.AddDocument(documentBytes.AsSpan(0, firstPageDataSize), pageIds, pagesNeeded, documentSize);
 
             byte[] pageBuffer = BufferPool.Rent(_pageSize);
             try
             {
-                _reusablePage.Value.SerializeTo(pageBuffer);
+                page.SerializeTo(pageBuffer);
                 await _pageIO.WritePageAsync(firstPageId, pageBuffer, cancellationToken).ConfigureAwait(false);
 
-                UpdateFSM(firstPageId, _reusablePage.Value.GetFreeSpaceBytes());
+                // For multi-page documents, use contiguous free space for FSM since
+                // continuation pages are raw data buffers marked as FreeSpaceLevel.None
+                UpdateFSM(firstPageId, page.GetFreeSpaceBytes());
 
                 offset += firstPageDataSize;
 

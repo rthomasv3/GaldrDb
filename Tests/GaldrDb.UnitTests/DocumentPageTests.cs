@@ -39,8 +39,8 @@ public class DocumentPageTests
 
         byte[] doc1 = new byte[100];
         byte[] doc2 = new byte[200];
-        page.AddDocument(doc1, new int[] { 1 }, 100);
-        page.AddDocument(doc2, new int[] { 1 }, 200);
+        page.AddDocument(doc1, new int[] { 1 }, 1, 100);
+        page.AddDocument(doc2, new int[] { 1 }, 1, 200);
 
         int logicalFree = page.GetLogicalFreeSpace();
         int contiguousFree = page.GetFreeSpaceBytes();
@@ -55,8 +55,8 @@ public class DocumentPageTests
 
         byte[] doc1 = new byte[500];
         byte[] doc2 = new byte[300];
-        page.AddDocument(doc1, new int[] { 1 }, 500);
-        page.AddDocument(doc2, new int[] { 1 }, 300);
+        page.AddDocument(doc1, new int[] { 1 }, 1, 500);
+        page.AddDocument(doc2, new int[] { 1 }, 1, 300);
 
         int freeBeforeDelete = page.GetFreeSpaceBytes();
 
@@ -75,7 +75,7 @@ public class DocumentPageTests
         DocumentPage page = DocumentPage.CreateNew(PAGE_SIZE);
 
         byte[] doc1 = new byte[100];
-        page.AddDocument(doc1, new int[] { 1 }, 100);
+        page.AddDocument(doc1, new int[] { 1 }, 1, 100);
 
         Assert.IsFalse(page.NeedsCompaction());
     }
@@ -87,8 +87,8 @@ public class DocumentPageTests
 
         byte[] doc1 = new byte[500];
         byte[] doc2 = new byte[300];
-        page.AddDocument(doc1, new int[] { 1 }, 500);
-        page.AddDocument(doc2, new int[] { 1 }, 300);
+        page.AddDocument(doc1, new int[] { 1 }, 1, 500);
+        page.AddDocument(doc2, new int[] { 1 }, 1, 300);
 
         DeleteSlot(page, 0);
 
@@ -102,8 +102,8 @@ public class DocumentPageTests
 
         byte[] doc1 = new byte[50];
         byte[] doc2 = new byte[300];
-        page.AddDocument(doc1, new int[] { 1 }, 50);
-        page.AddDocument(doc2, new int[] { 1 }, 300);
+        page.AddDocument(doc1, new int[] { 1 }, 1, 50);
+        page.AddDocument(doc2, new int[] { 1 }, 1, 300);
 
         DeleteSlot(page, 0);
 
@@ -117,8 +117,8 @@ public class DocumentPageTests
 
         byte[] doc1 = new byte[50];
         byte[] doc2 = new byte[300];
-        page.AddDocument(doc1, new int[] { 1 }, 50);
-        page.AddDocument(doc2, new int[] { 1 }, 300);
+        page.AddDocument(doc1, new int[] { 1 }, 1, 50);
+        page.AddDocument(doc2, new int[] { 1 }, 1, 300);
 
         DeleteSlot(page, 0);
 
@@ -133,8 +133,8 @@ public class DocumentPageTests
 
         byte[] doc1 = new byte[500];
         byte[] doc2 = new byte[300];
-        page.AddDocument(doc1, new int[] { 1 }, 500);
-        page.AddDocument(doc2, new int[] { 1 }, 300);
+        page.AddDocument(doc1, new int[] { 1 }, 1, 500);
+        page.AddDocument(doc2, new int[] { 1 }, 1, 300);
 
         int freeBeforeDelete = page.GetFreeSpaceBytes();
         DeleteSlot(page, 0);
@@ -157,10 +157,10 @@ public class DocumentPageTests
         byte[] doc2 = new byte[300];
         byte[] doc3 = new byte[400];
         byte[] doc4 = new byte[100];
-        page.AddDocument(doc1, new int[] { 1 }, 200);
-        page.AddDocument(doc2, new int[] { 1 }, 300);
-        page.AddDocument(doc3, new int[] { 1 }, 400);
-        page.AddDocument(doc4, new int[] { 1 }, 100);
+        page.AddDocument(doc1, new int[] { 1 }, 1, 200);
+        page.AddDocument(doc2, new int[] { 1 }, 1, 300);
+        page.AddDocument(doc3, new int[] { 1 }, 1, 400);
+        page.AddDocument(doc4, new int[] { 1 }, 1, 100);
 
         int freeBeforeDeletes = page.GetFreeSpaceBytes();
 
@@ -182,8 +182,8 @@ public class DocumentPageTests
 
         byte[] doc1 = new byte[200];
         byte[] doc2 = new byte[300];
-        page.AddDocument(doc1, new int[] { 1 }, 200);
-        page.AddDocument(doc2, new int[] { 1 }, 300);
+        page.AddDocument(doc1, new int[] { 1 }, 1, 200);
+        page.AddDocument(doc2, new int[] { 1 }, 1, 300);
 
         int freeBefore = page.GetFreeSpaceBytes();
         ushort freeSpaceEndBefore = page.FreeSpaceEnd;
@@ -207,9 +207,9 @@ public class DocumentPageTests
         for (int i = 0; i < 200; i++) doc2[i] = 2;
         for (int i = 0; i < 300; i++) doc3[i] = 3;
 
-        page.AddDocument(doc1, new int[] { 1 }, 100);
-        page.AddDocument(doc2, new int[] { 1 }, 200);
-        page.AddDocument(doc3, new int[] { 1 }, 300);
+        page.AddDocument(doc1, new int[] { 1 }, 1, 100);
+        page.AddDocument(doc2, new int[] { 1 }, 1, 200);
+        page.AddDocument(doc3, new int[] { 1 }, 1, 300);
 
         DeleteSlot(page, 1);
 
@@ -237,9 +237,9 @@ public class DocumentPageTests
         for (int i = 0; i < doc2.Length; i++) doc2[i] = (byte)((i * 2) % 256);
         for (int i = 0; i < doc3.Length; i++) doc3[i] = (byte)((i * 3) % 256);
 
-        page.AddDocument(doc1, new int[] { 1 }, 256);
-        page.AddDocument(doc2, new int[] { 1 }, 512);
-        page.AddDocument(doc3, new int[] { 1 }, 128);
+        page.AddDocument(doc1, new int[] { 1 }, 1, 256);
+        page.AddDocument(doc2, new int[] { 1 }, 1, 512);
+        page.AddDocument(doc3, new int[] { 1 }, 1, 128);
 
         DeleteSlot(page, 1);
 
@@ -271,8 +271,8 @@ public class DocumentPageTests
 
         byte[] doc1 = new byte[500];
         byte[] doc2 = new byte[300];
-        page.AddDocument(doc1, new int[] { 1 }, 500);
-        page.AddDocument(doc2, new int[] { 1 }, 300);
+        page.AddDocument(doc1, new int[] { 1 }, 1, 500);
+        page.AddDocument(doc2, new int[] { 1 }, 1, 300);
 
         DeleteSlot(page, 0);
         DeleteSlot(page, 1);
@@ -289,8 +289,8 @@ public class DocumentPageTests
 
         byte[] doc1 = new byte[500];
         byte[] doc2 = new byte[300];
-        page.AddDocument(doc1, new int[] { 1 }, 500);
-        page.AddDocument(doc2, new int[] { 1 }, 300);
+        page.AddDocument(doc1, new int[] { 1 }, 1, 500);
+        page.AddDocument(doc2, new int[] { 1 }, 1, 300);
 
         ushort freeSpaceOffsetBefore = page.FreeSpaceOffset;
 
@@ -307,8 +307,8 @@ public class DocumentPageTests
 
         byte[] doc1 = new byte[500];
         byte[] doc2 = new byte[300];
-        page.AddDocument(doc1, new int[] { 1 }, 500);
-        page.AddDocument(doc2, new int[] { 1 }, 300);
+        page.AddDocument(doc1, new int[] { 1 }, 1, 500);
+        page.AddDocument(doc2, new int[] { 1 }, 1, 300);
 
         DeleteSlot(page, 0);
 
@@ -327,9 +327,9 @@ public class DocumentPageTests
         byte[] doc1 = new byte[500];
         byte[] doc2 = new byte[300];
         byte[] doc3 = new byte[200];
-        page.AddDocument(doc1, new int[] { 1 }, 500);
-        page.AddDocument(doc2, new int[] { 1 }, 300);
-        page.AddDocument(doc3, new int[] { 1 }, 200);
+        page.AddDocument(doc1, new int[] { 1 }, 1, 500);
+        page.AddDocument(doc2, new int[] { 1 }, 1, 300);
+        page.AddDocument(doc3, new int[] { 1 }, 1, 200);
 
         DeleteSlot(page, 0);
         DeleteSlot(page, 2);
@@ -348,8 +348,8 @@ public class DocumentPageTests
 
         byte[] doc1 = new byte[500];
         byte[] doc2 = new byte[300];
-        page.AddDocument(doc1, new int[] { 1 }, 500);
-        page.AddDocument(doc2, new int[] { 1 }, 300);
+        page.AddDocument(doc1, new int[] { 1 }, 1, 500);
+        page.AddDocument(doc2, new int[] { 1 }, 1, 300);
 
         DeleteSlot(page, 0);
 

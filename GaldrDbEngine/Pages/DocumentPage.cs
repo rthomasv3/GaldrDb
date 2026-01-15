@@ -49,14 +49,14 @@ public class DocumentPage
         return result;
     }
 
-    public int AddDocument(ReadOnlySpan<byte> documentData, int[] pageIds, int totalSize)
+    public int AddDocument(ReadOnlySpan<byte> documentData, int[] pageIds, int pageCount, int totalSize)
     {
         int slotIndex = SlotCount;
         int dataLength = documentData.Length;
 
         SlotEntry entry = new SlotEntry
         {
-            PageCount = pageIds.Length,
+            PageCount = pageCount,
             PageIds = pageIds,
             TotalSize = totalSize,
             Offset = FreeSpaceEnd - dataLength,
@@ -218,6 +218,15 @@ public class DocumentPage
         }
         else
         {
+            // Return pooled PageIds arrays before clearing
+            for (int i = 0; i < page.Slots.Count; i++)
+            {
+                SlotEntry slot = page.Slots[i];
+                if (slot.PageIds != null)
+                {
+                    IntArrayPool.Return(slot.PageIds);
+                }
+            }
             page.Slots.Clear();
         }
 
@@ -251,6 +260,62 @@ public class DocumentPage
         Array.Copy(buffer, 0, page.PageData, 0, pageSize);
     }
 
+    public static int GetLogicalFreeSpaceFromBuffer(byte[] buffer, int pageSize)
+    {
+        int result = -1;
+        int offset = 0;
+
+        byte pageType = buffer[offset];
+        offset += 1;
+
+        if (pageType == PageConstants.PAGE_TYPE_DOCUMENT)
+        {
+            offset += 1;
+
+            ushort slotCount = BinaryHelper.ReadUInt16LE(buffer, offset);
+            offset += 2;
+
+            ushort freeSpaceOffset = BinaryHelper.ReadUInt16LE(buffer, offset);
+            offset += 2;
+
+            ushort freeSpaceEnd = BinaryHelper.ReadUInt16LE(buffer, offset);
+            offset += 2;
+
+            offset += 4;
+
+            int usedByLiveData = 0;
+            for (int i = 0; i < slotCount; i++)
+            {
+                int pageCount = BinaryHelper.ReadInt32LE(buffer, offset);
+                offset += 4;
+
+                if (pageCount > 0)
+                {
+                    offset += 4 * pageCount;
+                }
+
+                offset += 4;
+                offset += 4;
+
+                int length = BinaryHelper.ReadInt32LE(buffer, offset);
+                offset += 4;
+
+                if (pageCount > 0)
+                {
+                    usedByLiveData += length;
+                }
+            }
+
+            int physicalFreeSpace = freeSpaceEnd - freeSpaceOffset;
+            int dataRegionSize = pageSize - freeSpaceEnd;
+            int holeSpace = dataRegionSize - usedByLiveData;
+
+            result = physicalFreeSpace + holeSpace;
+        }
+
+        return result;
+    }
+
     public void Reset(int pageSize)
     {
         _pageSize = pageSize;
@@ -267,6 +332,15 @@ public class DocumentPage
         }
         else
         {
+            // Return pooled PageIds arrays before clearing
+            for (int i = 0; i < Slots.Count; i++)
+            {
+                SlotEntry slot = Slots[i];
+                if (slot.PageIds != null)
+                {
+                    IntArrayPool.Return(slot.PageIds);
+                }
+            }
             Slots.Clear();
         }
 
