@@ -13,4 +13,5 @@ public class WriteSetEntry
     public DocumentLocation? NewLocation { get; set; }
     public IReadOnlyList<IndexFieldEntry> IndexFields { get; set; }
     public IReadOnlyList<IndexFieldEntry> OldIndexFields { get; set; }
+    public TxId? ReadVersionTxId { get; set; }
 }

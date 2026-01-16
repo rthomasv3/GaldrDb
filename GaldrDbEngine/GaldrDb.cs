@@ -991,6 +991,7 @@ public class GaldrDb : IDisposable
 
             BTreeNodePool.Warmup(_options.PageSize, order, 8);
             SecondaryIndexNodePool.Warmup(_options.PageSize, maxKeys, 8);
+            DocumentPagePool.Warmup(_options.PageSize, 8);
         }
     }
 
@@ -1336,18 +1337,16 @@ public class GaldrDb : IDisposable
 
     internal void TryRunGarbageCollection()
     {
-        if (!_options.AutoGarbageCollection)
+        if (_options.AutoGarbageCollection)
         {
-            return;
-        }
+            long currentCommitCount = _txManager.CommitCount;
+            long commitsSinceLastGC = currentCommitCount - _lastGCCommitCount;
 
-        long currentCommitCount = _txManager.CommitCount;
-        long commitsSinceLastGC = currentCommitCount - _lastGCCommitCount;
-
-        if (commitsSinceLastGC >= _options.GarbageCollectionThreshold)
-        {
-            CollectGarbageInternal();
-            _lastGCCommitCount = currentCommitCount;
+            if (commitsSinceLastGC >= _options.GarbageCollectionThreshold)
+            {
+                CollectGarbageInternal();
+                _lastGCCommitCount = currentCommitCount;
+            }
         }
     }
 

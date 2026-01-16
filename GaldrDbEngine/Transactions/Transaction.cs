@@ -210,8 +210,10 @@ public class Transaction : IDisposable
 
         string collectionName = typeInfo.CollectionName;
 
-        // Check for write-write conflict
+        // Get the latest version to track what we're reading from
         DocumentVersion latestVersion = _versionIndex.GetLatestVersion(collectionName, id);
+
+        // Early conflict check
         if (latestVersion != null && latestVersion.CreatedBy > SnapshotTxId)
         {
             throw new WriteConflictException(
@@ -225,6 +227,7 @@ public class Transaction : IDisposable
         bool exists = false;
         DocumentLocation? previousLocation = null;
         IReadOnlyList<IndexFieldEntry> oldIndexFields = null;
+        TxId? readVersionTxId = null;
 
         if (_writeSet.TryGetValue((collectionName, id), out WriteSetEntry existingEntry))
         {
@@ -233,6 +236,7 @@ public class Transaction : IDisposable
                 exists = true;
                 previousLocation = existingEntry.PreviousLocation;
                 oldIndexFields = existingEntry.IndexFields;
+                readVersionTxId = existingEntry.ReadVersionTxId;
             }
         }
         else
@@ -242,6 +246,7 @@ public class Transaction : IDisposable
             if (visibleVersion != null)
             {
                 exists = true;
+                readVersionTxId = latestVersion?.CreatedBy;
 
                 // Only read document if there are indexes to clean up
                 if (typeInfo.IndexedFieldNames.Count > 0)
@@ -273,7 +278,8 @@ public class Transaction : IDisposable
                     PreviousLocation = previousLocation,
                     NewLocation = null,
                     IndexFields = newIndexFields,
-                    OldIndexFields = oldIndexFields
+                    OldIndexFields = oldIndexFields,
+                    ReadVersionTxId = readVersionTxId
                 };
 
                 _writeSet[(collectionName, id)] = entry;
@@ -290,14 +296,16 @@ public class Transaction : IDisposable
     public bool Delete<T>(int id)
     {
         GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
-        
+
         EnsureActive();
         EnsureWritable();
 
         string collectionName = typeInfo.CollectionName;
 
-        // Check for write-write conflict
+        // Get the latest version to track what we're reading from
         DocumentVersion latestVersion = _versionIndex.GetLatestVersion(collectionName, id);
+
+        // Early conflict check
         if (latestVersion != null && latestVersion.CreatedBy > SnapshotTxId)
         {
             throw new WriteConflictException(
@@ -310,6 +318,7 @@ public class Transaction : IDisposable
         // Check if document exists
         bool exists = false;
         IReadOnlyList<IndexFieldEntry> oldIndexFields = null;
+        TxId? readVersionTxId = null;
 
         if (_writeSet.TryGetValue((collectionName, id), out WriteSetEntry existingEntry))
         {
@@ -317,15 +326,17 @@ public class Transaction : IDisposable
             {
                 exists = true;
                 oldIndexFields = existingEntry.IndexFields;
+                readVersionTxId = existingEntry.ReadVersionTxId;
             }
         }
         else
         {
             DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
-            
+
             if (visibleVersion != null)
             {
                 exists = true;
+                readVersionTxId = latestVersion?.CreatedBy;
 
                 // Only read document if there are indexes to clean up
                 if (typeInfo.IndexedFieldNames.Count > 0)
@@ -349,7 +360,8 @@ public class Transaction : IDisposable
                 PreviousLocation = null,
                 NewLocation = null,
                 IndexFields = null,
-                OldIndexFields = oldIndexFields
+                OldIndexFields = oldIndexFields,
+                ReadVersionTxId = readVersionTxId
             };
 
             _writeSet[(collectionName, id)] = entry;
@@ -371,13 +383,14 @@ public class Transaction : IDisposable
         {
             State = TransactionState.Committing;
 
-            ValidateWriteSet();
-
             _db.BeginWalTransaction(TxId.Value);
             _hasActiveWalTransaction = true;
 
             try
             {
+                // Phase 1: Write all data to storage, collect version operations
+                List<VersionOperation> versionOps = new List<VersionOperation>();
+
                 foreach (KeyValuePair<(string CollectionName, int DocId), WriteSetEntry> kvp in _writeSet)
                 {
                     WriteSetEntry entry = kvp.Value;
@@ -387,21 +400,26 @@ public class Transaction : IDisposable
                     {
                         case WriteOperation.Insert:
                             location = _db.CommitInsert(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields);
-                            _versionIndex.AddVersion(entry.CollectionName, entry.DocumentId, TxId, location);
+                            versionOps.Add(VersionOperation.ForInsert(entry.CollectionName, entry.DocumentId, location));
                             break;
 
                         case WriteOperation.Update:
                             location = _db.CommitUpdate(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, entry.OldIndexFields);
-                            _versionIndex.AddVersion(entry.CollectionName, entry.DocumentId, TxId, location);
+                            versionOps.Add(VersionOperation.ForUpdate(entry.CollectionName, entry.DocumentId, location, entry.ReadVersionTxId));
                             break;
 
                         case WriteOperation.Delete:
                             _db.CommitDelete(entry.CollectionName, entry.DocumentId, entry.OldIndexFields);
-                            _versionIndex.MarkDeleted(entry.CollectionName, entry.DocumentId, TxId);
+                            versionOps.Add(VersionOperation.ForDelete(entry.CollectionName, entry.DocumentId, entry.ReadVersionTxId));
                             break;
                     }
                 }
 
+                // Phase 2: Atomically validate and add all versions
+                // This ensures no concurrent transaction modified our documents
+                _versionIndex.ValidateAndAddVersions(TxId, SnapshotTxId, versionOps);
+
+                // Phase 3: Commit WAL
                 _db.CommitWalTransaction();
                 _hasActiveWalTransaction = false;
 
@@ -420,27 +438,6 @@ public class Transaction : IDisposable
                 State = TransactionState.Aborted;
                 _txManager.MarkAborted(TxId);
                 throw;
-            }
-        }
-    }
-
-    private void ValidateWriteSet()
-    {
-        foreach (KeyValuePair<(string CollectionName, int DocId), WriteSetEntry> kvp in _writeSet)
-        {
-            string collectionName = kvp.Key.CollectionName;
-            int docId = kvp.Key.DocId;
-            WriteSetEntry entry = kvp.Value;
-
-            DocumentVersion latestVersion = _versionIndex.GetLatestVersion(collectionName, docId);
-
-            if (latestVersion != null && latestVersion.CreatedBy > SnapshotTxId)
-            {
-                throw new WriteConflictException(
-                    $"Document {collectionName}/{docId} was modified by transaction {latestVersion.CreatedBy}",
-                    collectionName,
-                    docId,
-                    latestVersion.CreatedBy);
             }
         }
     }
@@ -576,8 +573,10 @@ public class Transaction : IDisposable
 
         string collectionName = typeInfo.CollectionName;
 
-        // Check for write-write conflict
+        // Get the latest version to track what we're reading from
         DocumentVersion latestVersion = _versionIndex.GetLatestVersion(collectionName, id);
+
+        // Early conflict check
         if (latestVersion != null && latestVersion.CreatedBy > SnapshotTxId)
         {
             throw new WriteConflictException(
@@ -591,6 +590,7 @@ public class Transaction : IDisposable
         bool exists = false;
         DocumentLocation? previousLocation = null;
         IReadOnlyList<IndexFieldEntry> oldIndexFields = null;
+        TxId? readVersionTxId = null;
 
         if (_writeSet.TryGetValue((collectionName, id), out WriteSetEntry existingEntry))
         {
@@ -599,6 +599,7 @@ public class Transaction : IDisposable
                 exists = true;
                 previousLocation = existingEntry.PreviousLocation;
                 oldIndexFields = existingEntry.IndexFields;
+                readVersionTxId = existingEntry.ReadVersionTxId;
             }
         }
         else
@@ -608,6 +609,7 @@ public class Transaction : IDisposable
             if (visibleVersion != null)
             {
                 exists = true;
+                readVersionTxId = latestVersion?.CreatedBy;
 
                 // Only read document if there are indexes to clean up
                 if (typeInfo.IndexedFieldNames.Count > 0)
@@ -639,7 +641,8 @@ public class Transaction : IDisposable
                     PreviousLocation = previousLocation,
                     NewLocation = null,
                     IndexFields = newIndexFields,
-                    OldIndexFields = oldIndexFields
+                    OldIndexFields = oldIndexFields,
+                    ReadVersionTxId = readVersionTxId
                 };
 
                 _writeSet[(collectionName, id)] = entry;
@@ -662,8 +665,10 @@ public class Transaction : IDisposable
 
         string collectionName = typeInfo.CollectionName;
 
-        // Check for write-write conflict
+        // Get the latest version to track what we're reading from
         DocumentVersion latestVersion = _versionIndex.GetLatestVersion(collectionName, id);
+
+        // Early conflict check
         if (latestVersion != null && latestVersion.CreatedBy > SnapshotTxId)
         {
             throw new WriteConflictException(
@@ -676,6 +681,7 @@ public class Transaction : IDisposable
         // Check if document exists
         bool exists = false;
         IReadOnlyList<IndexFieldEntry> oldIndexFields = null;
+        TxId? readVersionTxId = null;
 
         if (_writeSet.TryGetValue((collectionName, id), out WriteSetEntry existingEntry))
         {
@@ -683,15 +689,17 @@ public class Transaction : IDisposable
             {
                 exists = true;
                 oldIndexFields = existingEntry.IndexFields;
+                readVersionTxId = existingEntry.ReadVersionTxId;
             }
         }
         else
         {
             DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
-            
+
             if (visibleVersion != null)
             {
                 exists = true;
+                readVersionTxId = latestVersion?.CreatedBy;
 
                 // Only read document if there are indexes to clean up
                 if (typeInfo.IndexedFieldNames.Count > 0)
@@ -715,7 +723,8 @@ public class Transaction : IDisposable
                 PreviousLocation = null,
                 NewLocation = null,
                 IndexFields = null,
-                OldIndexFields = oldIndexFields
+                OldIndexFields = oldIndexFields,
+                ReadVersionTxId = readVersionTxId
             };
 
             _writeSet[(collectionName, id)] = entry;
@@ -737,16 +746,14 @@ public class Transaction : IDisposable
         {
             State = TransactionState.Committing;
 
-            // Final validation: check for write-write conflicts
-            ValidateWriteSet();
-
-            // Begin WAL transaction - all page writes will be batched
             _db.BeginWalTransaction(TxId.Value);
             _hasActiveWalTransaction = true;
 
             try
             {
-                // Apply write set to database and update version index
+                // Phase 1: Write all data to storage, collect version operations
+                List<VersionOperation> versionOps = new List<VersionOperation>();
+
                 foreach (KeyValuePair<(string CollectionName, int DocId), WriteSetEntry> kvp in _writeSet)
                 {
                     WriteSetEntry entry = kvp.Value;
@@ -756,22 +763,25 @@ public class Transaction : IDisposable
                     {
                         case WriteOperation.Insert:
                             location = await _db.CommitInsertAsync(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, cancellationToken).ConfigureAwait(false);
-                            _versionIndex.AddVersion(entry.CollectionName, entry.DocumentId, TxId, location);
+                            versionOps.Add(VersionOperation.ForInsert(entry.CollectionName, entry.DocumentId, location));
                             break;
 
                         case WriteOperation.Update:
                             location = await _db.CommitUpdateAsync(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, entry.OldIndexFields, cancellationToken).ConfigureAwait(false);
-                            _versionIndex.AddVersion(entry.CollectionName, entry.DocumentId, TxId, location);
+                            versionOps.Add(VersionOperation.ForUpdate(entry.CollectionName, entry.DocumentId, location, entry.ReadVersionTxId));
                             break;
 
                         case WriteOperation.Delete:
                             await _db.CommitDeleteAsync(entry.CollectionName, entry.DocumentId, entry.OldIndexFields, cancellationToken).ConfigureAwait(false);
-                            _versionIndex.MarkDeleted(entry.CollectionName, entry.DocumentId, TxId);
+                            versionOps.Add(VersionOperation.ForDelete(entry.CollectionName, entry.DocumentId, entry.ReadVersionTxId));
                             break;
                     }
                 }
 
-                // Commit WAL transaction - writes all batched pages with commit flag and fsyncs
+                // Phase 2: Atomically validate and add all versions
+                _versionIndex.ValidateAndAddVersions(TxId, SnapshotTxId, versionOps);
+
+                // Phase 3: Commit WAL
                 _db.CommitWalTransaction();
                 _hasActiveWalTransaction = false;
 
@@ -779,15 +789,12 @@ public class Transaction : IDisposable
                 _txManager.MarkCommitted(TxId);
                 _writeSet.Clear();
 
-                // Try to run garbage collection if threshold is met
                 _db.TryRunGarbageCollection();
 
-                // Try to run auto-checkpoint if WAL threshold is met
                 _db.TryRunAutoCheckpoint();
             }
             catch
             {
-                // Abort WAL transaction on any failure
                 _db.AbortWalTransaction();
                 _hasActiveWalTransaction = false;
                 State = TransactionState.Aborted;

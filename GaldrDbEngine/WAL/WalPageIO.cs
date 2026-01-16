@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,13 +15,23 @@ internal class WalPageIO : IPageIO
     private readonly WriteAheadLog _wal;
     private readonly int _pageSize;
     private readonly Dictionary<int, byte[]> _walPageCache;
-    private readonly object _txLock;
-    
-    // Transaction batching state
-    private ulong _activeTxId;
-    private bool _inTransaction;
-    private List<PendingPageWrite> _pendingWrites;
-    private List<byte[]> _rentedBuffers;
+    private readonly object _cacheLock;
+
+    // Per-transaction WAL write buffers (cache writes are immediate, WAL writes are batched)
+    private readonly ConcurrentDictionary<ulong, List<PendingPageWrite>> _txWalWrites;
+
+    // Track current transaction per async flow (thread/task)
+    private readonly AsyncLocal<ulong?> _currentTxId;
+
+    // Lock for serializing WAL commits
+    private readonly object _commitLock;
+
+    // Reader-writer lock for coordinating base file access during checkpoint
+    private readonly ReaderWriterLockSlim _rwLock;
+
+    // Reader-writer lock for transaction/checkpoint coordination
+    // Transactions hold read lock, checkpoint holds write lock
+    private readonly ReaderWriterLockSlim _checkpointLock;
 
     private bool _disposed;
 
@@ -30,148 +41,161 @@ internal class WalPageIO : IPageIO
         _wal = wal;
         _pageSize = pageSize;
         _walPageCache = new Dictionary<int, byte[]>();
-        _txLock = new object();
-        _activeTxId = 0;
-        _inTransaction = false;
-        _pendingWrites = new List<PendingPageWrite>();
-        _rentedBuffers = new List<byte[]>();
+        _cacheLock = new object();
+        _txWalWrites = new ConcurrentDictionary<ulong, List<PendingPageWrite>>();
+        _currentTxId = new AsyncLocal<ulong?>();
+        _commitLock = new object();
+        _rwLock = new ReaderWriterLockSlim();
+        _checkpointLock = new ReaderWriterLockSlim();
         _disposed = false;
     }
 
     public bool InTransaction
     {
-        get { lock (_txLock) { return _inTransaction; } }
+        get { return _currentTxId.Value.HasValue; }
     }
 
     public void BeginTransaction(ulong txId)
     {
-        lock (_txLock)
-        {
-            while (_inTransaction)
-            {
-                Monitor.Wait(_txLock);
-            }
-
-            _activeTxId = txId;
-            _inTransaction = true;
-            _pendingWrites.Clear();
-            _rentedBuffers.Clear();
-        }
+        // Acquire shared lock - blocks if checkpoint is in progress
+        _checkpointLock.EnterReadLock();
+        _txWalWrites[txId] = new List<PendingPageWrite>();
+        _currentTxId.Value = txId;
     }
 
     public void CommitTransaction()
     {
-        lock (_txLock)
+        ulong? txId = _currentTxId.Value;
+        if (!txId.HasValue)
         {
-            if (!_inTransaction)
-            {
-                throw new InvalidOperationException("No transaction in progress");
-            }
-
-            _wal.WriteTransactionBatch(_activeTxId, _pendingWrites);
-
-            foreach (PendingPageWrite write in _pendingWrites)
-            {
-                if (_walPageCache.TryGetValue(write.PageId, out byte[] oldBuffer))
-                {
-                    BufferPool.Return(oldBuffer);
-                }
-                _walPageCache[write.PageId] = write.Data;
-            }
-
-            _wal.Flush();
-
-            _rentedBuffers.Clear();
-            _pendingWrites.Clear();
-            _inTransaction = false;
-            _activeTxId = 0;
-
-            Monitor.Pulse(_txLock);
+            throw new InvalidOperationException("No transaction in progress");
         }
+
+        if (!_txWalWrites.TryRemove(txId.Value, out List<PendingPageWrite> walWrites))
+        {
+            throw new InvalidOperationException("Transaction WAL buffer not found");
+        }
+
+        // Write all buffered WAL frames atomically
+        lock (_commitLock)
+        {
+            if (walWrites.Count > 0)
+            {
+                _wal.WriteTransactionBatch(txId.Value, walWrites);
+                _wal.Flush();
+            }
+        }
+
+        // Return WAL buffers to pool
+        foreach (PendingPageWrite write in walWrites)
+        {
+            BufferPool.Return(write.Data);
+        }
+
+        walWrites.Clear();
+        _currentTxId.Value = null;
+        _checkpointLock.ExitReadLock();
     }
 
     public void AbortTransaction()
     {
-        lock (_txLock)
+        ulong? txId = _currentTxId.Value;
+        if (!txId.HasValue)
         {
-            // Return all rented buffers to pool
-            foreach (byte[] buffer in _rentedBuffers)
-            {
-                BufferPool.Return(buffer);
-            }
-            _rentedBuffers.Clear();
-            _pendingWrites.Clear();
-            _inTransaction = false;
-            _activeTxId = 0;
-
-            Monitor.Pulse(_txLock);
+            return;
         }
+
+        if (_txWalWrites.TryRemove(txId.Value, out List<PendingPageWrite> walWrites))
+        {
+            // Return WAL buffers to pool
+            // Note: Cache has "orphaned" data from this transaction, but that's OK
+            // because VersionIndex won't point to it. The data is just wasted space
+            // until checkpoint/GC cleans it up.
+            foreach (PendingPageWrite write in walWrites)
+            {
+                BufferPool.Return(write.Data);
+            }
+            walWrites.Clear();
+        }
+
+        _currentTxId.Value = null;
+        _checkpointLock.ExitReadLock();
     }
 
     public void ReadPage(int pageId, Span<byte> destination)
     {
-        bool found = false;
-        byte[] foundData = null;
-
-        lock (_txLock)
+        // Check shared cache first - contains ALL writes (committed + uncommitted)
+        // This ensures concurrent transactions see each other's writes for proper
+        // slot allocation, avoiding double-allocation bugs.
+        lock (_cacheLock)
         {
-            // First check pending writes from current transaction (read your own writes)
-            if (_inTransaction && !found)
+            if (_walPageCache.TryGetValue(pageId, out byte[] cachedPage))
             {
-                for (int i = _pendingWrites.Count - 1; i >= 0; i--)
-                {
-                    if (_pendingWrites[i].PageId == pageId)
-                    {
-                        foundData = _pendingWrites[i].Data;
-                        found = true;
-                        break;
-                    }
-                }
-            }
-
-            // Then check WAL cache for committed writes
-            if (!found && _walPageCache.TryGetValue(pageId, out byte[] cachedPage))
-            {
-                foundData = cachedPage;
-                found = true;
+                cachedPage.AsSpan().CopyTo(destination);
+                return;
             }
         }
 
-        if (found)
+        // Fall back to base file
+        _rwLock.EnterReadLock();
+        try
         {
-            foundData.AsSpan().CopyTo(destination);
-        }
-        else
-        {
-            // Finally read from main database file
             _innerPageIO.ReadPage(pageId, destination);
+        }
+        finally
+        {
+            _rwLock.ExitReadLock();
         }
     }
 
     public void WritePage(int pageId, ReadOnlySpan<byte> data)
     {
-        byte[] pageData = BufferPool.Rent(_pageSize);
-        data.CopyTo(pageData);
-        byte pageType = DeterminePageType(pageData);
+        byte[] cacheData = BufferPool.Rent(_pageSize);
+        data.CopyTo(cacheData);
+        byte pageType = DeterminePageType(cacheData);
 
-        lock (_txLock)
+        // Check if we're in a transaction (which already holds _checkpointLock)
+        ulong? txId = _currentTxId.Value;
+        if (txId.HasValue && _txWalWrites.TryGetValue(txId.Value, out List<PendingPageWrite> walWrites))
         {
-            if (_inTransaction)
+            // Transaction already holds _checkpointLock read lock from BeginTransaction
+            lock (_cacheLock)
             {
-                // Buffer the write for later commit
-                _pendingWrites.Add(new PendingPageWrite(pageId, pageData, pageType));
-                _rentedBuffers.Add(pageData);
-            }
-            else
-            {
-                // No active transaction - write directly with auto-commit
-                // Return old buffer to pool if this page was already in cache
                 if (_walPageCache.TryGetValue(pageId, out byte[] oldBuffer))
                 {
                     BufferPool.Return(oldBuffer);
                 }
-                _wal.WriteFrame(0, pageId, pageType, pageData, WalFrameFlags.Commit);
-                _walPageCache[pageId] = pageData;
+                _walPageCache[pageId] = cacheData;
+            }
+
+            // Make a separate copy for WAL buffer (cache owns cacheData)
+            byte[] walData = BufferPool.Rent(_pageSize);
+            data.CopyTo(walData);
+            walWrites.Add(new PendingPageWrite(pageId, walData, pageType));
+        }
+        else
+        {
+            // No active transaction - acquire lock for auto-commit write
+            _checkpointLock.EnterReadLock();
+            try
+            {
+                lock (_cacheLock)
+                {
+                    if (_walPageCache.TryGetValue(pageId, out byte[] oldBuffer))
+                    {
+                        BufferPool.Return(oldBuffer);
+                    }
+                    _walPageCache[pageId] = cacheData;
+                }
+
+                lock (_commitLock)
+                {
+                    _wal.WriteFrame(0, pageId, pageType, cacheData, WalFrameFlags.Commit);
+                }
+            }
+            finally
+            {
+                _checkpointLock.ExitReadLock();
             }
         }
     }
@@ -184,43 +208,30 @@ internal class WalPageIO : IPageIO
 
     public async Task ReadPageAsync(int pageId, Memory<byte> destination, CancellationToken cancellationToken = default)
     {
-        byte[] cachedData = null;
-
-        lock (_txLock)
+        // Check shared cache first
+        lock (_cacheLock)
         {
-            // First check pending writes from current transaction
-            if (_inTransaction)
+            if (_walPageCache.TryGetValue(pageId, out byte[] cachedPage))
             {
-                for (int i = _pendingWrites.Count - 1; i >= 0; i--)
-                {
-                    if (_pendingWrites[i].PageId == pageId)
-                    {
-                        cachedData = _pendingWrites[i].Data;
-                        break;
-                    }
-                }
-            }
-
-            // Then check WAL cache
-            if (cachedData == null && _walPageCache.TryGetValue(pageId, out byte[] walCached))
-            {
-                cachedData = walCached;
+                cachedPage.AsMemory().CopyTo(destination);
+                return;
             }
         }
 
-        if (cachedData != null)
-        {
-            cachedData.AsMemory().CopyTo(destination);
-        }
-        else
+        // Fall back to base file
+        _rwLock.EnterReadLock();
+        try
         {
             await _innerPageIO.ReadPageAsync(pageId, destination, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _rwLock.ExitReadLock();
         }
     }
 
     public Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
     {
-        // Use sync version - the actual async work happens in CommitTransaction
         WritePage(pageId, data.Span);
         return Task.CompletedTask;
     }
@@ -241,81 +252,128 @@ internal class WalPageIO : IPageIO
         if (!_disposed)
         {
             _disposed = true;
+            _checkpointLock.Dispose();
+            _rwLock.Dispose();
             _innerPageIO.Dispose();
         }
     }
 
-    public void Checkpoint()
+    public bool Checkpoint()
     {
-        lock (_txLock)
+        bool checkpointCompleted = false;
+        List<KeyValuePair<int, byte[]>> pagesToWrite = null;
+
+        // Acquire exclusive lock - waits for all active transactions to complete
+        _checkpointLock.EnterWriteLock();
+        try
         {
-            if (_inTransaction)
+            lock (_cacheLock)
             {
-                throw new InvalidOperationException("Cannot checkpoint while transaction is in progress");
+                if (_walPageCache.Count > 0)
+                {
+                    pagesToWrite = new List<KeyValuePair<int, byte[]>>(_walPageCache);
+                }
             }
 
-            // Apply all cached pages to the underlying storage
-            foreach (KeyValuePair<int, byte[]> entry in _walPageCache)
+            if (pagesToWrite != null)
             {
-                _innerPageIO.WritePage(entry.Key, entry.Value);
+                _rwLock.EnterWriteLock();
+                try
+                {
+                    foreach (KeyValuePair<int, byte[]> entry in pagesToWrite)
+                    {
+                        _innerPageIO.WritePage(entry.Key, entry.Value);
+                    }
+
+                    _innerPageIO.Flush();
+
+                    lock (_cacheLock)
+                    {
+                        foreach (KeyValuePair<int, byte[]> entry in pagesToWrite)
+                        {
+                            _walPageCache.Remove(entry.Key);
+                            BufferPool.Return(entry.Value);
+                        }
+
+                        _wal.Truncate();
+                    }
+
+                    checkpointCompleted = true;
+                }
+                finally
+                {
+                    _rwLock.ExitWriteLock();
+                }
             }
-
-            _innerPageIO.Flush();
-
-            // Return all cached buffers to pool before clearing
-            foreach (KeyValuePair<int, byte[]> entry in _walPageCache)
-            {
-                BufferPool.Return(entry.Value);
-            }
-            _walPageCache.Clear();
-
-            // Truncate the WAL
-            _wal.Truncate();
         }
+        finally
+        {
+            _checkpointLock.ExitWriteLock();
+        }
+
+        return checkpointCompleted;
     }
 
-    public async Task CheckpointAsync(CancellationToken cancellationToken = default)
+    public async Task<bool> CheckpointAsync(CancellationToken cancellationToken = default)
     {
-        List<KeyValuePair<int, byte[]>> pagesToWrite;
+        bool checkpointCompleted = false;
+        List<KeyValuePair<int, byte[]>> pagesToWrite = null;
 
-        lock (_txLock)
+        // Acquire exclusive lock - waits for all active transactions to complete
+        _checkpointLock.EnterWriteLock();
+        try
         {
-            if (_inTransaction)
+            lock (_cacheLock)
             {
-                throw new InvalidOperationException("Cannot checkpoint while transaction is in progress");
+                if (_walPageCache.Count > 0)
+                {
+                    pagesToWrite = new List<KeyValuePair<int, byte[]>>(_walPageCache);
+                }
             }
 
-            // Copy pages to write outside the lock
-            pagesToWrite = new List<KeyValuePair<int, byte[]>>(_walPageCache);
-        }
-
-        // Write pages outside the lock to avoid blocking other operations
-        foreach (KeyValuePair<int, byte[]> entry in pagesToWrite)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            await _innerPageIO.WritePageAsync(entry.Key, entry.Value, cancellationToken).ConfigureAwait(false);
-        }
-
-        await _innerPageIO.FlushAsync(cancellationToken).ConfigureAwait(false);
-
-        lock (_txLock)
-        {
-            // Clear only the pages we wrote (new pages might have been added)
-            // and return their buffers to the pool
-            foreach (KeyValuePair<int, byte[]> entry in pagesToWrite)
+            if (pagesToWrite != null)
             {
-                _walPageCache.Remove(entry.Key);
-                BufferPool.Return(entry.Value);
-            }
+                _rwLock.EnterWriteLock();
+                try
+                {
+                    foreach (KeyValuePair<int, byte[]> entry in pagesToWrite)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        await _innerPageIO.WritePageAsync(entry.Key, entry.Value, cancellationToken).ConfigureAwait(false);
+                    }
 
-            // Truncate the WAL
-            _wal.Truncate();
+                    await _innerPageIO.FlushAsync(cancellationToken).ConfigureAwait(false);
+
+                    lock (_cacheLock)
+                    {
+                        foreach (KeyValuePair<int, byte[]> entry in pagesToWrite)
+                        {
+                            _walPageCache.Remove(entry.Key);
+                            BufferPool.Return(entry.Value);
+                        }
+
+                        _wal.Truncate();
+                    }
+
+                    checkpointCompleted = true;
+                }
+                finally
+                {
+                    _rwLock.ExitWriteLock();
+                }
+            }
         }
+        finally
+        {
+            _checkpointLock.ExitWriteLock();
+        }
+
+        return checkpointCompleted;
     }
 
     public void ApplyWalFrames(List<WalFrame> frames)
     {
-        lock (_txLock)
+        lock (_cacheLock)
         {
             foreach (WalFrame frame in frames)
             {
@@ -329,7 +387,7 @@ internal class WalPageIO : IPageIO
 
     public void ClearCache()
     {
-        lock (_txLock)
+        lock (_cacheLock)
         {
             _walPageCache.Clear();
         }

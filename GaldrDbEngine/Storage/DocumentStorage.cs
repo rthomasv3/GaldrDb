@@ -11,16 +11,16 @@ public class DocumentStorage : IDisposable
 {
     private readonly IPageIO _pageIO;
     private readonly PageManager _pageManager;
+    private readonly PageLockManager _pageLockManager;
     private readonly int _pageSize;
-    private readonly ThreadLocal<DocumentPage> _reusablePage;
     private bool _disposed;
 
     public DocumentStorage(IPageIO pageIO, PageManager pageManager, int pageSize)
     {
         _pageIO = pageIO;
         _pageManager = pageManager;
+        _pageLockManager = new PageLockManager();
         _pageSize = pageSize;
-        _reusablePage = new ThreadLocal<DocumentPage>(() => new DocumentPage());
     }
 
     public DocumentLocation WriteDocument(byte[] documentBytes)
@@ -42,7 +42,9 @@ public class DocumentStorage : IDisposable
             int pageId = FindOrAllocatePageForDocument(documentSize);
             pageIds[0] = pageId;
 
+            _pageLockManager.AcquireWriteLock(pageId);
             byte[] pageBuffer = BufferPool.Rent(_pageSize);
+            DocumentPage page = DocumentPagePool.Rent(_pageSize);
             try
             {
                 _pageIO.ReadPage(pageId, pageBuffer);
@@ -50,41 +52,46 @@ public class DocumentStorage : IDisposable
                 bool wasInitialized = IsPageInitialized(pageBuffer);
                 if (wasInitialized)
                 {
-                    DocumentPage.DeserializeTo(pageBuffer, _reusablePage.Value, _pageSize);
+                    DocumentPage.DeserializeTo(pageBuffer, page, _pageSize);
                 }
                 else
                 {
-                    _reusablePage.Value.Reset(_pageSize);
+                    page.Reset(_pageSize);
                 }
 
-                if (!_reusablePage.Value.CanFit(documentSize))
+                if (!page.CanFit(documentSize))
                 {
                     int slotOverhead = 16;
                     int requiredSpace = documentSize + slotOverhead;
 
-                    if (_reusablePage.Value.GetLogicalFreeSpace() >= requiredSpace)
+                    if (page.GetLogicalFreeSpace() >= requiredSpace)
                     {
-                        _reusablePage.Value.Compact();
+                        page.Compact();
                     }
                     else
                     {
+                        // Release old page lock and acquire lock on new page
+                        _pageLockManager.ReleaseWriteLock(pageId);
                         pageId = _pageManager.AllocatePage();
                         pageIds[0] = pageId;
-                        _reusablePage.Value.Reset(_pageSize);
+                        _pageLockManager.AcquireWriteLock(pageId);
+                        page.Reset(_pageSize);
                     }
                 }
 
-                int slotIndex = _reusablePage.Value.AddDocument(documentBytes, pageIds, pagesNeeded, documentSize);
+                int slotIndex = page.AddDocument(documentBytes, pageIds, pagesNeeded, documentSize);
 
-                _reusablePage.Value.SerializeTo(pageBuffer);
+                page.SerializeTo(pageBuffer);
                 _pageIO.WritePage(pageId, pageBuffer);
 
-                UpdateFSMForDocumentPage(pageId, _reusablePage.Value);
+                UpdateFSMForDocumentPage(pageId, page);
 
                 result = new DocumentLocation(pageId, slotIndex);
             }
             finally
             {
+                _pageLockManager.ReleaseWriteLock(pageId);
+                DocumentPagePool.Return(page);
                 BufferPool.Return(pageBuffer);
             }
         }
@@ -96,18 +103,25 @@ public class DocumentStorage : IDisposable
             int offset = 0;
             int firstPageDataSize = Math.Min(documentSize, usablePageSize);
 
-            _reusablePage.Value.Reset(_pageSize);
-            int slotIndexResult = _reusablePage.Value.AddDocument(documentBytes.AsSpan(0, firstPageDataSize), pageIds, pagesNeeded, documentSize);
+            // Acquire write locks on all pages (in order to avoid deadlocks)
+            for (int i = 0; i < pagesNeeded; i++)
+            {
+                _pageLockManager.AcquireWriteLock(pageIds[i]);
+            }
 
+            DocumentPage page = DocumentPagePool.Rent(_pageSize);
             byte[] pageBuffer = BufferPool.Rent(_pageSize);
             try
             {
-                _reusablePage.Value.SerializeTo(pageBuffer);
+                page.Reset(_pageSize);
+                int slotIndexResult = page.AddDocument(documentBytes.AsSpan(0, firstPageDataSize), pageIds, pagesNeeded, documentSize);
+
+                page.SerializeTo(pageBuffer);
                 _pageIO.WritePage(firstPageId, pageBuffer);
 
                 // For multi-page documents, use contiguous free space for FSM since
                 // continuation pages are raw data buffers marked as FreeSpaceLevel.None
-                UpdateFSM(firstPageId, _reusablePage.Value.GetFreeSpaceBytes());
+                UpdateFSM(firstPageId, page.GetFreeSpaceBytes());
 
                 offset += firstPageDataSize;
 
@@ -133,6 +147,12 @@ public class DocumentStorage : IDisposable
             }
             finally
             {
+                // Release all page locks
+                for (int i = 0; i < pagesNeeded; i++)
+                {
+                    _pageLockManager.ReleaseWriteLock(pageIds[i]);
+                }
+                DocumentPagePool.Return(page);
                 BufferPool.Return(pageBuffer);
             }
         }
@@ -143,18 +163,23 @@ public class DocumentStorage : IDisposable
     public byte[] ReadDocument(int pageId, int slotIndex)
     {
         byte[] result = null;
+        int[] continuationPageIds = null;
+        int continuationPageCount = 0;
+
+        _pageLockManager.AcquireReadLock(pageId);
         byte[] pageBuffer = BufferPool.Rent(_pageSize);
+        DocumentPage page = DocumentPagePool.Rent(_pageSize);
         try
         {
             _pageIO.ReadPage(pageId, pageBuffer);
-            DocumentPage.DeserializeTo(pageBuffer, _reusablePage.Value, _pageSize);
+            DocumentPage.DeserializeTo(pageBuffer, page, _pageSize);
 
-            if (slotIndex < 0 || slotIndex >= _reusablePage.Value.SlotCount)
+            if (slotIndex < 0 || slotIndex >= page.SlotCount)
             {
                 throw new ArgumentOutOfRangeException(nameof(slotIndex));
             }
 
-            SlotEntry entry = _reusablePage.Value.Slots[slotIndex];
+            SlotEntry entry = page.Slots[slotIndex];
 
             if (entry.PageCount == 0 || entry.TotalSize == 0)
             {
@@ -163,16 +188,25 @@ public class DocumentStorage : IDisposable
 
             if (entry.PageCount == 1)
             {
-                result = _reusablePage.Value.GetDocumentData(slotIndex);
+                result = page.GetDocumentData(slotIndex);
             }
             else
             {
                 byte[] fullDocument = new byte[entry.TotalSize];
                 int offset = 0;
 
-                byte[] firstPageData = _reusablePage.Value.GetDocumentData(slotIndex);
+                byte[] firstPageData = page.GetDocumentData(slotIndex);
                 Array.Copy(firstPageData, 0, fullDocument, offset, firstPageData.Length);
                 offset += firstPageData.Length;
+
+                // Store continuation page IDs and acquire locks
+                continuationPageCount = entry.PageCount - 1;
+                continuationPageIds = new int[continuationPageCount];
+                for (int i = 1; i < entry.PageCount; i++)
+                {
+                    continuationPageIds[i - 1] = entry.PageIds[i];
+                    _pageLockManager.AcquireReadLock(entry.PageIds[i]);
+                }
 
                 for (int i = 1; i < entry.PageCount; i++)
                 {
@@ -190,6 +224,15 @@ public class DocumentStorage : IDisposable
         }
         finally
         {
+            _pageLockManager.ReleaseReadLock(pageId);
+            if (continuationPageIds != null)
+            {
+                for (int i = 0; i < continuationPageCount; i++)
+                {
+                    _pageLockManager.ReleaseReadLock(continuationPageIds[i]);
+                }
+            }
+            DocumentPagePool.Return(page);
             BufferPool.Return(pageBuffer);
         }
 
@@ -198,18 +241,20 @@ public class DocumentStorage : IDisposable
 
     public void DeleteDocument(int pageId, int slotIndex)
     {
+        _pageLockManager.AcquireWriteLock(pageId);
         byte[] pageBuffer = BufferPool.Rent(_pageSize);
+        DocumentPage page = DocumentPagePool.Rent(_pageSize);
         try
         {
             _pageIO.ReadPage(pageId, pageBuffer);
-            DocumentPage.DeserializeTo(pageBuffer, _reusablePage.Value, _pageSize);
+            DocumentPage.DeserializeTo(pageBuffer, page, _pageSize);
 
-            if (slotIndex < 0 || slotIndex >= _reusablePage.Value.SlotCount)
+            if (slotIndex < 0 || slotIndex >= page.SlotCount)
             {
                 throw new ArgumentOutOfRangeException(nameof(slotIndex));
             }
 
-            SlotEntry entry = _reusablePage.Value.Slots[slotIndex];
+            SlotEntry entry = page.Slots[slotIndex];
 
             if (entry.PageCount > 1)
             {
@@ -225,7 +270,7 @@ public class DocumentStorage : IDisposable
                 IntArrayPool.Return(entry.PageIds);
             }
 
-            _reusablePage.Value.Slots[slotIndex] = new SlotEntry
+            page.Slots[slotIndex] = new SlotEntry
             {
                 PageCount = 0,
                 PageIds = null,
@@ -234,13 +279,15 @@ public class DocumentStorage : IDisposable
                 Length = 0
             };
 
-            _reusablePage.Value.SerializeTo(pageBuffer);
+            page.SerializeTo(pageBuffer);
             _pageIO.WritePage(pageId, pageBuffer);
 
-            UpdateFSMForDocumentPage(pageId, _reusablePage.Value);
+            UpdateFSMForDocumentPage(pageId, page);
         }
         finally
         {
+            _pageLockManager.ReleaseWriteLock(pageId);
+            DocumentPagePool.Return(page);
             BufferPool.Return(pageBuffer);
         }
     }
@@ -390,7 +437,8 @@ public class DocumentStorage : IDisposable
             int pageId = FindOrAllocatePageForDocument(documentSize);
             pageIds[0] = pageId;
 
-            DocumentPage page = _reusablePage.Value;
+            _pageLockManager.AcquireWriteLock(pageId);
+            DocumentPage page = DocumentPagePool.Rent(_pageSize);
             byte[] pageBuffer = BufferPool.Rent(_pageSize);
             try
             {
@@ -416,8 +464,11 @@ public class DocumentStorage : IDisposable
                     }
                     else
                     {
+                        // Release old page lock and acquire lock on new page
+                        _pageLockManager.ReleaseWriteLock(pageId);
                         pageId = _pageManager.AllocatePage();
                         pageIds[0] = pageId;
+                        _pageLockManager.AcquireWriteLock(pageId);
                         page.Reset(_pageSize);
                     }
                 }
@@ -433,6 +484,8 @@ public class DocumentStorage : IDisposable
             }
             finally
             {
+                _pageLockManager.ReleaseWriteLock(pageId);
+                DocumentPagePool.Return(page);
                 BufferPool.Return(pageBuffer);
             }
         }
@@ -444,13 +497,19 @@ public class DocumentStorage : IDisposable
             int offset = 0;
             int firstPageDataSize = Math.Min(documentSize, usablePageSize);
 
-            DocumentPage page = _reusablePage.Value;
-            page.Reset(_pageSize);
-            int slotIndexResult = page.AddDocument(documentBytes.AsSpan(0, firstPageDataSize), pageIds, pagesNeeded, documentSize);
+            // Acquire write locks on all pages (in order to avoid deadlocks)
+            for (int i = 0; i < pagesNeeded; i++)
+            {
+                _pageLockManager.AcquireWriteLock(pageIds[i]);
+            }
 
+            DocumentPage page = DocumentPagePool.Rent(_pageSize);
             byte[] pageBuffer = BufferPool.Rent(_pageSize);
             try
             {
+                page.Reset(_pageSize);
+                int slotIndexResult = page.AddDocument(documentBytes.AsSpan(0, firstPageDataSize), pageIds, pagesNeeded, documentSize);
+
                 page.SerializeTo(pageBuffer);
                 await _pageIO.WritePageAsync(firstPageId, pageBuffer, cancellationToken).ConfigureAwait(false);
 
@@ -482,6 +541,12 @@ public class DocumentStorage : IDisposable
             }
             finally
             {
+                // Release all page locks
+                for (int i = 0; i < pagesNeeded; i++)
+                {
+                    _pageLockManager.ReleaseWriteLock(pageIds[i]);
+                }
+                DocumentPagePool.Return(page);
                 BufferPool.Return(pageBuffer);
             }
         }
@@ -492,18 +557,23 @@ public class DocumentStorage : IDisposable
     public async Task<byte[]> ReadDocumentAsync(int pageId, int slotIndex, CancellationToken cancellationToken = default)
     {
         byte[] result = null;
+        int[] continuationPageIds = null;
+        int continuationPageCount = 0;
+
+        _pageLockManager.AcquireReadLock(pageId);
         byte[] pageBuffer = BufferPool.Rent(_pageSize);
+        DocumentPage page = DocumentPagePool.Rent(_pageSize);
         try
         {
             await _pageIO.ReadPageAsync(pageId, pageBuffer, cancellationToken).ConfigureAwait(false);
-            DocumentPage.DeserializeTo(pageBuffer, _reusablePage.Value, _pageSize);
+            DocumentPage.DeserializeTo(pageBuffer, page, _pageSize);
 
-            if (slotIndex < 0 || slotIndex >= _reusablePage.Value.SlotCount)
+            if (slotIndex < 0 || slotIndex >= page.SlotCount)
             {
                 throw new ArgumentOutOfRangeException(nameof(slotIndex));
             }
 
-            SlotEntry entry = _reusablePage.Value.Slots[slotIndex];
+            SlotEntry entry = page.Slots[slotIndex];
 
             if (entry.PageCount == 0 || entry.TotalSize == 0)
             {
@@ -512,16 +582,25 @@ public class DocumentStorage : IDisposable
 
             if (entry.PageCount == 1)
             {
-                result = _reusablePage.Value.GetDocumentData(slotIndex);
+                result = page.GetDocumentData(slotIndex);
             }
             else
             {
                 byte[] fullDocument = new byte[entry.TotalSize];
                 int offset = 0;
 
-                byte[] firstPageData = _reusablePage.Value.GetDocumentData(slotIndex);
+                byte[] firstPageData = page.GetDocumentData(slotIndex);
                 Array.Copy(firstPageData, 0, fullDocument, offset, firstPageData.Length);
                 offset += firstPageData.Length;
+
+                // Store continuation page IDs and acquire locks
+                continuationPageCount = entry.PageCount - 1;
+                continuationPageIds = new int[continuationPageCount];
+                for (int i = 1; i < entry.PageCount; i++)
+                {
+                    continuationPageIds[i - 1] = entry.PageIds[i];
+                    _pageLockManager.AcquireReadLock(entry.PageIds[i]);
+                }
 
                 for (int i = 1; i < entry.PageCount; i++)
                 {
@@ -539,6 +618,15 @@ public class DocumentStorage : IDisposable
         }
         finally
         {
+            _pageLockManager.ReleaseReadLock(pageId);
+            if (continuationPageIds != null)
+            {
+                for (int i = 0; i < continuationPageCount; i++)
+                {
+                    _pageLockManager.ReleaseReadLock(continuationPageIds[i]);
+                }
+            }
+            DocumentPagePool.Return(page);
             BufferPool.Return(pageBuffer);
         }
 
@@ -549,8 +637,8 @@ public class DocumentStorage : IDisposable
     {
         if (!_disposed)
         {
-            _reusablePage.Dispose();
             _disposed = true;
+            _pageLockManager.Dispose();
         }
     }
 }

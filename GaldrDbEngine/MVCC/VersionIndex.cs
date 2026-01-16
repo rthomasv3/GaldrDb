@@ -102,6 +102,93 @@ public sealed class VersionIndex
         }
     }
 
+    public void ValidateAndAddVersions(TxId createdBy, TxId snapshotTxId, IReadOnlyList<VersionOperation> operations)
+    {
+        lock (_lock)
+        {
+            // Phase 1: Validate all operations - if any conflict, throw before modifying anything
+            foreach (VersionOperation op in operations)
+            {
+                if (_index.TryGetValue(op.CollectionName, out Dictionary<int, DocumentVersion> collection))
+                {
+                    if (collection.TryGetValue(op.DocumentId, out DocumentVersion existing))
+                    {
+                        bool hasConflict = false;
+
+                        if (op.ReadVersionTxId.HasValue)
+                        {
+                            // For updates/deletes: check if the version we read is still current
+                            // If someone else modified it after we read it, that's a conflict
+                            hasConflict = existing.CreatedBy != op.ReadVersionTxId.Value;
+                        }
+                        else
+                        {
+                            // For inserts: check against snapshot (shouldn't happen for existing docs)
+                            hasConflict = existing.CreatedBy > snapshotTxId;
+                        }
+
+                        if (hasConflict)
+                        {
+                            throw new WriteConflictException(
+                                $"Document {op.CollectionName}/{op.DocumentId} was modified by transaction {existing.CreatedBy}",
+                                op.CollectionName,
+                                op.DocumentId,
+                                existing.CreatedBy);
+                        }
+                    }
+                }
+            }
+
+            // Phase 2: All validated - now apply all operations
+            foreach (VersionOperation op in operations)
+            {
+                if (op.IsDelete)
+                {
+                    MarkDeletedInternal(op.CollectionName, op.DocumentId, createdBy);
+                }
+                else
+                {
+                    AddVersionInternal(op.CollectionName, op.DocumentId, createdBy, op.Location);
+                }
+            }
+        }
+    }
+
+    private void AddVersionInternal(string collectionName, int documentId, TxId createdBy, DocumentLocation location)
+    {
+        if (!_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
+        {
+            collection = new Dictionary<int, DocumentVersion>();
+            _index[collectionName] = collection;
+        }
+
+        DocumentVersion previousVersion = null;
+        if (collection.TryGetValue(documentId, out DocumentVersion existing))
+        {
+            previousVersion = existing;
+            previousVersion.MarkDeleted(createdBy);
+
+            if (previousVersion.PreviousVersion == null)
+            {
+                _multiVersionDocumentCount++;
+            }
+        }
+
+        DocumentVersion newVersion = new DocumentVersion(documentId, createdBy, location, previousVersion);
+        collection[documentId] = newVersion;
+    }
+
+    private void MarkDeletedInternal(string collectionName, int documentId, TxId deletedBy)
+    {
+        if (_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
+        {
+            if (collection.TryGetValue(documentId, out DocumentVersion version))
+            {
+                version.MarkDeleted(deletedBy);
+            }
+        }
+    }
+
     public void MarkDeleted(string collectionName, int documentId, TxId deletedBy)
     {
         lock (_lock)

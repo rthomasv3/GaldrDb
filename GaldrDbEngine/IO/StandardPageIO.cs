@@ -2,19 +2,22 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Win32.SafeHandles;
 
 namespace GaldrDbEngine.IO;
 
 public class StandardPageIO : IPageIO
 {
-    private readonly string _filePath;
     private readonly int _pageSize;
-    private FileStream _fileStream;
+    private readonly SafeFileHandle _fileHandle;
+    private readonly ReaderWriterLockSlim _rwLock;
+    private bool _disposed;
 
     public StandardPageIO(string filePath, int pageSize, bool createNew)
     {
-        _filePath = filePath;
         _pageSize = pageSize;
+        _rwLock = new ReaderWriterLockSlim();
+        _disposed = false;
 
         FileMode fileMode = FileMode.Open;
 
@@ -23,7 +26,7 @@ public class StandardPageIO : IPageIO
             fileMode = FileMode.CreateNew;
         }
 
-        _fileStream = new FileStream(_filePath, fileMode, FileAccess.ReadWrite, FileShare.Read);
+        _fileHandle = File.OpenHandle(filePath, fileMode, FileAccess.ReadWrite, FileShare.Read);
     }
 
     public void ReadPage(int pageId, Span<byte> destination)
@@ -35,20 +38,26 @@ public class StandardPageIO : IPageIO
 
         long offset = (long)pageId * _pageSize;
 
-        _fileStream.Seek(offset, SeekOrigin.Begin);
-
-        int totalBytesRead = 0;
-
-        while (totalBytesRead < _pageSize)
+        _rwLock.EnterReadLock();
+        try
         {
-            int bytesRead = _fileStream.Read(destination.Slice(totalBytesRead, _pageSize - totalBytesRead));
+            int totalBytesRead = 0;
 
-            if (bytesRead == 0)
+            while (totalBytesRead < _pageSize)
             {
-                break;
-            }
+                int bytesRead = RandomAccess.Read(_fileHandle, destination.Slice(totalBytesRead, _pageSize - totalBytesRead), offset + totalBytesRead);
 
-            totalBytesRead += bytesRead;
+                if (bytesRead == 0)
+                {
+                    break;
+                }
+
+                totalBytesRead += bytesRead;
+            }
+        }
+        finally
+        {
+            _rwLock.ExitReadLock();
         }
     }
 
@@ -61,30 +70,45 @@ public class StandardPageIO : IPageIO
 
         long offset = (long)pageId * _pageSize;
 
-        _fileStream.Seek(offset, SeekOrigin.Begin);
-        _fileStream.Write(data);
+        _rwLock.EnterWriteLock();
+        try
+        {
+            RandomAccess.Write(_fileHandle, data, offset);
+        }
+        finally
+        {
+            _rwLock.ExitWriteLock();
+        }
     }
 
     public void Flush()
     {
-        _fileStream.Flush();
+        _rwLock.EnterWriteLock();
+        try
+        {
+            RandomAccess.FlushToDisk(_fileHandle);
+        }
+        finally
+        {
+            _rwLock.ExitWriteLock();
+        }
     }
 
     public void Close()
     {
-        if (_fileStream != null)
+        if (!_disposed)
         {
-            _fileStream.Close();
+            _fileHandle.Close();
         }
     }
 
     public void Dispose()
     {
-        Close();
-
-        if (_fileStream != null)
+        if (!_disposed)
         {
-            _fileStream.Dispose();
+            _disposed = true;
+            _rwLock.Dispose();
+            _fileHandle.Dispose();
         }
     }
 
@@ -97,20 +121,26 @@ public class StandardPageIO : IPageIO
 
         long offset = (long)pageId * _pageSize;
 
-        _fileStream.Seek(offset, SeekOrigin.Begin);
-
-        int totalBytesRead = 0;
-
-        while (totalBytesRead < _pageSize)
+        _rwLock.EnterReadLock();
+        try
         {
-            int bytesRead = await _fileStream.ReadAsync(destination.Slice(totalBytesRead, _pageSize - totalBytesRead), cancellationToken);
+            int totalBytesRead = 0;
 
-            if (bytesRead == 0)
+            while (totalBytesRead < _pageSize)
             {
-                break;
-            }
+                int bytesRead = await RandomAccess.ReadAsync(_fileHandle, destination.Slice(totalBytesRead, _pageSize - totalBytesRead), offset + totalBytesRead, cancellationToken);
 
-            totalBytesRead += bytesRead;
+                if (bytesRead == 0)
+                {
+                    break;
+                }
+
+                totalBytesRead += bytesRead;
+            }
+        }
+        finally
+        {
+            _rwLock.ExitReadLock();
         }
     }
 
@@ -123,12 +153,21 @@ public class StandardPageIO : IPageIO
 
         long offset = (long)pageId * _pageSize;
 
-        _fileStream.Seek(offset, SeekOrigin.Begin);
-        await _fileStream.WriteAsync(data, cancellationToken);
+        _rwLock.EnterWriteLock();
+        try
+        {
+            await RandomAccess.WriteAsync(_fileHandle, data, offset, cancellationToken);
+        }
+        finally
+        {
+            _rwLock.ExitWriteLock();
+        }
     }
 
-    public async Task FlushAsync(CancellationToken cancellationToken = default)
+    public Task FlushAsync(CancellationToken cancellationToken = default)
     {
-        await _fileStream.FlushAsync(cancellationToken);
+        // RandomAccess doesn't have an async flush, use sync version
+        Flush();
+        return Task.CompletedTask;
     }
 }
