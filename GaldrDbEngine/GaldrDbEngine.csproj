@@ -3,6 +3,7 @@
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>
         <RootNamespace>GaldrDbEngine</RootNamespace>
+        <IsPackable>true</IsPackable>
     </PropertyGroup>
 
     <ItemGroup>
@@ -13,6 +14,19 @@
     <ItemGroup>
       <InternalsVisibleTo Include="GaldrDb.UnitTests" />
       <InternalsVisibleTo Include="GaldrDb.SimulationTests" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\GaldrDbSourceGenerators\GaldrDbSourceGenerators.csproj"
+                        OutputItemType="Analyzer"
+                        ReferenceOutputAssembly="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <None Include="$(MSBuildThisFileDirectory)..\GaldrDbSourceGenerators\bin\$(Configuration)\netstandard2.0\GaldrDbSourceGenerators.dll"
+            Pack="true"
+            PackagePath="analyzers/dotnet/cs"
+            Visible="false" />
     </ItemGroup>
 
 </Project>
