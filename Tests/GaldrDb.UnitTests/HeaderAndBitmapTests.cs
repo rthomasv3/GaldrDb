@@ -189,6 +189,37 @@ public class HeaderAndBitmapTests
     }
 
     [TestMethod]
+    public void Open_InvalidMagicNumber_RecoversFromWAL()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions();
+
+        using (GaldrDatabase db = GaldrDatabase.Create(dbPath, options))
+        {
+        }
+
+        byte[] corruptedHeader = File.ReadAllBytes(dbPath);
+        corruptedHeader[0] = 0xFF;
+        corruptedHeader[1] = 0xFF;
+        corruptedHeader[2] = 0xFF;
+        corruptedHeader[3] = 0xFF;
+        File.WriteAllBytes(dbPath, corruptedHeader);
+
+        bool result = false;
+
+        try
+        {
+            using (GaldrDatabase db = GaldrDatabase.Open(dbPath, options))
+            {
+                result = true;
+            }
+        }
+        catch { }
+
+        Assert.IsTrue(result);
+    }
+    
+    [TestMethod]
     public void Open_InvalidMagicNumber_ThrowsException()
     {
         string dbPath = Path.Combine(_testDirectory, "test.db");
@@ -196,6 +227,7 @@ public class HeaderAndBitmapTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, options))
         {
+            db.Checkpoint();
         }
 
         byte[] corruptedHeader = File.ReadAllBytes(dbPath);

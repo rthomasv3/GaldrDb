@@ -1,3 +1,7 @@
+using System;
+using System.IO;
+using GaldrDbEngine.IO;
+
 namespace GaldrDbEngine;
 
 public class GaldrDbOptions
@@ -19,4 +23,9 @@ public class GaldrDbOptions
     public bool WarmupOnOpen { get; set; } = true;
     public int JsonWriterBufferSize { get; set; } = 4096; // initial buffer size for JSON serialization
     public int JsonWriterPoolWarmupCount { get; set; } = 4; // number of writers to pre-create
+
+    // Internal: for simulation testing only (null in production)
+    internal IPageIO CustomPageIO { get; set; }
+    internal Stream CustomWalStream { get; set; }
+    internal Func<uint> CustomWalSaltGenerator { get; set; }
 }

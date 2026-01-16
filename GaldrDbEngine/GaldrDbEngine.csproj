@@ -12,6 +12,7 @@
 
     <ItemGroup>
       <InternalsVisibleTo Include="GaldrDb.UnitTests" />
+      <InternalsVisibleTo Include="GaldrDb.SimulationTests" />
     </ItemGroup>
 
 </Project>

@@ -8,7 +8,7 @@ namespace GaldrDbEngine.Storage;
 
 public class PageManager
 {
-    private readonly IPageIO _pageIO;
+    private IPageIO _pageIO;
     private readonly int _pageSize;
     private readonly double _growthFactor;
     private readonly int _minimumExpansion;
@@ -70,6 +70,13 @@ public class PageManager
         _fsm.WriteToDisk();
 
         _pageIO.Flush();
+    }
+
+    public void SetPageIO(IPageIO pageIO)
+    {
+        _pageIO = pageIO;
+        _bitmap.SetPageIO(_pageIO);
+        _fsm.SetPageIO(_pageIO);
     }
 
     public void Load()

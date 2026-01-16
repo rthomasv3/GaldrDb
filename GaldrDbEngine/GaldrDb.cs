@@ -42,6 +42,14 @@ public class GaldrDb : IDisposable
 
     #endregion
 
+    #region Internal Properties (for testing)
+
+    internal WriteAheadLog Wal => _wal;
+    internal VersionIndex VersionIndex => _versionIndex;
+    internal CollectionsMetadata CollectionsMetadata => _collectionsMetadata;
+
+    #endregion
+
     #region Constructor
 
     public GaldrDb(string filePath, GaldrDbOptions options)
@@ -85,7 +93,8 @@ public class GaldrDb : IDisposable
 
     public static GaldrDb Open(string filePath, GaldrDbOptions options = null)
     {
-        if (options == null || options.PageSize == 0)
+        // Skip file peek when using custom page IO (simulation testing)
+        if ((options == null || options.PageSize == 0) && (options == null || options.CustomPageIO == null))
         {
             byte[] peekBuffer = new byte[12];
             using (FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
@@ -993,22 +1002,23 @@ public class GaldrDb : IDisposable
         }
 
         SetupIO();
-
-        // Initialize using base page IO first
+        
+        // always initialize the file with a valid header
         _pageManager = new PageManager(_basePageIO, _options.PageSize);
         _pageManager.Initialize();
-
-        _collectionsMetadata = new CollectionsMetadata(_basePageIO, _pageManager.Header.CollectionsMetadataPage, _options.PageSize);
-        _collectionsMetadata.WriteToDisk();
-
         _pageManager.Flush();
 
         if (_options.UseWal)
         {
             InitializeWalFile();
         }
+        
+        // future page writes should go through WAL, if configured
+        _pageManager.SetPageIO(_pageIO);
+        
+        _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataPage, _options.PageSize);
+        _collectionsMetadata.WriteToDisk();
 
-        // Document storage uses the final _pageIO (WAL-wrapped if UseWal is true)
         _documentStorage = new DocumentStorage(_pageIO, _pageManager, _options.PageSize);
 
         EnsureAllCollections();
@@ -1016,44 +1026,60 @@ public class GaldrDb : IDisposable
 
     private void OpenAndValidateFile()
     {
-        if (!File.Exists(_filePath))
+        // Skip file existence check when using custom page IO (simulation testing)
+        if (_options.CustomPageIO == null && !File.Exists(_filePath))
         {
             throw new FileNotFoundException();
         }
 
         SetupIO();
-
-        _pageManager = new PageManager(_basePageIO, _options.PageSize);
-        _pageManager.Load();
-
-        if (_options.PageSize == 0 || _options.PageSize != _pageManager.Header.PageSize)
-        {
-            _options.PageSize = _pageManager.Header.PageSize;
-        }
-
-        _collectionsMetadata = new CollectionsMetadata(_basePageIO, _pageManager.Header.CollectionsMetadataPage, _pageManager.Header.PageSize);
-        _collectionsMetadata.LoadFromDisk();
-
-        _documentStorage = new DocumentStorage(_basePageIO, _pageManager, _pageManager.Header.PageSize);
-
+        
         if (_options.UseWal)
         {
-            if (File.Exists(_walPath))
+            // When using custom WAL stream, always recover (stream contains WAL data)
+            // When using file-based WAL, check if file exists
+            bool walExists = _options.CustomWalStream != null || File.Exists(_walPath);
+
+            if (walExists)
             {
                 RecoverFromWal();
             }
             else
             {
                 InitializeWalFile();
-                // Update document storage to use WAL page IO
+                
+                _pageManager = new PageManager(_pageIO, _options.PageSize);
+                _pageManager.Load();
+
+                if (_options.PageSize == 0 || _options.PageSize != _pageManager.Header.PageSize)
+                {
+                    _options.PageSize = _pageManager.Header.PageSize;
+                }
+                
                 _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize);
 
+                _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataPage, _pageManager.Header.PageSize);
+                _collectionsMetadata.LoadFromDisk();
+                
                 // Rebuild VersionIndex from current database state
                 RebuildVersionIndex(0);
             }
         }
         else
         {
+            _pageManager = new PageManager(_pageIO, _options.PageSize);
+            _pageManager.Load();
+
+            if (_options.PageSize == 0 || _options.PageSize != _pageManager.Header.PageSize)
+            {
+                _options.PageSize = _pageManager.Header.PageSize;
+            }
+            
+            _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize);
+            
+            _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataPage, _pageManager.Header.PageSize);
+            _collectionsMetadata.LoadFromDisk();
+            
             // No WAL - still need to rebuild VersionIndex for MVCC reads to work
             RebuildVersionIndex(0);
         }
@@ -1063,23 +1089,30 @@ public class GaldrDb : IDisposable
 
     private void SetupIO()
     {
-        bool useMmap = _options.UseMmap;
-
-        if (useMmap && !MmapPageIO.IsMmapSupported())
+        if (_options.CustomPageIO != null)
         {
-            useMmap = false;
-        }
-
-        bool createNew = !File.Exists(_filePath);
-        long initialSize = (long)_options.PageSize * 4;
-
-        if (useMmap)
-        {
-            _basePageIO = new MmapPageIO(_filePath, _options.PageSize, initialSize, createNew);
+            _basePageIO = _options.CustomPageIO;
         }
         else
         {
-            _basePageIO = new StandardPageIO(_filePath, _options.PageSize, createNew);
+            bool useMmap = _options.UseMmap;
+
+            if (useMmap && !MmapPageIO.IsMmapSupported())
+            {
+                useMmap = false;
+            }
+
+            bool createNew = !File.Exists(_filePath);
+            long initialSize = (long)_options.PageSize * 4;
+
+            if (useMmap)
+            {
+                _basePageIO = new MmapPageIO(_filePath, _options.PageSize, initialSize, createNew);
+            }
+            else
+            {
+                _basePageIO = new StandardPageIO(_filePath, _options.PageSize, createNew);
+            }
         }
 
         _pageIO = _basePageIO;
@@ -1088,6 +1121,16 @@ public class GaldrDb : IDisposable
     private void InitializeWalFile()
     {
         _wal = new WriteAheadLog(_walPath, _options.PageSize);
+
+        if (_options.CustomWalStream != null)
+        {
+            _wal._testStream = _options.CustomWalStream;
+        }
+        if (_options.CustomWalSaltGenerator != null)
+        {
+            _wal._testSaltGenerator = _options.CustomWalSaltGenerator;
+        }
+
         _wal.Create();
 
         _walPageIO = new WalPageIO(_basePageIO, _wal, _options.PageSize);
@@ -1097,6 +1140,16 @@ public class GaldrDb : IDisposable
     private void RecoverFromWal()
     {
         _wal = new WriteAheadLog(_walPath, _options.PageSize);
+
+        if (_options.CustomWalStream != null)
+        {
+            _wal._testStream = _options.CustomWalStream;
+        }
+        if (_options.CustomWalSaltGenerator != null)
+        {
+            _wal._testSaltGenerator = _options.CustomWalSaltGenerator;
+        }
+
         _wal.Open();
 
         // Get all committed transactions
@@ -1130,22 +1183,25 @@ public class GaldrDb : IDisposable
         }
 
         _basePageIO.Flush();
-
-        // Reload page manager and metadata after recovery
-        _pageManager = new PageManager(_basePageIO, _options.PageSize);
-        _pageManager.Load();
-
-        _collectionsMetadata = new CollectionsMetadata(_basePageIO, _pageManager.Header.CollectionsMetadataPage, _pageManager.Header.PageSize);
-        _collectionsMetadata.LoadFromDisk();
-
+        
         // Truncate WAL after successful recovery
         _wal.Truncate();
 
         // Set up WAL page IO for future operations
         _walPageIO = new WalPageIO(_basePageIO, _wal, _options.PageSize);
         _pageIO = _walPageIO;
+        
+        _pageManager = new PageManager(_pageIO, _options.PageSize);
+        _pageManager.Load();
 
-        // Update the document storage to use the new page IO
+        if (_options.PageSize == 0 || _options.PageSize != _pageManager.Header.PageSize)
+        {
+            _options.PageSize = _pageManager.Header.PageSize;
+        }
+        
+        _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataPage, _pageManager.Header.PageSize);
+        _collectionsMetadata.LoadFromDisk();
+
         _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize);
 
         // Initialize TransactionManager with recovered TxId

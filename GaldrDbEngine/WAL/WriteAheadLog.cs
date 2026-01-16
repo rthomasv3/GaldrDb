@@ -10,10 +10,14 @@ internal class WriteAheadLog : IDisposable
     private readonly string _walPath;
     private readonly int _pageSize;
     private readonly object _writeLock;
-    private FileStream _walStream;
+    private Stream _walStream;
     private WalHeader _header;
     private long _currentFrameNumber;
     private bool _disposed;
+
+    // Optional injection points for simulation testing (null in production)
+    internal Stream _testStream;
+    internal Func<uint> _testSaltGenerator;
 
     public WriteAheadLog(string walPath, int pageSize)
     {
@@ -29,12 +33,19 @@ internal class WriteAheadLog : IDisposable
 
     public void Create()
     {
-        if (File.Exists(_walPath))
+        if (_testStream != null)
         {
-            throw new InvalidOperationException($"WAL file already exists: {_walPath}");
+            _walStream = _testStream;
         }
+        else
+        {
+            if (File.Exists(_walPath))
+            {
+                throw new InvalidOperationException($"WAL file already exists: {_walPath}");
+            }
 
-        _walStream = new FileStream(_walPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+            _walStream = new FileStream(_walPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+        }
 
         _header = new WalHeader
         {
@@ -50,12 +61,19 @@ internal class WriteAheadLog : IDisposable
 
     public void Open()
     {
-        if (!File.Exists(_walPath))
+        if (_testStream != null)
         {
-            throw new FileNotFoundException($"WAL file not found: {_walPath}");
+            _walStream = _testStream;
         }
+        else
+        {
+            if (!File.Exists(_walPath))
+            {
+                throw new FileNotFoundException($"WAL file not found: {_walPath}");
+            }
 
-        _walStream = new FileStream(_walPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            _walStream = new FileStream(_walPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        }
 
         // Handle empty WAL file (can occur after truncation or crash during creation)
         if (_walStream.Length == 0)
@@ -346,7 +364,7 @@ internal class WriteAheadLog : IDisposable
     {
         lock (_writeLock)
         {
-            _walStream.Flush(true);
+            FlushStream();
         }
     }
 
@@ -359,7 +377,7 @@ internal class WriteAheadLog : IDisposable
             _header.Salt1++;
             _header.Salt2 = GenerateRandomSalt();
             WriteHeader();
-            _walStream.Flush(true);
+            FlushStream();
         }
     }
 
@@ -437,8 +455,31 @@ internal class WriteAheadLog : IDisposable
         }
     }
 
-    private static uint GenerateRandomSalt()
+    private void FlushStream()
     {
-        return (uint)Random.Shared.Next();
+        if (_walStream is FileStream fs)
+        {
+            fs.Flush(true);
+        }
+        else
+        {
+            _walStream.Flush();
+        }
+    }
+
+    private uint GenerateRandomSalt()
+    {
+        uint result;
+
+        if (_testSaltGenerator != null)
+        {
+            result = _testSaltGenerator();
+        }
+        else
+        {
+            result = (uint)Random.Shared.Next();
+        }
+
+        return result;
     }
 }

@@ -266,6 +266,38 @@ public sealed class VersionIndex
         }
     }
 
+    internal List<string> GetCollectionNames()
+    {
+        lock (_lock)
+        {
+            return new List<string>(_index.Keys);
+        }
+    }
+
+    internal int GetDocumentCount(string collectionName)
+    {
+        lock (_lock)
+        {
+            if (_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
+            {
+                return collection.Count;
+            }
+            return 0;
+        }
+    }
+
+    internal List<int> GetDocumentIds(string collectionName)
+    {
+        lock (_lock)
+        {
+            if (_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
+            {
+                return new List<int>(collection.Keys);
+            }
+            return new List<int>();
+        }
+    }
+
     public void CollectGarbageVersions(TxId oldestSnapshot, List<CollectableVersion> results)
     {
         lock (_lock)

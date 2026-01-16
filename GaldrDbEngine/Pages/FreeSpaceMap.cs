@@ -8,7 +8,7 @@ namespace GaldrDbEngine.Pages;
 
 public class FreeSpaceMap
 {
-    private readonly IPageIO _pageIO;
+    private IPageIO _pageIO;
     private readonly int _startPage;
     private readonly int _pageCount;
     private readonly int _pageSize;
@@ -25,6 +25,11 @@ public class FreeSpaceMap
 
         int fsmSizeBytes = (totalPages * 2 + 7) / 8;
         _fsm = new byte[fsmSizeBytes];
+    }
+    
+    public void SetPageIO(IPageIO pageIO)
+    {
+        _pageIO = pageIO;
     }
 
     public FreeSpaceLevel GetFreeSpaceLevel(int pageId)
