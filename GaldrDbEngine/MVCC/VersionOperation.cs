@@ -3,7 +3,7 @@ using GaldrDbEngine.Transactions;
 
 namespace GaldrDbEngine.MVCC;
 
-public readonly struct VersionOperation
+internal readonly struct VersionOperation
 {
     public string CollectionName { get; }
     public int DocumentId { get; }

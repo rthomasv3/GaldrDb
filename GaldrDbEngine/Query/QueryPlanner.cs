@@ -4,7 +4,7 @@ using GaldrDbEngine.Storage;
 
 namespace GaldrDbEngine.Query;
 
-public sealed class QueryPlanner
+internal sealed class QueryPlanner
 {
     private const string ID_FIELD_NAME = "Id";
 

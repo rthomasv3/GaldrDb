@@ -5,7 +5,7 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Pages;
 
-public class BTreeNode
+internal class BTreeNode
 {
     private const int HEADER_SIZE = 8;
 

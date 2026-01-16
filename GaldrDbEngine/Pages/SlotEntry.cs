@@ -2,7 +2,7 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Pages;
 
-public struct SlotEntry
+internal struct SlotEntry
 {
     public int PageCount { get; set; }
     public int[] PageIds { get; set; }

@@ -1,6 +1,6 @@
 namespace GaldrDbEngine.Transactions;
 
-public enum WriteOperation
+internal enum WriteOperation
 {
     Insert,
     Update,

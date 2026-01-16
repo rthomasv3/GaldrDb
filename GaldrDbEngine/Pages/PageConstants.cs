@@ -1,6 +1,6 @@
 namespace GaldrDbEngine.Pages;
 
-public static class PageConstants
+internal static class PageConstants
 {
     public const uint MAGIC_NUMBER = 0x47414C44;
     public const int VERSION = 1;

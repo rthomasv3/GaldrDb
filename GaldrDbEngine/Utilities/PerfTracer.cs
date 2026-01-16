@@ -4,7 +4,7 @@ using System.Diagnostics;
 
 namespace GaldrDbEngine.Utilities;
 
-public static class PerfTracer
+internal static class PerfTracer
 {
     public static bool Enabled { get; set; } = false;
 

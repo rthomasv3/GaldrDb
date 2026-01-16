@@ -5,7 +5,7 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Pages;
 
-public class SecondaryIndexNode
+internal class SecondaryIndexNode
 {
     private readonly int _pageSize;
     private readonly int _maxKeys;

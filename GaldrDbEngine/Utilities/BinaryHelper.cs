@@ -4,7 +4,7 @@ using System.Text;
 
 namespace GaldrDbEngine.Utilities;
 
-public static class BinaryHelper
+internal static class BinaryHelper
 {
     private static readonly ulong[] _crc64Table = GenerateCrc64Table();
 

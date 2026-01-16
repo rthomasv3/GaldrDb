@@ -3,7 +3,7 @@ using System.Buffers;
 
 namespace GaldrDbEngine.Utilities;
 
-public sealed class PooledBufferWriter : IBufferWriter<byte>
+internal sealed class PooledBufferWriter : IBufferWriter<byte>
 {
     private const int DEFAULT_SIZE_HINT = 256;
 

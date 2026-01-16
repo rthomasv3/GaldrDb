@@ -3,7 +3,7 @@ using GaldrDbEngine.Storage;
 
 namespace GaldrDbEngine.Transactions;
 
-public class WriteSetEntry
+internal class WriteSetEntry
 {
     public WriteOperation Operation { get; set; }
     public string CollectionName { get; set; }

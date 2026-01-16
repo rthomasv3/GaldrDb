@@ -3,7 +3,7 @@ using System.Text;
 
 namespace GaldrDbEngine.Query;
 
-public static class IndexKeyEncoder
+internal static class IndexKeyEncoder
 {
     public static byte[] Encode(object value, GaldrFieldType fieldType)
     {

@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace GaldrDbEngine.Utilities;
 
-public static class AllocTracer
+internal static class AllocTracer
 {
     public static bool Enabled { get; set; } = false;
 

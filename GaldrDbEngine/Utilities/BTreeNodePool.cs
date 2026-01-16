@@ -3,7 +3,7 @@ using GaldrDbEngine.Pages;
 
 namespace GaldrDbEngine.Utilities;
 
-public static class BTreeNodePool
+internal static class BTreeNodePool
 {
     private static readonly ConcurrentDictionary<(int PageSize, int Order), ConcurrentBag<BTreeNode>> _pools = new();
 

@@ -3,7 +3,7 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.WAL;
 
-public class WalFrame
+internal class WalFrame
 {
     public const int FRAME_HEADER_SIZE = 40;
 

@@ -1,61 +1,69 @@
 using System;
 using System.Collections.Concurrent;
 using System.Threading;
+using System.Threading.Tasks;
+using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Storage;
 
 /// <summary>
 /// Manages page-level locks for concurrent access to document pages.
-/// Uses reader-writer locks to allow concurrent reads while serializing writes.
+/// Uses async-compatible reader-writer locks to allow concurrent reads while serializing writes.
 /// </summary>
-public class PageLockManager : IDisposable
+internal class PageLockManager : IDisposable
 {
-    private readonly ConcurrentDictionary<int, ReaderWriterLockSlim> _pageLocks;
+    private readonly ConcurrentDictionary<int, AsyncReaderWriterLock> _pageLocks;
     private bool _disposed;
 
     public PageLockManager()
     {
-        _pageLocks = new ConcurrentDictionary<int, ReaderWriterLockSlim>();
+        _pageLocks = new ConcurrentDictionary<int, AsyncReaderWriterLock>();
         _disposed = false;
     }
 
     public void AcquireReadLock(int pageId)
     {
-        ReaderWriterLockSlim pageLock = GetOrCreateLock(pageId);
+        AsyncReaderWriterLock pageLock = GetOrCreateLock(pageId);
         pageLock.EnterReadLock();
+    }
+
+    public async Task AcquireReadLockAsync(int pageId, CancellationToken cancellationToken = default)
+    {
+        AsyncReaderWriterLock pageLock = GetOrCreateLock(pageId);
+        await pageLock.EnterReadLockAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public void ReleaseReadLock(int pageId)
     {
-        if (_pageLocks.TryGetValue(pageId, out ReaderWriterLockSlim pageLock))
+        if (_pageLocks.TryGetValue(pageId, out AsyncReaderWriterLock pageLock))
         {
-            if (pageLock.IsReadLockHeld)
-            {
-                pageLock.ExitReadLock();
-            }
+            pageLock.ExitReadLock();
         }
     }
 
     public void AcquireWriteLock(int pageId)
     {
-        ReaderWriterLockSlim pageLock = GetOrCreateLock(pageId);
+        AsyncReaderWriterLock pageLock = GetOrCreateLock(pageId);
         pageLock.EnterWriteLock();
+    }
+
+    public async Task AcquireWriteLockAsync(int pageId, CancellationToken cancellationToken = default)
+    {
+        AsyncReaderWriterLock pageLock = GetOrCreateLock(pageId);
+        await pageLock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public void ReleaseWriteLock(int pageId)
     {
-        if (_pageLocks.TryGetValue(pageId, out ReaderWriterLockSlim pageLock))
+        if (_pageLocks.TryGetValue(pageId, out AsyncReaderWriterLock pageLock))
         {
-            if (pageLock.IsWriteLockHeld)
-            {
-                pageLock.ExitWriteLock();
-            }
+            pageLock.ExitWriteLock();
         }
     }
 
-    private ReaderWriterLockSlim GetOrCreateLock(int pageId)
+    private AsyncReaderWriterLock GetOrCreateLock(int pageId)
     {
-        return _pageLocks.GetOrAdd(pageId, _ => new ReaderWriterLockSlim());
+        return _pageLocks.GetOrAdd(pageId, _ => new AsyncReaderWriterLock());
     }
 
     public void Dispose()
@@ -63,9 +71,9 @@ public class PageLockManager : IDisposable
         if (!_disposed)
         {
             _disposed = true;
-            foreach (ReaderWriterLockSlim lockSlim in _pageLocks.Values)
+            foreach (AsyncReaderWriterLock lockObj in _pageLocks.Values)
             {
-                lockSlim.Dispose();
+                lockObj.Dispose();
             }
             _pageLocks.Clear();
         }

@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace GaldrDbEngine.Utilities;
 
-public static class ListPool<T>
+internal static class ListPool<T>
 {
     private static readonly ConcurrentDictionary<int, ConcurrentBag<List<T>>> _pools = new();
     private static int _hits;

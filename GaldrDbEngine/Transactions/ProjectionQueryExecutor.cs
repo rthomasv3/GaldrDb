@@ -10,7 +10,7 @@ using GaldrJson;
 
 namespace GaldrDbEngine.Transactions;
 
-public sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
+internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
 {
     private readonly Transaction _transaction;
     private readonly GaldrDb _db;

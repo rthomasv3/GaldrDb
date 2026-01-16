@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace GaldrDbEngine.Transactions;
 
-public class TransactionManager
+internal class TransactionManager
 {
     private readonly object _lock;
     private readonly HashSet<TxId> _activeTransactionIds;

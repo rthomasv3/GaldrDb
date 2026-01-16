@@ -7,18 +7,22 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.IO;
 
-public class MmapPageIO : IPageIO
+internal class MmapPageIO : IPageIO
 {
     private readonly string _filePath;
     private readonly int _pageSize;
+    private readonly AsyncReaderWriterLock _rwLock;
     private FileStream _fileStream;
     private MemoryMappedFile _memoryMappedFile;
     private MemoryMappedViewAccessor _accessor;
+    private bool _disposed;
 
     public MmapPageIO(string filePath, int pageSize, long initialSize, bool createNew)
     {
         _filePath = filePath;
         _pageSize = pageSize;
+        _rwLock = new AsyncReaderWriterLock();
+        _disposed = false;
 
         FileMode fileMode = FileMode.Open;
 
@@ -95,24 +99,33 @@ public class MmapPageIO : IPageIO
         }
 
         long offset = (long)pageId * _pageSize;
-        long currentFileSize = _fileStream.Length;
 
-        if (offset + _pageSize > currentFileSize)
+        _rwLock.EnterReadLock();
+        try
         {
-            destination.Slice(0, _pageSize).Clear();
+            long currentFileSize = _fileStream.Length;
+
+            if (offset + _pageSize > currentFileSize)
+            {
+                destination.Slice(0, _pageSize).Clear();
+            }
+            else
+            {
+                byte[] tempBuffer = BufferPool.Rent(_pageSize);
+                try
+                {
+                    _accessor.ReadArray(offset, tempBuffer, 0, _pageSize);
+                    tempBuffer.AsSpan(0, _pageSize).CopyTo(destination);
+                }
+                finally
+                {
+                    BufferPool.Return(tempBuffer);
+                }
+            }
         }
-        else
+        finally
         {
-            byte[] tempBuffer = BufferPool.Rent(_pageSize);
-            try
-            {
-                _accessor.ReadArray(offset, tempBuffer, 0, _pageSize);
-                tempBuffer.AsSpan(0, _pageSize).CopyTo(destination);
-            }
-            finally
-            {
-                BufferPool.Return(tempBuffer);
-            }
+            _rwLock.ExitReadLock();
         }
     }
 
@@ -124,45 +137,62 @@ public class MmapPageIO : IPageIO
         }
 
         long offset = (long)pageId * _pageSize;
-        long requiredSize = offset + _pageSize;
-        long currentFileSize = _fileStream.Length;
 
-        if (requiredSize > currentFileSize)
-        {
-            long newSize = Math.Max(requiredSize, currentFileSize * 2);
-
-            _accessor?.Dispose();
-            _memoryMappedFile?.Dispose();
-
-            _fileStream.SetLength(newSize);
-
-            _memoryMappedFile = MemoryMappedFile.CreateFromFile(
-                _fileStream,
-                null,
-                newSize,
-                MemoryMappedFileAccess.ReadWrite,
-                HandleInheritability.None,
-                true);
-
-            _accessor = _memoryMappedFile.CreateViewAccessor();
-        }
-
-        byte[] tempBuffer = BufferPool.Rent(_pageSize);
+        _rwLock.EnterWriteLock();
         try
         {
-            data.CopyTo(tempBuffer);
-            _accessor.WriteArray(offset, tempBuffer, 0, _pageSize);
+            long requiredSize = offset + _pageSize;
+            long currentFileSize = _fileStream.Length;
+
+            if (requiredSize > currentFileSize)
+            {
+                long newSize = Math.Max(requiredSize, currentFileSize * 2);
+
+                _accessor?.Dispose();
+                _memoryMappedFile?.Dispose();
+
+                _fileStream.SetLength(newSize);
+
+                _memoryMappedFile = MemoryMappedFile.CreateFromFile(
+                    _fileStream,
+                    null,
+                    newSize,
+                    MemoryMappedFileAccess.ReadWrite,
+                    HandleInheritability.None,
+                    true);
+
+                _accessor = _memoryMappedFile.CreateViewAccessor();
+            }
+
+            byte[] tempBuffer = BufferPool.Rent(_pageSize);
+            try
+            {
+                data.CopyTo(tempBuffer);
+                _accessor.WriteArray(offset, tempBuffer, 0, _pageSize);
+            }
+            finally
+            {
+                BufferPool.Return(tempBuffer);
+            }
         }
         finally
         {
-            BufferPool.Return(tempBuffer);
+            _rwLock.ExitWriteLock();
         }
     }
 
     public void Flush()
     {
-        _accessor?.Flush();
-        _fileStream?.Flush();
+        _rwLock.EnterWriteLock();
+        try
+        {
+            _accessor?.Flush();
+            _fileStream?.Flush();
+        }
+        finally
+        {
+            _rwLock.ExitWriteLock();
+        }
     }
 
     public void Close()
@@ -187,11 +217,16 @@ public class MmapPageIO : IPageIO
 
     public void Dispose()
     {
-        Close();
-
-        if (_fileStream != null)
+        if (!_disposed)
         {
-            _fileStream.Dispose();
+            _disposed = true;
+            Close();
+            _rwLock.Dispose();
+
+            if (_fileStream != null)
+            {
+                _fileStream.Dispose();
+            }
         }
     }
 

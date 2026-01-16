@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace GaldrDbEngine.Utilities;
 
-public sealed class PooledJsonWriter
+internal sealed class PooledJsonWriter
 {
     private readonly PooledBufferWriter _bufferWriter;
     private readonly Utf8JsonWriter _writer;

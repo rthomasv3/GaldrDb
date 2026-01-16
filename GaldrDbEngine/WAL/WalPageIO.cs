@@ -26,12 +26,12 @@ internal class WalPageIO : IPageIO
     // Lock for serializing WAL commits
     private readonly object _commitLock;
 
-    // Reader-writer lock for coordinating base file access during checkpoint
-    private readonly ReaderWriterLockSlim _rwLock;
+    // Async-compatible reader-writer lock for coordinating base file access during checkpoint
+    private readonly AsyncReaderWriterLock _rwLock;
 
-    // Reader-writer lock for transaction/checkpoint coordination
+    // Async-compatible reader-writer lock for transaction/checkpoint coordination
     // Transactions hold read lock, checkpoint holds write lock
-    private readonly ReaderWriterLockSlim _checkpointLock;
+    private readonly AsyncReaderWriterLock _checkpointLock;
 
     private bool _disposed;
 
@@ -45,8 +45,8 @@ internal class WalPageIO : IPageIO
         _txWalWrites = new ConcurrentDictionary<ulong, List<PendingPageWrite>>();
         _currentTxId = new AsyncLocal<ulong?>();
         _commitLock = new object();
-        _rwLock = new ReaderWriterLockSlim();
-        _checkpointLock = new ReaderWriterLockSlim();
+        _rwLock = new AsyncReaderWriterLock();
+        _checkpointLock = new AsyncReaderWriterLock();
         _disposed = false;
     }
 
@@ -219,7 +219,7 @@ internal class WalPageIO : IPageIO
         }
 
         // Fall back to base file
-        _rwLock.EnterReadLock();
+        await _rwLock.EnterReadLockAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             await _innerPageIO.ReadPageAsync(pageId, destination, cancellationToken).ConfigureAwait(false);
@@ -320,7 +320,7 @@ internal class WalPageIO : IPageIO
         List<KeyValuePair<int, byte[]>> pagesToWrite = null;
 
         // Acquire exclusive lock - waits for all active transactions to complete
-        _checkpointLock.EnterWriteLock();
+        await _checkpointLock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             lock (_cacheLock)
@@ -333,7 +333,7 @@ internal class WalPageIO : IPageIO
 
             if (pagesToWrite != null)
             {
-                _rwLock.EnterWriteLock();
+                await _rwLock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
                     foreach (KeyValuePair<int, byte[]> entry in pagesToWrite)

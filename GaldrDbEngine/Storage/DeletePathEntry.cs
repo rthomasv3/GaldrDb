@@ -1,6 +1,6 @@
 namespace GaldrDbEngine.Storage;
 
-public struct DeletePathEntry
+internal struct DeletePathEntry
 {
     public int PageId;
     public int ChildIndex;

@@ -1,6 +1,6 @@
 namespace GaldrDbEngine.Utilities;
 
-public static class AllocationTracker
+internal static class AllocationTracker
 {
     private static long _validateTotal;
     private static long _validateCount;

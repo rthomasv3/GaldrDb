@@ -6,7 +6,7 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Storage;
 
-public class PageManager
+internal class PageManager
 {
     private IPageIO _pageIO;
     private readonly int _pageSize;

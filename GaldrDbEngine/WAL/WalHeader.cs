@@ -3,7 +3,7 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.WAL;
 
-public class WalHeader
+internal class WalHeader
 {
     public const int HEADER_SIZE = 32;
     public const uint WAL_MAGIC_NUMBER = 0x47414C57; // "GALW" in ASCII

@@ -9,7 +9,7 @@ using GaldrJson;
 
 namespace GaldrDbEngine.Transactions;
 
-public sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
+internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
 {
     private readonly Transaction _transaction;
     private readonly GaldrDb _db;

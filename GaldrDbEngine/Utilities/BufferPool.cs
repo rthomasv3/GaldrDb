@@ -3,7 +3,7 @@ using System.Buffers;
 
 namespace GaldrDbEngine.Utilities;
 
-public static class BufferPool
+internal static class BufferPool
 {
     public static byte[] Rent(int minimumSize)
     {

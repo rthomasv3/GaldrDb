@@ -2,21 +2,22 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using GaldrDbEngine.Utilities;
 using Microsoft.Win32.SafeHandles;
 
 namespace GaldrDbEngine.IO;
 
-public class StandardPageIO : IPageIO
+internal class StandardPageIO : IPageIO
 {
     private readonly int _pageSize;
     private readonly SafeFileHandle _fileHandle;
-    private readonly ReaderWriterLockSlim _rwLock;
+    private readonly AsyncReaderWriterLock _rwLock;
     private bool _disposed;
 
     public StandardPageIO(string filePath, int pageSize, bool createNew)
     {
         _pageSize = pageSize;
-        _rwLock = new ReaderWriterLockSlim();
+        _rwLock = new AsyncReaderWriterLock();
         _disposed = false;
 
         FileMode fileMode = FileMode.Open;
@@ -121,14 +122,14 @@ public class StandardPageIO : IPageIO
 
         long offset = (long)pageId * _pageSize;
 
-        _rwLock.EnterReadLock();
+        await _rwLock.EnterReadLockAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             int totalBytesRead = 0;
 
             while (totalBytesRead < _pageSize)
             {
-                int bytesRead = await RandomAccess.ReadAsync(_fileHandle, destination.Slice(totalBytesRead, _pageSize - totalBytesRead), offset + totalBytesRead, cancellationToken);
+                int bytesRead = await RandomAccess.ReadAsync(_fileHandle, destination.Slice(totalBytesRead, _pageSize - totalBytesRead), offset + totalBytesRead, cancellationToken).ConfigureAwait(false);
 
                 if (bytesRead == 0)
                 {
@@ -153,10 +154,10 @@ public class StandardPageIO : IPageIO
 
         long offset = (long)pageId * _pageSize;
 
-        _rwLock.EnterWriteLock();
+        await _rwLock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await RandomAccess.WriteAsync(_fileHandle, data, offset, cancellationToken);
+            await RandomAccess.WriteAsync(_fileHandle, data, offset, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -166,7 +167,6 @@ public class StandardPageIO : IPageIO
 
     public Task FlushAsync(CancellationToken cancellationToken = default)
     {
-        // RandomAccess doesn't have an async flush, use sync version
         Flush();
         return Task.CompletedTask;
     }

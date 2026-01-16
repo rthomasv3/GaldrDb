@@ -1,6 +1,6 @@
 namespace GaldrDbEngine.Pages;
 
-public enum FreeSpaceLevel : byte
+internal enum FreeSpaceLevel : byte
 {
     None = 0,
     Low = 1,

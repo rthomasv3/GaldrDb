@@ -2,7 +2,7 @@ using System;
 
 namespace GaldrDbEngine.Utilities;
 
-public readonly struct KeyBuffer
+internal readonly struct KeyBuffer
 {
     public readonly byte[] Data;
     public readonly int Offset;

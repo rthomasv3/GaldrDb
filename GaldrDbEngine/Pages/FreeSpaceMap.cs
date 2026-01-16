@@ -6,7 +6,7 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Pages;
 
-public class FreeSpaceMap
+internal class FreeSpaceMap
 {
     private IPageIO _pageIO;
     private readonly int _startPage;

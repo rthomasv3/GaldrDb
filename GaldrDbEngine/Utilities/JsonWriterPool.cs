@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 
 namespace GaldrDbEngine.Utilities;
 
-public static class JsonWriterPool
+internal static class JsonWriterPool
 {
     public const int DEFAULT_BUFFER_CAPACITY = 4096;
 

@@ -7,7 +7,7 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Storage;
 
-public class DocumentStorage : IDisposable
+internal class DocumentStorage : IDisposable
 {
     private readonly IPageIO _pageIO;
     private readonly PageManager _pageManager;
@@ -437,7 +437,7 @@ public class DocumentStorage : IDisposable
             int pageId = FindOrAllocatePageForDocument(documentSize);
             pageIds[0] = pageId;
 
-            _pageLockManager.AcquireWriteLock(pageId);
+            await _pageLockManager.AcquireWriteLockAsync(pageId, cancellationToken).ConfigureAwait(false);
             DocumentPage page = DocumentPagePool.Rent(_pageSize);
             byte[] pageBuffer = BufferPool.Rent(_pageSize);
             try
@@ -468,7 +468,7 @@ public class DocumentStorage : IDisposable
                         _pageLockManager.ReleaseWriteLock(pageId);
                         pageId = _pageManager.AllocatePage();
                         pageIds[0] = pageId;
-                        _pageLockManager.AcquireWriteLock(pageId);
+                        await _pageLockManager.AcquireWriteLockAsync(pageId, cancellationToken).ConfigureAwait(false);
                         page.Reset(_pageSize);
                     }
                 }
@@ -500,7 +500,7 @@ public class DocumentStorage : IDisposable
             // Acquire write locks on all pages (in order to avoid deadlocks)
             for (int i = 0; i < pagesNeeded; i++)
             {
-                _pageLockManager.AcquireWriteLock(pageIds[i]);
+                await _pageLockManager.AcquireWriteLockAsync(pageIds[i], cancellationToken).ConfigureAwait(false);
             }
 
             DocumentPage page = DocumentPagePool.Rent(_pageSize);
@@ -560,7 +560,7 @@ public class DocumentStorage : IDisposable
         int[] continuationPageIds = null;
         int continuationPageCount = 0;
 
-        _pageLockManager.AcquireReadLock(pageId);
+        await _pageLockManager.AcquireReadLockAsync(pageId, cancellationToken).ConfigureAwait(false);
         byte[] pageBuffer = BufferPool.Rent(_pageSize);
         DocumentPage page = DocumentPagePool.Rent(_pageSize);
         try
@@ -599,7 +599,7 @@ public class DocumentStorage : IDisposable
                 for (int i = 1; i < entry.PageCount; i++)
                 {
                     continuationPageIds[i - 1] = entry.PageIds[i];
-                    _pageLockManager.AcquireReadLock(entry.PageIds[i]);
+                    await _pageLockManager.AcquireReadLockAsync(entry.PageIds[i], cancellationToken).ConfigureAwait(false);
                 }
 
                 for (int i = 1; i < entry.PageCount; i++)

@@ -1,6 +1,6 @@
 namespace GaldrDbEngine.Storage;
 
-public class BTreeEntry
+internal class BTreeEntry
 {
     public int Key { get; }
     public DocumentLocation Location { get; }

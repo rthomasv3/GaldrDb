@@ -8,7 +8,7 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Storage;
 
-public class BTree
+internal class BTree
 {
     private const int MAX_TREE_DEPTH = 32;
 

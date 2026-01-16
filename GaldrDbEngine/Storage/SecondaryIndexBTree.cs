@@ -6,7 +6,7 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Storage;
 
-public class SecondaryIndexBTree
+internal class SecondaryIndexBTree
 {
     private const int MAX_TREE_DEPTH = 32;
 

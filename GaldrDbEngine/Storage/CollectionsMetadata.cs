@@ -6,7 +6,7 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Storage;
 
-public class CollectionsMetadata
+internal class CollectionsMetadata
 {
     private readonly IPageIO _pageIO;
     private readonly int _metadataPageId;

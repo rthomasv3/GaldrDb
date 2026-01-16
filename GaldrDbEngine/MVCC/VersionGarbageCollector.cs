@@ -3,7 +3,7 @@ using GaldrDbEngine.Transactions;
 
 namespace GaldrDbEngine.MVCC;
 
-public sealed class VersionGarbageCollector
+internal sealed class VersionGarbageCollector
 {
     private readonly VersionIndex _versionIndex;
     private readonly TransactionManager _txManager;

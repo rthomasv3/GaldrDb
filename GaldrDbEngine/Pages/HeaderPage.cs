@@ -2,7 +2,7 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Pages;
 
-public class HeaderPage
+internal class HeaderPage
 {
     public uint MagicNumber { get; set; }
     public int Version { get; set; }

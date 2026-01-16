@@ -4,7 +4,7 @@ using GaldrDbEngine.Transactions;
 
 namespace GaldrDbEngine.MVCC;
 
-public sealed class VersionIndex
+internal sealed class VersionIndex
 {
     private readonly Dictionary<string, Dictionary<int, DocumentVersion>> _index;
     private readonly object _lock = new object();

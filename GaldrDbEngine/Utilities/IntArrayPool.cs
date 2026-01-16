@@ -2,7 +2,7 @@ using System.Buffers;
 
 namespace GaldrDbEngine.Utilities;
 
-public static class IntArrayPool
+internal static class IntArrayPool
 {
     public static int[] Rent(int minimumSize)
     {

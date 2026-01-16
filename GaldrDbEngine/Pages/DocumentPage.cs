@@ -4,7 +4,7 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Pages;
 
-public class DocumentPage
+internal class DocumentPage
 {
     private const int HEADER_SIZE = 13;
 

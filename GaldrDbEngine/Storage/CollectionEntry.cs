@@ -5,7 +5,7 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Storage;
 
-public class CollectionEntry
+internal class CollectionEntry
 {
     public string Name { get; set; }
     public int RootPage { get; set; }

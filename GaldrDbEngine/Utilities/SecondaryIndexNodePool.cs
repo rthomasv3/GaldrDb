@@ -3,7 +3,7 @@ using GaldrDbEngine.Pages;
 
 namespace GaldrDbEngine.Utilities;
 
-public static class SecondaryIndexNodePool
+internal static class SecondaryIndexNodePool
 {
     private static readonly ConcurrentDictionary<(int PageSize, int MaxKeys), ConcurrentBag<SecondaryIndexNode>> _pools = new();
 

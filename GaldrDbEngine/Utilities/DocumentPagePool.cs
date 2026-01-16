@@ -3,7 +3,7 @@ using GaldrDbEngine.Pages;
 
 namespace GaldrDbEngine.Utilities;
 
-public static class DocumentPagePool
+internal static class DocumentPagePool
 {
     private static readonly ConcurrentDictionary<int, ConcurrentBag<DocumentPage>> _pools = new();
 
