@@ -5,7 +5,7 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Storage;
 
-public class IndexDefinition
+internal class IndexDefinition
 {
     public string FieldName { get; set; }
     public GaldrFieldType FieldType { get; set; }

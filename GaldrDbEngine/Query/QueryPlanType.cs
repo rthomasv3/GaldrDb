@@ -1,6 +1,6 @@
 namespace GaldrDbEngine.Query;
 
-public enum QueryPlanType
+internal enum QueryPlanType
 {
     FullScan,
     PrimaryKeyRange,

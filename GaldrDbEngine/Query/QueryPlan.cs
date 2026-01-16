@@ -2,7 +2,7 @@ using GaldrDbEngine.Storage;
 
 namespace GaldrDbEngine.Query;
 
-public sealed class QueryPlan
+internal sealed class QueryPlan
 {
     public QueryPlanType PlanType { get; }
     public int? UsedFilterIndex { get; }

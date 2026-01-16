@@ -2,7 +2,7 @@ using GaldrDbEngine.Storage;
 
 namespace GaldrDbEngine.Query;
 
-public sealed class IndexedFilterResult
+internal sealed class IndexedFilterResult
 {
     public IFieldFilter Filter { get; }
     public IndexDefinition IndexDefinition { get; }

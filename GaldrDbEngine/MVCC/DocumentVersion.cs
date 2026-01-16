@@ -3,7 +3,7 @@ using GaldrDbEngine.Transactions;
 
 namespace GaldrDbEngine.MVCC;
 
-public class DocumentVersion
+internal class DocumentVersion
 {
     public int DocumentId { get; }
     public TxId CreatedBy { get; }

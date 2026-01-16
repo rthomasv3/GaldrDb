@@ -1,6 +1,6 @@
 namespace GaldrDbEngine.Storage;
 
-public readonly struct DocumentLocation
+internal readonly struct DocumentLocation
 {
     public int PageId { get; }
     public int SlotIndex { get; }

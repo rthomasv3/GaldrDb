@@ -2,7 +2,7 @@ using GaldrDbEngine.Storage;
 
 namespace GaldrDbEngine.MVCC;
 
-public class CollectableVersion
+internal class CollectableVersion
 {
     public string CollectionName { get; }
     public int DocumentId { get; }

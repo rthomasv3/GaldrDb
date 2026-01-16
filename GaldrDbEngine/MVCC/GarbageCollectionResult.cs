@@ -10,15 +10,15 @@ public sealed class GarbageCollectionResult
 
     public int VersionsCollected { get; }
     public int DocumentsProcessed { get; }
-    public IReadOnlyList<CollectableVersion> CollectableVersions { get; }
+    internal IReadOnlyList<CollectableVersion> CollectableVersions { get; }
     public int PagesCompacted { get; }
 
-    public GarbageCollectionResult(int versionsCollected, int documentsProcessed, IReadOnlyList<CollectableVersion> collectableVersions)
+    internal GarbageCollectionResult(int versionsCollected, int documentsProcessed, IReadOnlyList<CollectableVersion> collectableVersions)
         : this(versionsCollected, documentsProcessed, collectableVersions, 0)
     {
     }
 
-    public GarbageCollectionResult(int versionsCollected, int documentsProcessed, IReadOnlyList<CollectableVersion> collectableVersions, int pagesCompacted)
+    internal GarbageCollectionResult(int versionsCollected, int documentsProcessed, IReadOnlyList<CollectableVersion> collectableVersions, int pagesCompacted)
     {
         VersionsCollected = versionsCollected;
         DocumentsProcessed = documentsProcessed;
