@@ -7,7 +7,7 @@ internal static class IndexKeyEncoder
 {
     public static byte[] Encode(object value, GaldrFieldType fieldType)
     {
-        byte[] result = fieldType switch
+        return fieldType switch
         {
             GaldrFieldType.String => EncodeString((string)value),
             GaldrFieldType.Int32 => EncodeInt32((int)value),
@@ -18,11 +18,20 @@ internal static class IndexKeyEncoder
             GaldrFieldType.DateTime => EncodeDateTime((DateTime)value),
             GaldrFieldType.DateTimeOffset => EncodeDateTimeOffset((DateTimeOffset)value),
             GaldrFieldType.Guid => EncodeGuid((Guid)value),
+            GaldrFieldType.Byte => EncodeByte((byte)value),
+            GaldrFieldType.SByte => EncodeSByte((sbyte)value),
+            GaldrFieldType.Int16 => EncodeInt16((short)value),
+            GaldrFieldType.UInt16 => EncodeUInt16((ushort)value),
+            GaldrFieldType.UInt32 => EncodeUInt32((uint)value),
+            GaldrFieldType.UInt64 => EncodeUInt64((ulong)value),
+            GaldrFieldType.Single => EncodeSingle((float)value),
+            GaldrFieldType.Char => EncodeChar((char)value),
+            GaldrFieldType.TimeSpan => EncodeTimeSpan((TimeSpan)value),
+            GaldrFieldType.DateOnly => EncodeDateOnly((DateOnly)value),
+            GaldrFieldType.TimeOnly => EncodeTimeOnly((TimeOnly)value),
             GaldrFieldType.Complex => throw new NotSupportedException("Complex types cannot be encoded as index keys"),
             _ => throw new NotSupportedException($"Field type {fieldType} is not supported for index encoding")
         };
-
-        return result;
     }
 
     private static byte[] EncodeString(string value)
@@ -165,21 +174,120 @@ internal static class IndexKeyEncoder
         return value.ToByteArray();
     }
 
+    private static byte[] EncodeByte(byte value)
+    {
+        return new byte[] { value };
+    }
+
+    private static byte[] EncodeSByte(sbyte value)
+    {
+        return new byte[] { (byte)(value ^ sbyte.MinValue) };
+    }
+
+    private static byte[] EncodeInt16(short value)
+    {
+        ushort encoded = (ushort)(value ^ short.MinValue);
+        return new byte[]
+        {
+            (byte)(encoded >> 8),
+            (byte)encoded
+        };
+    }
+
+    private static byte[] EncodeUInt16(ushort value)
+    {
+        return new byte[]
+        {
+            (byte)(value >> 8),
+            (byte)value
+        };
+    }
+
+    private static byte[] EncodeUInt32(uint value)
+    {
+        return new byte[]
+        {
+            (byte)(value >> 24),
+            (byte)(value >> 16),
+            (byte)(value >> 8),
+            (byte)value
+        };
+    }
+
+    private static byte[] EncodeUInt64(ulong value)
+    {
+        byte[] bytes = new byte[8];
+        for (int i = 0; i < 8; i++)
+        {
+            bytes[i] = (byte)(value >> (56 - i * 8));
+        }
+
+        return bytes;
+    }
+
+    private static byte[] EncodeSingle(float value)
+    {
+        int bits = BitConverter.SingleToInt32Bits(value);
+        uint encoded;
+        if (bits < 0)
+        {
+            encoded = ((uint)bits) ^ 0xFFFFFFFFU;
+        }
+        else
+        {
+            encoded = (uint)bits ^ 0x80000000U;
+        }
+
+        return new byte[]
+        {
+            (byte)(encoded >> 24),
+            (byte)(encoded >> 16),
+            (byte)(encoded >> 8),
+            (byte)encoded
+        };
+    }
+
+    private static byte[] EncodeChar(char value)
+    {
+        ushort charValue = value;
+        return new byte[]
+        {
+            (byte)(charValue >> 8),
+            (byte)charValue
+        };
+    }
+
+    private static byte[] EncodeTimeSpan(TimeSpan value)
+    {
+        return EncodeInt64(value.Ticks);
+    }
+
+    private static byte[] EncodeDateOnly(DateOnly value)
+    {
+        return EncodeInt32(value.DayNumber);
+    }
+
+    private static byte[] EncodeTimeOnly(TimeOnly value)
+    {
+        return EncodeInt64(value.Ticks);
+    }
+
     public static byte[] EncodePrefixEnd(string prefix)
     {
         byte[] prefixBytes = Encoding.UTF8.GetBytes(prefix);
         byte[] endBytes = new byte[prefixBytes.Length];
         Array.Copy(prefixBytes, endBytes, prefixBytes.Length);
 
-        for (int i = endBytes.Length - 1; i >= 0; i--)
+        byte[] result = null;
+        for (int i = endBytes.Length - 1; i >= 0 && result == null; i--)
         {
             if (endBytes[i] < 0xFF)
             {
                 endBytes[i]++;
-                return endBytes;
+                result = endBytes;
             }
         }
 
-        return null;
+        return result;
     }
 }

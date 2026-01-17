@@ -347,8 +347,10 @@ namespace GaldrDbSourceGenerators
         private static GaldrFieldTypeInfo GetFieldType(ITypeSymbol type)
         {
             // Handle nullable value types
+            bool isNullable = false;
             if (type.NullableAnnotation == NullableAnnotation.Annotated && type.IsValueType)
             {
+                isNullable = true;
                 // Get underlying type for nullable
                 if (type is INamedTypeSymbol namedType && namedType.TypeArguments.Length == 1)
                 {
@@ -356,20 +358,44 @@ namespace GaldrDbSourceGenerators
                 }
             }
 
+            // Check for enums FIRST (before SpecialType switch)
+            if (type.TypeKind == TypeKind.Enum)
+            {
+                INamedTypeSymbol enumSymbol = (INamedTypeSymbol)type;
+                INamedTypeSymbol underlyingType = enumSymbol.EnumUnderlyingType;
+                return GetEnumFieldType(underlyingType, isNullable);
+            }
+
             switch (type.SpecialType)
             {
                 case SpecialType.System_String:
-                    return new GaldrFieldTypeInfo("GaldrFieldType.String", "WriteString");
+                    return new GaldrFieldTypeInfo("GaldrFieldType.String", "WriteString", isNullable);
                 case SpecialType.System_Int32:
-                    return new GaldrFieldTypeInfo("GaldrFieldType.Int32", "WriteInt32");
+                    return new GaldrFieldTypeInfo("GaldrFieldType.Int32", "WriteInt32", isNullable);
                 case SpecialType.System_Int64:
-                    return new GaldrFieldTypeInfo("GaldrFieldType.Int64", "WriteInt64");
+                    return new GaldrFieldTypeInfo("GaldrFieldType.Int64", "WriteInt64", isNullable);
                 case SpecialType.System_Double:
-                    return new GaldrFieldTypeInfo("GaldrFieldType.Double", "WriteDouble");
+                    return new GaldrFieldTypeInfo("GaldrFieldType.Double", "WriteDouble", isNullable);
                 case SpecialType.System_Boolean:
-                    return new GaldrFieldTypeInfo("GaldrFieldType.Boolean", "WriteBoolean");
+                    return new GaldrFieldTypeInfo("GaldrFieldType.Boolean", "WriteBoolean", isNullable);
                 case SpecialType.System_Decimal:
-                    return new GaldrFieldTypeInfo("GaldrFieldType.Decimal", "WriteDecimal");
+                    return new GaldrFieldTypeInfo("GaldrFieldType.Decimal", "WriteDecimal", isNullable);
+                case SpecialType.System_Byte:
+                    return new GaldrFieldTypeInfo("GaldrFieldType.Byte", "WriteByte", isNullable);
+                case SpecialType.System_SByte:
+                    return new GaldrFieldTypeInfo("GaldrFieldType.SByte", "WriteSByte", isNullable);
+                case SpecialType.System_Int16:
+                    return new GaldrFieldTypeInfo("GaldrFieldType.Int16", "WriteInt16", isNullable);
+                case SpecialType.System_UInt16:
+                    return new GaldrFieldTypeInfo("GaldrFieldType.UInt16", "WriteUInt16", isNullable);
+                case SpecialType.System_UInt32:
+                    return new GaldrFieldTypeInfo("GaldrFieldType.UInt32", "WriteUInt32", isNullable);
+                case SpecialType.System_UInt64:
+                    return new GaldrFieldTypeInfo("GaldrFieldType.UInt64", "WriteUInt64", isNullable);
+                case SpecialType.System_Single:
+                    return new GaldrFieldTypeInfo("GaldrFieldType.Single", "WriteSingle", isNullable);
+                case SpecialType.System_Char:
+                    return new GaldrFieldTypeInfo("GaldrFieldType.Char", "WriteChar", isNullable);
             }
 
             // Check for known types by name
@@ -378,19 +404,68 @@ namespace GaldrDbSourceGenerators
 
             if (typeName == "DateTime" || fullName == "System.DateTime")
             {
-                return new GaldrFieldTypeInfo("GaldrFieldType.DateTime", "WriteDateTime");
+                return new GaldrFieldTypeInfo("GaldrFieldType.DateTime", "WriteDateTime", isNullable);
             }
             if (typeName == "DateTimeOffset" || fullName == "System.DateTimeOffset")
             {
-                return new GaldrFieldTypeInfo("GaldrFieldType.DateTimeOffset", "WriteDateTimeOffset");
+                return new GaldrFieldTypeInfo("GaldrFieldType.DateTimeOffset", "WriteDateTimeOffset", isNullable);
             }
             if (typeName == "Guid" || fullName == "System.Guid")
             {
-                return new GaldrFieldTypeInfo("GaldrFieldType.Guid", "WriteGuid");
+                return new GaldrFieldTypeInfo("GaldrFieldType.Guid", "WriteGuid", isNullable);
+            }
+            if (typeName == "TimeSpan" || fullName == "System.TimeSpan")
+            {
+                return new GaldrFieldTypeInfo("GaldrFieldType.TimeSpan", "WriteTimeSpan", isNullable);
+            }
+            if (typeName == "DateOnly" || fullName == "System.DateOnly")
+            {
+                return new GaldrFieldTypeInfo("GaldrFieldType.DateOnly", "WriteDateOnly", isNullable);
+            }
+            if (typeName == "TimeOnly" || fullName == "System.TimeOnly")
+            {
+                return new GaldrFieldTypeInfo("GaldrFieldType.TimeOnly", "WriteTimeOnly", isNullable);
             }
 
             // Non-indexable complex type
-            return new GaldrFieldTypeInfo("GaldrFieldType.Complex", null);
+            return new GaldrFieldTypeInfo("GaldrFieldType.Complex", null, isNullable);
+        }
+
+        private static GaldrFieldTypeInfo GetEnumFieldType(INamedTypeSymbol underlyingType, bool isNullable)
+        {
+            GaldrFieldTypeInfo result;
+            switch (underlyingType.SpecialType)
+            {
+                case SpecialType.System_Byte:
+                    result = new GaldrFieldTypeInfo("GaldrFieldType.Byte", "WriteByte", isNullable, true, "byte");
+                    break;
+                case SpecialType.System_SByte:
+                    result = new GaldrFieldTypeInfo("GaldrFieldType.SByte", "WriteSByte", isNullable, true, "sbyte");
+                    break;
+                case SpecialType.System_Int16:
+                    result = new GaldrFieldTypeInfo("GaldrFieldType.Int16", "WriteInt16", isNullable, true, "short");
+                    break;
+                case SpecialType.System_UInt16:
+                    result = new GaldrFieldTypeInfo("GaldrFieldType.UInt16", "WriteUInt16", isNullable, true, "ushort");
+                    break;
+                case SpecialType.System_Int32:
+                    result = new GaldrFieldTypeInfo("GaldrFieldType.Int32", "WriteInt32", isNullable, true, "int");
+                    break;
+                case SpecialType.System_UInt32:
+                    result = new GaldrFieldTypeInfo("GaldrFieldType.UInt32", "WriteUInt32", isNullable, true, "uint");
+                    break;
+                case SpecialType.System_Int64:
+                    result = new GaldrFieldTypeInfo("GaldrFieldType.Int64", "WriteInt64", isNullable, true, "long");
+                    break;
+                case SpecialType.System_UInt64:
+                    result = new GaldrFieldTypeInfo("GaldrFieldType.UInt64", "WriteUInt64", isNullable, true, "ulong");
+                    break;
+                default:
+                    result = new GaldrFieldTypeInfo("GaldrFieldType.Int32", "WriteInt32", isNullable, true, "int");
+                    break;
+            }
+
+            return result;
         }
 
         private static void GenerateAllTypes(
@@ -727,7 +802,21 @@ namespace GaldrDbSourceGenerators
             {
                 if (prop.FieldType.WriteMethod != null)
                 {
-                    sb.AppendLine($"            writer.{prop.FieldType.WriteMethod}(\"{prop.Name}\", document.{prop.Name});");
+                    if (prop.FieldType.IsEnum)
+                    {
+                        if (prop.FieldType.IsNullable)
+                        {
+                            sb.AppendLine($"            writer.{prop.FieldType.WriteMethod}(\"{prop.Name}\", document.{prop.Name}.HasValue ? ({prop.FieldType.EnumCastType}?)document.{prop.Name}.Value : null);");
+                        }
+                        else
+                        {
+                            sb.AppendLine($"            writer.{prop.FieldType.WriteMethod}(\"{prop.Name}\", ({prop.FieldType.EnumCastType})document.{prop.Name});");
+                        }
+                    }
+                    else
+                    {
+                        sb.AppendLine($"            writer.{prop.FieldType.WriteMethod}(\"{prop.Name}\", document.{prop.Name});");
+                    }
                 }
             }
 
@@ -1042,11 +1131,35 @@ namespace GaldrDbSourceGenerators
     {
         public string FieldTypeEnum { get; }
         public string WriteMethod { get; }
+        public bool IsNullable { get; }
+        public bool IsEnum { get; }
+        public string EnumCastType { get; }
 
         public GaldrFieldTypeInfo(string fieldTypeEnum, string writeMethod)
         {
             FieldTypeEnum = fieldTypeEnum;
             WriteMethod = writeMethod;
+            IsNullable = false;
+            IsEnum = false;
+            EnumCastType = null;
+        }
+
+        public GaldrFieldTypeInfo(string fieldTypeEnum, string writeMethod, bool isNullable)
+        {
+            FieldTypeEnum = fieldTypeEnum;
+            WriteMethod = writeMethod;
+            IsNullable = isNullable;
+            IsEnum = false;
+            EnumCastType = null;
+        }
+
+        public GaldrFieldTypeInfo(string fieldTypeEnum, string writeMethod, bool isNullable, bool isEnum, string enumCastType)
+        {
+            FieldTypeEnum = fieldTypeEnum;
+            WriteMethod = writeMethod;
+            IsNullable = isNullable;
+            IsEnum = isEnum;
+            EnumCastType = enumCastType;
         }
     }
 }

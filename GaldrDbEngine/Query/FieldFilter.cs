@@ -100,19 +100,19 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
                 break;
 
             case FieldOp.GreaterThan:
-                result = Comparer<TField>.Default.Compare(fieldValue, _value) > 0;
+                result = fieldValue != null && Comparer<TField>.Default.Compare(fieldValue, _value) > 0;
                 break;
 
             case FieldOp.GreaterThanOrEqual:
-                result = Comparer<TField>.Default.Compare(fieldValue, _value) >= 0;
+                result = fieldValue != null && Comparer<TField>.Default.Compare(fieldValue, _value) >= 0;
                 break;
 
             case FieldOp.LessThan:
-                result = Comparer<TField>.Default.Compare(fieldValue, _value) < 0;
+                result = fieldValue != null && Comparer<TField>.Default.Compare(fieldValue, _value) < 0;
                 break;
 
             case FieldOp.LessThanOrEqual:
-                result = Comparer<TField>.Default.Compare(fieldValue, _value) <= 0;
+                result = fieldValue != null && Comparer<TField>.Default.Compare(fieldValue, _value) <= 0;
                 break;
 
             case FieldOp.StartsWith:
