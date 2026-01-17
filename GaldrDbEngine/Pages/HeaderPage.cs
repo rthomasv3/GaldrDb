@@ -12,7 +12,8 @@ internal class HeaderPage
     public int BitmapPageCount { get; set; }
     public int FsmStartPage { get; set; }
     public int FsmPageCount { get; set; }
-    public int CollectionsMetadataPage { get; set; }
+    public int CollectionsMetadataStartPage { get; set; }
+    public int CollectionsMetadataPageCount { get; set; }
     public byte MmapHint { get; set; }
 
     public byte[] Serialize(int pageSize)
@@ -44,7 +45,10 @@ internal class HeaderPage
         BinaryHelper.WriteInt32LE(buffer, offset, FsmPageCount);
         offset += 4;
 
-        BinaryHelper.WriteInt32LE(buffer, offset, CollectionsMetadataPage);
+        BinaryHelper.WriteInt32LE(buffer, offset, CollectionsMetadataStartPage);
+        offset += 4;
+
+        BinaryHelper.WriteInt32LE(buffer, offset, CollectionsMetadataPageCount);
         offset += 4;
 
         buffer[offset] = MmapHint;
@@ -83,7 +87,10 @@ internal class HeaderPage
         header.FsmPageCount = BinaryHelper.ReadInt32LE(buffer, offset);
         offset += 4;
 
-        header.CollectionsMetadataPage = BinaryHelper.ReadInt32LE(buffer, offset);
+        header.CollectionsMetadataStartPage = BinaryHelper.ReadInt32LE(buffer, offset);
+        offset += 4;
+
+        header.CollectionsMetadataPageCount = BinaryHelper.ReadInt32LE(buffer, offset);
         offset += 4;
 
         header.MmapHint = buffer[offset];

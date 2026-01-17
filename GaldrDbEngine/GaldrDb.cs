@@ -347,7 +347,7 @@ public class GaldrDb : IDisposable
                 }
 
                 targetDb._collectionsMetadata.UpdateCollection(targetCollection);
-                targetDb._collectionsMetadata.WriteToDisk();
+                targetDb.WriteCollectionsMetadataWithGrowth();
 
                 foreach (DocumentVersion version in liveVersions)
                 {
@@ -439,7 +439,7 @@ public class GaldrDb : IDisposable
                 }
 
                 targetDb._collectionsMetadata.UpdateCollection(targetCollection);
-                targetDb._collectionsMetadata.WriteToDisk();
+                targetDb.WriteCollectionsMetadataWithGrowth();
 
                 foreach (DocumentVersion version in liveVersions)
                 {
@@ -543,7 +543,7 @@ public class GaldrDb : IDisposable
             }
 
             _collectionsMetadata.AddCollection(collectionName, rootPageId);
-            _collectionsMetadata.WriteToDisk();
+            WriteCollectionsMetadataWithGrowth();
 
             _pageManager.SetFreeSpaceLevel(rootPageId, FreeSpaceLevel.None);
 
@@ -652,7 +652,7 @@ public class GaldrDb : IDisposable
 
                 collection.Indexes.RemoveAt(indexPosition);
                 _collectionsMetadata.UpdateCollection(collection);
-                _collectionsMetadata.WriteToDisk();
+                WriteCollectionsMetadataWithGrowth();
 
                 CommitWalTransaction();
             }
@@ -724,7 +724,7 @@ public class GaldrDb : IDisposable
                 }
 
                 _collectionsMetadata.RemoveCollection(collectionName);
-                _collectionsMetadata.WriteToDisk();
+                WriteCollectionsMetadataWithGrowth();
 
                 _ensuredCollections.Remove(collectionName);
 
@@ -1036,7 +1036,7 @@ public class GaldrDb : IDisposable
                 }
 
                 _collectionsMetadata.UpdateCollection(collection);
-                _collectionsMetadata.WriteToDisk();
+                WriteCollectionsMetadataWithGrowth();
 
                 CommitWalTransaction();
             }
@@ -1089,7 +1089,7 @@ public class GaldrDb : IDisposable
 
             collection.Indexes.Add(newIndex);
             _collectionsMetadata.UpdateCollection(collection);
-            _collectionsMetadata.WriteToDisk();
+            WriteCollectionsMetadataWithGrowth();
 
             CommitWalTransaction();
         }
@@ -1191,8 +1191,8 @@ public class GaldrDb : IDisposable
         // future page writes should go through WAL, if configured
         _pageManager.SetPageIO(_pageIO);
         
-        _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataPage, _options.PageSize);
-        _collectionsMetadata.WriteToDisk();
+        _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataStartPage, _pageManager.Header.CollectionsMetadataPageCount, _options.PageSize);
+        WriteCollectionsMetadataWithGrowth();
 
         _documentStorage = new DocumentStorage(_pageIO, _pageManager, _options.PageSize);
 
@@ -1233,7 +1233,7 @@ public class GaldrDb : IDisposable
                 
                 _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize);
 
-                _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataPage, _pageManager.Header.PageSize);
+                _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataStartPage, _pageManager.Header.CollectionsMetadataPageCount, _pageManager.Header.PageSize);
                 _collectionsMetadata.LoadFromDisk();
                 
                 // Rebuild VersionIndex from current database state
@@ -1252,7 +1252,7 @@ public class GaldrDb : IDisposable
             
             _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize);
             
-            _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataPage, _pageManager.Header.PageSize);
+            _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataStartPage, _pageManager.Header.CollectionsMetadataPageCount, _pageManager.Header.PageSize);
             _collectionsMetadata.LoadFromDisk();
             
             // No WAL - still need to rebuild VersionIndex for MVCC reads to work
@@ -1374,7 +1374,7 @@ public class GaldrDb : IDisposable
             _options.PageSize = _pageManager.Header.PageSize;
         }
         
-        _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataPage, _pageManager.Header.PageSize);
+        _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataStartPage, _pageManager.Header.CollectionsMetadataPageCount, _pageManager.Header.PageSize);
         _collectionsMetadata.LoadFromDisk();
 
         _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize);
@@ -1475,6 +1475,17 @@ public class GaldrDb : IDisposable
             _garbageCollector = new VersionGarbageCollector(_versionIndex, _txManager);
             _lastGCCommitCount = 0;
         }
+    }
+
+    internal void WriteCollectionsMetadataWithGrowth()
+    {
+        int pagesNeeded = _collectionsMetadata.GetPagesNeeded();
+        if (pagesNeeded > _collectionsMetadata.GetCurrentPageCount())
+        {
+            int additional = pagesNeeded - _collectionsMetadata.GetCurrentPageCount();
+            _pageManager.GrowCollectionsMetadata(_collectionsMetadata, additional);
+        }
+        _collectionsMetadata.WriteToDisk();
     }
 
     private void EnsureAllCollections()
@@ -1664,7 +1675,7 @@ public class GaldrDb : IDisposable
             collection.NextId = docId + 1;
         }
         _collectionsMetadata.UpdateCollection(collection);
-        _collectionsMetadata.WriteToDisk();
+        WriteCollectionsMetadataWithGrowth();
 
         return location;
     }
@@ -1705,7 +1716,7 @@ public class GaldrDb : IDisposable
         }
 
         _collectionsMetadata.UpdateCollection(collection);
-        _collectionsMetadata.WriteToDisk();
+        WriteCollectionsMetadataWithGrowth();
 
         return newLocation;
     }
@@ -1786,7 +1797,7 @@ public class GaldrDb : IDisposable
 
             collection.DocumentCount--;
             _collectionsMetadata.UpdateCollection(collection);
-            _collectionsMetadata.WriteToDisk();
+            WriteCollectionsMetadataWithGrowth();
         }
     }
 
@@ -1880,7 +1891,7 @@ public class GaldrDb : IDisposable
             collection.NextId = docId + 1;
         }
         _collectionsMetadata.UpdateCollection(collection);
-        _collectionsMetadata.WriteToDisk();
+        WriteCollectionsMetadataWithGrowth();
 
         return location;
     }
@@ -1921,7 +1932,7 @@ public class GaldrDb : IDisposable
         }
 
         _collectionsMetadata.UpdateCollection(collection);
-        _collectionsMetadata.WriteToDisk();
+        WriteCollectionsMetadataWithGrowth();
 
         return newLocation;
     }
@@ -1963,7 +1974,7 @@ public class GaldrDb : IDisposable
 
             collection.DocumentCount--;
             _collectionsMetadata.UpdateCollection(collection);
-            _collectionsMetadata.WriteToDisk();
+            WriteCollectionsMetadataWithGrowth();
         }
     }
 
@@ -2002,7 +2013,7 @@ public class GaldrDb : IDisposable
 
         collection.DocumentCount++;
         targetDb._collectionsMetadata.UpdateCollection(collection);
-        targetDb._collectionsMetadata.WriteToDisk();
+        targetDb.WriteCollectionsMetadataWithGrowth();
     }
 
     private async Task InsertRawForCompactionAsync(GaldrDb targetDb, string collectionName, int docId, byte[] docBytes, IGaldrTypeInfo typeInfo, CancellationToken cancellationToken)
@@ -2036,7 +2047,7 @@ public class GaldrDb : IDisposable
 
         collection.DocumentCount++;
         targetDb._collectionsMetadata.UpdateCollection(collection);
-        targetDb._collectionsMetadata.WriteToDisk();
+        targetDb.WriteCollectionsMetadataWithGrowth();
     }
 
     private void InsertIntoIndexesForCompaction(GaldrDb targetDb, CollectionEntry collection, int docId, DocumentLocation location, IReadOnlyList<IndexFieldEntry> indexFields)

@@ -36,7 +36,8 @@ internal class PageManager
         int bitmapPageCount = 1;
         int fsmStartPage = 2;
         int fsmPageCount = 1;
-        int collectionsMetadataPage = 3;
+        int collectionsMetadataStartPage = 3;
+        int collectionsMetadataPageCount = 1;
 
         _header = new HeaderPage
         {
@@ -48,7 +49,8 @@ internal class PageManager
             BitmapPageCount = bitmapPageCount,
             FsmStartPage = fsmStartPage,
             FsmPageCount = fsmPageCount,
-            CollectionsMetadataPage = collectionsMetadataPage,
+            CollectionsMetadataStartPage = collectionsMetadataStartPage,
+            CollectionsMetadataPageCount = collectionsMetadataPageCount,
             MmapHint = 1
         };
 
@@ -169,9 +171,7 @@ internal class PageManager
         _bitmap.WriteToDisk();
         _fsm.WriteToDisk();
 
-        int[] result = pageIds;
-
-        return result;
+        return pageIds;
     }
 
     public void DeallocatePage(int pageId)
@@ -206,6 +206,106 @@ internal class PageManager
     public void Flush()
     {
         _pageIO.Flush();
+    }
+
+    public void GrowCollectionsMetadata(CollectionsMetadata collectionsMetadata, int additionalPagesNeeded)
+    {
+        int currentStartPage = _header.CollectionsMetadataStartPage;
+        int currentPageCount = _header.CollectionsMetadataPageCount;
+        int newPageCount = currentPageCount + additionalPagesNeeded;
+
+        bool canExpandInPlace = true;
+        for (int i = 0; i < additionalPagesNeeded; i++)
+        {
+            int pageToCheck = currentStartPage + currentPageCount + i;
+            if (pageToCheck >= _header.TotalPageCount || _bitmap.IsAllocated(pageToCheck))
+            {
+                canExpandInPlace = false;
+                break;
+            }
+        }
+
+        if (canExpandInPlace)
+        {
+            for (int i = 0; i < additionalPagesNeeded; i++)
+            {
+                int pageId = currentStartPage + currentPageCount + i;
+                _bitmap.AllocatePage(pageId);
+                _fsm.SetFreeSpaceLevel(pageId, FreeSpaceLevel.None);
+            }
+
+            _header.CollectionsMetadataPageCount = newPageCount;
+
+            byte[] headerBytes = _header.Serialize(_pageSize);
+            _pageIO.WritePage(0, headerBytes);
+
+            _bitmap.WriteToDisk();
+            _fsm.WriteToDisk();
+
+            collectionsMetadata.SetPageAllocation(currentStartPage, newPageCount);
+        }
+        else
+        {
+            int[] newPages = AllocatePages(newPageCount);
+            try
+            {
+                int newStartPage = newPages[0];
+
+                bool contiguous = true;
+                for (int i = 1; i < newPageCount; i++)
+                {
+                    if (newPages[i] != newStartPage + i)
+                    {
+                        contiguous = false;
+                        break;
+                    }
+                }
+
+                if (!contiguous)
+                {
+                    for (int i = 0; i < newPageCount; i++)
+                    {
+                        DeallocatePage(newPages[i]);
+                    }
+                    throw new InvalidOperationException("Could not allocate contiguous pages for collections metadata growth");
+                }
+
+                byte[] pageBuffer = BufferPool.Rent(_pageSize);
+                try
+                {
+                    for (int i = 0; i < currentPageCount; i++)
+                    {
+                        _pageIO.ReadPage(currentStartPage + i, pageBuffer);
+                        _pageIO.WritePage(newStartPage + i, pageBuffer);
+                    }
+                }
+                finally
+                {
+                    BufferPool.Return(pageBuffer);
+                }
+
+                for (int i = 0; i < currentPageCount; i++)
+                {
+                    _bitmap.DeallocatePage(currentStartPage + i);
+                    _fsm.SetFreeSpaceLevel(currentStartPage + i, FreeSpaceLevel.High);
+                }
+
+                _header.CollectionsMetadataStartPage = newStartPage;
+                _header.CollectionsMetadataPageCount = newPageCount;
+
+                byte[] headerBytes = _header.Serialize(_pageSize);
+                _pageIO.WritePage(0, headerBytes);
+
+                _bitmap.WriteToDisk();
+                _fsm.WriteToDisk();
+
+                collectionsMetadata.SetPageAllocation(newStartPage, newPageCount);
+            }
+            finally
+            {
+                IntArrayPool.Return(newPages);
+            }
+        }
     }
 
     private void Expand(int? requestedPages = null)

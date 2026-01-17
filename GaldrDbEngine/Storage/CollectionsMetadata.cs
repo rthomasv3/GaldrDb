@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using GaldrDbEngine.Pages;
 using GaldrDbEngine.IO;
 using GaldrDbEngine.Utilities;
 
@@ -9,68 +8,103 @@ namespace GaldrDbEngine.Storage;
 internal class CollectionsMetadata
 {
     private readonly IPageIO _pageIO;
-    private readonly int _metadataPageId;
     private readonly int _pageSize;
-    private readonly List<CollectionEntry> _collections;
+    private int _startPage;
+    private int _pageCount;
+    private readonly Dictionary<string, CollectionEntry> _collections;
 
-    public CollectionsMetadata(IPageIO pageIO, int metadataPageId, int pageSize)
+    public CollectionsMetadata(IPageIO pageIO, int startPage, int pageCount, int pageSize)
     {
         _pageIO = pageIO;
-        _metadataPageId = metadataPageId;
+        _startPage = startPage;
+        _pageCount = pageCount;
         _pageSize = pageSize;
-        _collections = new List<CollectionEntry>();
+        _collections = new Dictionary<string, CollectionEntry>();
     }
 
     public void LoadFromDisk()
     {
-        byte[] buffer = BufferPool.Rent(_pageSize);
+        int totalBufferSize = _pageCount * _pageSize;
+        byte[] combinedBuffer = BufferPool.Rent(totalBufferSize);
+        byte[] pageBuffer = BufferPool.Rent(_pageSize);
+
         try
         {
-            _pageIO.ReadPage(_metadataPageId, buffer);
+            int bufferOffset = 0;
+            for (int i = 0; i < _pageCount; i++)
+            {
+                _pageIO.ReadPage(_startPage + i, pageBuffer);
+                int bytesToCopy = Math.Min(_pageSize, totalBufferSize - bufferOffset);
+                Array.Copy(pageBuffer, 0, combinedBuffer, bufferOffset, bytesToCopy);
+                bufferOffset += bytesToCopy;
+            }
 
             _collections.Clear();
 
             int offset = 0;
-            int collectionCount = BinaryHelper.ReadInt32LE(buffer, offset);
+            int collectionCount = BinaryHelper.ReadInt32LE(combinedBuffer, offset);
             offset += 4;
 
             for (int i = 0; i < collectionCount; i++)
             {
                 int bytesRead = 0;
-                CollectionEntry entry = CollectionEntry.Deserialize(buffer, offset, out bytesRead);
-                _collections.Add(entry);
+                CollectionEntry entry = CollectionEntry.Deserialize(combinedBuffer, offset, out bytesRead);
+                _collections[entry.Name] = entry;
                 offset += bytesRead;
             }
         }
         finally
         {
-            BufferPool.Return(buffer);
+            BufferPool.Return(pageBuffer);
+            BufferPool.Return(combinedBuffer);
         }
     }
 
     public void WriteToDisk()
     {
-        byte[] buffer = BufferPool.Rent(_pageSize);
+        int totalSize = CalculateSerializedSize();
+        int pagesNeeded = (totalSize + _pageSize - 1) / _pageSize;
+
+        if (pagesNeeded > _pageCount)
+        {
+            throw new InvalidOperationException(
+                $"Collections metadata requires {pagesNeeded} pages but only {_pageCount} allocated. " +
+                "Call GrowCollectionsMetadata() first.");
+        }
+
+        int totalBufferSize = _pageCount * _pageSize;
+        byte[] combinedBuffer = BufferPool.Rent(totalBufferSize);
+        byte[] pageBuffer = BufferPool.Rent(_pageSize);
+
         try
         {
-            Array.Clear(buffer, 0, _pageSize);
+            Array.Clear(combinedBuffer, 0, totalBufferSize);
 
             int offset = 0;
-            BinaryHelper.WriteInt32LE(buffer, offset, _collections.Count);
+            BinaryHelper.WriteInt32LE(combinedBuffer, offset, _collections.Count);
             offset += 4;
 
-            for (int i = 0; i < _collections.Count; i++)
+            foreach (KeyValuePair<string, CollectionEntry> kvp in _collections)
             {
-                byte[] entryBytes = _collections[i].Serialize();
-                Array.Copy(entryBytes, 0, buffer, offset, entryBytes.Length);
+                byte[] entryBytes = kvp.Value.Serialize();
+                Array.Copy(entryBytes, 0, combinedBuffer, offset, entryBytes.Length);
                 offset += entryBytes.Length;
             }
 
-            _pageIO.WritePage(_metadataPageId, buffer);
+            int bufferOffset = 0;
+            for (int i = 0; i < _pageCount; i++)
+            {
+                Array.Clear(pageBuffer, 0, _pageSize);
+                int bytesToCopy = Math.Min(_pageSize, totalBufferSize - bufferOffset);
+                Array.Copy(combinedBuffer, bufferOffset, pageBuffer, 0, bytesToCopy);
+                _pageIO.WritePage(_startPage + i, pageBuffer);
+                bufferOffset += bytesToCopy;
+            }
         }
         finally
         {
-            BufferPool.Return(buffer);
+            BufferPool.Return(pageBuffer);
+            BufferPool.Return(combinedBuffer);
         }
     }
 
@@ -84,7 +118,7 @@ internal class CollectionsMetadata
             NextId = 1
         };
 
-        _collections.Add(entry);
+        _collections[name] = entry;
 
         return entry;
     }
@@ -93,13 +127,9 @@ internal class CollectionsMetadata
     {
         CollectionEntry result = null;
 
-        for (int i = 0; i < _collections.Count; i++)
+        if (_collections.TryGetValue(name, out CollectionEntry entry))
         {
-            if (_collections[i].Name == name)
-            {
-                result = _collections[i];
-                break;
-            }
+            result = entry;
         }
 
         return result;
@@ -107,26 +137,15 @@ internal class CollectionsMetadata
 
     public void UpdateCollection(CollectionEntry entry)
     {
-        for (int i = 0; i < _collections.Count; i++)
+        if (_collections.ContainsKey(entry.Name))
         {
-            if (_collections[i].Name == entry.Name)
-            {
-                _collections[i] = entry;
-                break;
-            }
+            _collections[entry.Name] = entry;
         }
     }
 
     public void RemoveCollection(string name)
     {
-        for (int i = 0; i < _collections.Count; i++)
-        {
-            if (_collections[i].Name == name)
-            {
-                _collections.RemoveAt(i);
-                break;
-            }
-        }
+        _collections.Remove(name);
     }
 
     public int GetCollectionCount()
@@ -136,6 +155,49 @@ internal class CollectionsMetadata
 
     public List<CollectionEntry> GetAllCollections()
     {
-        return new List<CollectionEntry>(_collections);
+        List<CollectionEntry> result = new List<CollectionEntry>(_collections.Count);
+
+        foreach (KeyValuePair<string, CollectionEntry> kvp in _collections)
+        {
+            result.Add(kvp.Value);
+        }
+
+        return result;
+    }
+
+    public int CalculateSerializedSize()
+    {
+        int size = 4;
+
+        foreach (KeyValuePair<string, CollectionEntry> kvp in _collections)
+        {
+            size += kvp.Value.GetSerializedSize();
+        }
+
+        return size;
+    }
+
+    public int GetPagesNeeded()
+    {
+        int totalSize = CalculateSerializedSize();
+        int pagesNeeded = (totalSize + _pageSize - 1) / _pageSize;
+
+        return pagesNeeded;
+    }
+
+    public int GetCurrentPageCount()
+    {
+        return _pageCount;
+    }
+
+    public int GetStartPage()
+    {
+        return _startPage;
+    }
+
+    public void SetPageAllocation(int startPage, int pageCount)
+    {
+        _startPage = startPage;
+        _pageCount = pageCount;
     }
 }
