@@ -18,7 +18,8 @@ using GaldrJson;
 namespace GaldrDbEngine;
 
 /// <summary>
-/// The main database class. Use <see cref="Create"/> to create a new database or <see cref="Open"/> to open an existing one.
+/// The main database class. Use <see cref="Create"/> to create a new database, <see cref="Open"/> to open an existing one,
+/// or <see cref="OpenOrCreate"/> to open or create as needed.
 /// </summary>
 public class GaldrDb : IDisposable
 {
@@ -105,13 +106,13 @@ public class GaldrDb : IDisposable
     /// Opens an existing database file.
     /// </summary>
     /// <param name="filePath">Path to the database file.</param>
-    /// <param name="options">Optional configuration options. PageSize is read from the file.</param>
+    /// <param name="options">Optional configuration options. PageSize is always read from the file.</param>
     /// <returns>A GaldrDb instance for the existing database.</returns>
     /// <exception cref="FileNotFoundException">Thrown if the file does not exist.</exception>
     public static GaldrDb Open(string filePath, GaldrDbOptions options = null)
     {
-        // Skip file peek when using custom page IO (simulation testing)
-        if ((options == null || options.PageSize == 0) && (options == null || options.CustomPageIO == null))
+        // Always read page size from file header (skip only for custom page IO in simulation testing)
+        if (options == null || options.CustomPageIO == null)
         {
             byte[] peekBuffer = new byte[12];
             using (FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
@@ -133,6 +134,34 @@ public class GaldrDb : IDisposable
         GaldrDb db = new GaldrDb(filePath, options);
         db.OpenAndValidateFile();
         db.InitializePools();
+
+        return db;
+    }
+
+    /// <summary>
+    /// Opens an existing database file, or creates a new one if it doesn't exist.
+    /// </summary>
+    /// <param name="filePath">Path to the database file.</param>
+    /// <param name="options">Optional configuration options for the database.</param>
+    /// <returns>A GaldrDb instance.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if CustomPageIO is set in options.</exception>
+    public static GaldrDb OpenOrCreate(string filePath, GaldrDbOptions options = null)
+    {
+        if (options?.CustomPageIO != null)
+        {
+            throw new InvalidOperationException("OpenOrCreate does not support CustomPageIO. Use Create or Open directly.");
+        }
+
+        GaldrDb db;
+
+        if (File.Exists(filePath))
+        {
+            db = Open(filePath, options);
+        }
+        else
+        {
+            db = Create(filePath, options ?? new GaldrDbOptions());
+        }
 
         return db;
     }
