@@ -41,12 +41,10 @@ internal class DocumentPage
 
     public bool CanFit(int dataSize)
     {
-        int slotSize = 4 + 4 + 4 + 4;
-        int requiredSpace = slotSize + dataSize;
+        int requiredSpace = SlotEntry.SINGLE_PAGE_SLOT_SIZE + dataSize;
         int availableSpace = FreeSpaceEnd - FreeSpaceOffset;
-        bool result = requiredSpace <= availableSpace;
 
-        return result;
+        return requiredSpace <= availableSpace;
     }
 
     public int AddDocument(ReadOnlySpan<byte> documentData, int[] pageIds, int pageCount, int totalSize)
@@ -71,9 +69,7 @@ internal class DocumentPage
         FreeSpaceEnd = (ushort)(entry.Offset);
         FreeSpaceOffset = (ushort)(FreeSpaceOffset + entry.GetSerializedSize());
 
-        int result = slotIndex;
-
-        return result;
+        return slotIndex;
     }
 
     public byte[] GetDocumentData(int slotIndex)
@@ -88,9 +84,7 @@ internal class DocumentPage
 
         Array.Copy(PageData, entry.Offset, documentData, 0, entry.Length);
 
-        byte[] result = documentData;
-
-        return result;
+        return documentData;
     }
 
     public int GetFreeSpaceBytes()

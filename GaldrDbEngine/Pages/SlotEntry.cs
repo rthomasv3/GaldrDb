@@ -4,6 +4,13 @@ namespace GaldrDbEngine.Pages;
 
 internal struct SlotEntry
 {
+    // Base slot size: PageCount(4) + TotalSize(4) + Offset(4) + Length(4) = 16 bytes
+    public const int BASE_SLOT_SIZE = 16;
+
+    // Single-page slot size: BASE_SLOT_SIZE + one PageId(4) = 20 bytes
+    // Used by CanFit and compaction logic since single-page documents are the common case
+    public const int SINGLE_PAGE_SLOT_SIZE = 20;
+
     public int PageCount { get; set; }
     public int[] PageIds { get; set; }
     public int TotalSize { get; set; }
@@ -12,16 +19,14 @@ internal struct SlotEntry
 
     public int GetSerializedSize()
     {
-        int size = 4 + 4 + 4 + 4;
+        int size = BASE_SLOT_SIZE;
 
         if (PageIds != null)
         {
             size += 4 * PageCount;
         }
 
-        int result = size;
-
-        return result;
+        return size;
     }
 
     public void SerializeTo(byte[] buffer, int startOffset)

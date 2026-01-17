@@ -61,14 +61,15 @@ internal class DocumentStorage : IDisposable
 
                 if (!page.CanFit(documentSize))
                 {
-                    int slotOverhead = 16;
-                    int requiredSpace = documentSize + slotOverhead;
+                    int requiredSpace = documentSize + SlotEntry.SINGLE_PAGE_SLOT_SIZE;
 
                     if (page.GetLogicalFreeSpace() >= requiredSpace)
                     {
                         page.Compact();
                     }
-                    else
+
+                    // Re-check after compaction - if still doesn't fit, allocate new page
+                    if (!page.CanFit(documentSize))
                     {
                         // Release old page lock and acquire lock on new page
                         _pageLockManager.ReleaseWriteLock(pageId);
@@ -455,14 +456,14 @@ internal class DocumentStorage : IDisposable
 
                 if (!page.CanFit(documentSize))
                 {
-                    int slotOverhead = 16;
-                    int requiredSpace = documentSize + slotOverhead;
+                    int requiredSpace = documentSize + SlotEntry.SINGLE_PAGE_SLOT_SIZE;
 
                     if (page.GetLogicalFreeSpace() >= requiredSpace)
                     {
                         page.Compact();
                     }
-                    else
+
+                    if (!page.CanFit(documentSize))
                     {
                         // Release old page lock and acquire lock on new page
                         _pageLockManager.ReleaseWriteLock(pageId);
