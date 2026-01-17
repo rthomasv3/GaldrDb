@@ -17,6 +17,9 @@ using GaldrJson;
 
 namespace GaldrDbEngine;
 
+/// <summary>
+/// The main database class. Use <see cref="Create"/> to create a new database or <see cref="Open"/> to open an existing one.
+/// </summary>
 public class GaldrDb : IDisposable
 {
     #region Fields
@@ -52,7 +55,7 @@ public class GaldrDb : IDisposable
 
     #region Constructor
 
-    public GaldrDb(string filePath, GaldrDbOptions options)
+    internal GaldrDb(string filePath, GaldrDbOptions options)
     {
         _filePath = filePath;
         _options = options ?? new GaldrDbOptions();
@@ -82,6 +85,13 @@ public class GaldrDb : IDisposable
 
     #region Public Methods
 
+    /// <summary>
+    /// Creates a new database file at the specified path.
+    /// </summary>
+    /// <param name="filePath">Path where the database file will be created.</param>
+    /// <param name="options">Configuration options for the database.</param>
+    /// <returns>A new GaldrDb instance.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if the file already exists.</exception>
     public static GaldrDb Create(string filePath, GaldrDbOptions options)
     {
         GaldrDb db = new GaldrDb(filePath, options);
@@ -91,6 +101,13 @@ public class GaldrDb : IDisposable
         return db;
     }
 
+    /// <summary>
+    /// Opens an existing database file.
+    /// </summary>
+    /// <param name="filePath">Path to the database file.</param>
+    /// <param name="options">Optional configuration options. PageSize is read from the file.</param>
+    /// <returns>A GaldrDb instance for the existing database.</returns>
+    /// <exception cref="FileNotFoundException">Thrown if the file does not exist.</exception>
     public static GaldrDb Open(string filePath, GaldrDbOptions options = null)
     {
         // Skip file peek when using custom page IO (simulation testing)
@@ -120,6 +137,9 @@ public class GaldrDb : IDisposable
         return db;
     }
 
+    /// <summary>
+    /// Disposes the database, flushing any pending writes and releasing resources.
+    /// </summary>
     public void Dispose()
     {
         // Flush WAL to ensure all committed data is persisted
@@ -147,6 +167,9 @@ public class GaldrDb : IDisposable
         _walPageIO = null;
     }
 
+    /// <summary>
+    /// Checkpoints the WAL, applying all pending writes to the main database file.
+    /// </summary>
     public void Checkpoint()
     {
         if (_walPageIO != null)
@@ -155,6 +178,10 @@ public class GaldrDb : IDisposable
         }
     }
 
+    /// <summary>
+    /// Asynchronously checkpoints the WAL, applying all pending writes to the main database file.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
     public async Task CheckpointAsync(CancellationToken cancellationToken = default)
     {
         if (_walPageIO != null)
@@ -163,6 +190,10 @@ public class GaldrDb : IDisposable
         }
     }
 
+    /// <summary>
+    /// Removes old document versions and compacts fragmented pages.
+    /// </summary>
+    /// <returns>Statistics about the vacuum operation.</returns>
     public GarbageCollectionResult Vacuum()
     {
         GarbageCollectionResult gcResult = CollectGarbageInternal();
@@ -206,11 +237,22 @@ public class GaldrDb : IDisposable
         return gcResult;
     }
 
+    /// <summary>
+    /// Asynchronously removes old document versions and compacts fragmented pages.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Statistics about the vacuum operation.</returns>
     public Task<GarbageCollectionResult> VacuumAsync(CancellationToken cancellationToken = default)
     {
         return Task.FromResult(Vacuum());
     }
 
+    /// <summary>
+    /// Creates a compacted copy of the database at the target path.
+    /// </summary>
+    /// <param name="targetPath">Path for the compacted database file.</param>
+    /// <returns>Statistics about the compaction.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if transactions are active or target file exists.</exception>
     public DatabaseCompactResult CompactTo(string targetPath)
     {
         EnsureTransactionManager();
@@ -296,6 +338,13 @@ public class GaldrDb : IDisposable
         return new DatabaseCompactResult(collectionsCopied, documentsCopied, sourceSize, targetSize);
     }
 
+    /// <summary>
+    /// Asynchronously creates a compacted copy of the database at the target path.
+    /// </summary>
+    /// <param name="targetPath">Path for the compacted database file.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Statistics about the compaction.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if transactions are active or target file exists.</exception>
     public async Task<DatabaseCompactResult> CompactToAsync(string targetPath, CancellationToken cancellationToken = default)
     {
         EnsureTransactionManager();
@@ -310,7 +359,7 @@ public class GaldrDb : IDisposable
         {
             throw new InvalidOperationException($"Target file already exists: {targetPath}");
         }
-        
+
         await CheckpointAsync(cancellationToken).ConfigureAwait(false);
 
         long sourceSize = new FileInfo(_filePath).Length;
@@ -381,6 +430,10 @@ public class GaldrDb : IDisposable
         return new DatabaseCompactResult(collectionsCopied, documentsCopied, sourceSize, targetSize);
     }
 
+    /// <summary>
+    /// Begins a new read-write transaction with snapshot isolation.
+    /// </summary>
+    /// <returns>A new transaction that must be committed or disposed.</returns>
     public Transaction BeginTransaction()
     {
         EnsureTransactionManager();
@@ -404,6 +457,10 @@ public class GaldrDb : IDisposable
         return tx;
     }
 
+    /// <summary>
+    /// Begins a new read-only transaction with snapshot isolation.
+    /// </summary>
+    /// <returns>A new read-only transaction that must be disposed when complete.</returns>
     public Transaction BeginReadOnlyTransaction()
     {
         EnsureTransactionManager();
@@ -474,6 +531,10 @@ public class GaldrDb : IDisposable
 
     #region Schema Management
 
+    /// <summary>
+    /// Gets the names of all collections in the database.
+    /// </summary>
+    /// <returns>A list of collection names.</returns>
     public IReadOnlyList<string> GetCollectionNames()
     {
         List<CollectionEntry> collections = _collectionsMetadata.GetAllCollections();
@@ -487,6 +548,12 @@ public class GaldrDb : IDisposable
         return names;
     }
 
+    /// <summary>
+    /// Gets the names of all indexes on a collection.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <returns>A list of index field names.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if the collection does not exist.</exception>
     public IReadOnlyList<string> GetIndexNames(string collectionName)
     {
         CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
@@ -505,6 +572,12 @@ public class GaldrDb : IDisposable
         return names;
     }
 
+    /// <summary>
+    /// Drops an index from a collection.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="fieldName">The indexed field name.</param>
+    /// <exception cref="InvalidOperationException">Thrown if the collection or index does not exist.</exception>
     public void DropIndex(string collectionName, string fieldName)
     {
         lock (_ddlLock)
@@ -562,6 +635,12 @@ public class GaldrDb : IDisposable
         }
     }
 
+    /// <summary>
+    /// Drops a collection and optionally deletes all its documents.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="deleteDocuments">If true, deletes all documents. If false and documents exist, throws.</param>
+    /// <exception cref="InvalidOperationException">Thrown if collection doesn't exist or has documents and deleteDocuments is false.</exception>
     public void DropCollection(string collectionName, bool deleteDocuments = false)
     {
         lock (_ddlLock)
@@ -630,6 +709,10 @@ public class GaldrDb : IDisposable
         }
     }
 
+    /// <summary>
+    /// Detects collections and indexes in the database that are not registered with any type.
+    /// </summary>
+    /// <returns>Information about orphaned collections and indexes.</returns>
     public OrphanedSchemaInfo GetOrphanedSchema()
     {
         List<string> orphanedCollections = new List<string>();
@@ -686,6 +769,11 @@ public class GaldrDb : IDisposable
         return new OrphanedSchemaInfo(orphanedCollections, orphanedIndexes);
     }
 
+    /// <summary>
+    /// Removes orphaned collections and indexes from the database.
+    /// </summary>
+    /// <param name="deleteDocuments">If true, deletes documents in orphaned collections.</param>
+    /// <returns>Information about what was cleaned up.</returns>
     public OrphanedSchemaInfo CleanupOrphanedSchema(bool deleteDocuments = false)
     {
         OrphanedSchemaInfo orphans = GetOrphanedSchema();
@@ -708,6 +796,12 @@ public class GaldrDb : IDisposable
 
     #region Type-Safe CRUD Operations
 
+    /// <summary>
+    /// Inserts a document and returns its assigned ID.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="document">The document to insert.</param>
+    /// <returns>The assigned document ID.</returns>
     public int Insert<T>(T document)
     {
         using (Transaction tx = BeginTransaction())
@@ -718,6 +812,12 @@ public class GaldrDb : IDisposable
         }
     }
 
+    /// <summary>
+    /// Gets a document by its ID.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="id">The document ID.</param>
+    /// <returns>The document, or default if not found.</returns>
     public T GetById<T>(int id)
     {
         using (Transaction tx = BeginReadOnlyTransaction())
@@ -728,6 +828,12 @@ public class GaldrDb : IDisposable
         }
     }
 
+    /// <summary>
+    /// Updates an existing document.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="document">The document with updated values.</param>
+    /// <returns>True if the document was found and updated, false otherwise.</returns>
     public bool Update<T>(T document)
     {
         using (Transaction tx = BeginTransaction())
@@ -738,6 +844,12 @@ public class GaldrDb : IDisposable
         }
     }
 
+    /// <summary>
+    /// Deletes a document by its ID.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="id">The document ID.</param>
+    /// <returns>True if the document was found and deleted, false otherwise.</returns>
     public bool Delete<T>(int id)
     {
         using (Transaction tx = BeginTransaction())
@@ -748,6 +860,11 @@ public class GaldrDb : IDisposable
         }
     }
 
+    /// <summary>
+    /// Creates a query builder for the specified document type.
+    /// </summary>
+    /// <typeparam name="T">The document type to query.</typeparam>
+    /// <returns>A query builder for constructing and executing queries.</returns>
     public QueryBuilder<T> Query<T>()
     {
         Transaction tx = BeginReadOnlyTransaction();
@@ -770,6 +887,13 @@ public class GaldrDb : IDisposable
 
     #region Async Type-Safe CRUD Operations
 
+    /// <summary>
+    /// Asynchronously inserts a document and returns its assigned ID.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="document">The document to insert.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The assigned document ID.</returns>
     public async Task<int> InsertAsync<T>(T document, CancellationToken cancellationToken = default)
     {
         using (Transaction tx = BeginTransaction())
@@ -780,6 +904,13 @@ public class GaldrDb : IDisposable
         }
     }
 
+    /// <summary>
+    /// Asynchronously gets a document by its ID.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="id">The document ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The document, or default if not found.</returns>
     public async Task<T> GetByIdAsync<T>(int id, CancellationToken cancellationToken = default)
     {
         using (Transaction tx = BeginReadOnlyTransaction())
@@ -790,6 +921,13 @@ public class GaldrDb : IDisposable
         }
     }
 
+    /// <summary>
+    /// Asynchronously updates an existing document.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="document">The document with updated values.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if the document was found and updated, false otherwise.</returns>
     public async Task<bool> UpdateAsync<T>(T document, CancellationToken cancellationToken = default)
     {
         using (Transaction tx = BeginTransaction())
@@ -800,6 +938,13 @@ public class GaldrDb : IDisposable
         }
     }
 
+    /// <summary>
+    /// Asynchronously deletes a document by its ID.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="id">The document ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if the document was found and deleted, false otherwise.</returns>
     public async Task<bool> DeleteAsync<T>(int id, CancellationToken cancellationToken = default)
     {
         using (Transaction tx = BeginTransaction())

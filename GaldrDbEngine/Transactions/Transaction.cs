@@ -11,6 +11,10 @@ using GaldrJson;
 
 namespace GaldrDbEngine.Transactions;
 
+/// <summary>
+/// Represents a database transaction with snapshot isolation.
+/// Must be committed or disposed when complete.
+/// </summary>
 public class Transaction : IDisposable
 {
     private readonly GaldrDb _db;
@@ -24,8 +28,19 @@ public class Transaction : IDisposable
     private bool _disposed;
     private bool _hasActiveWalTransaction;
 
+    /// <summary>
+    /// The unique transaction identifier.
+    /// </summary>
     public TxId TxId { get; }
+
+    /// <summary>
+    /// The snapshot transaction ID that determines visibility of data.
+    /// </summary>
     public TxId SnapshotTxId { get; }
+
+    /// <summary>
+    /// The current state of the transaction.
+    /// </summary>
     public TransactionState State { get; private set; }
 
     internal Transaction(
@@ -52,16 +67,27 @@ public class Transaction : IDisposable
         _disposed = false;
     }
 
+    /// <summary>
+    /// Whether this is a read-only transaction.
+    /// </summary>
     public bool IsReadOnly
     {
         get { return _isReadOnly; }
     }
 
+    /// <summary>
+    /// Number of pending writes in this transaction.
+    /// </summary>
     public int WriteSetCount
     {
         get { return _writeSet.Count; }
     }
 
+    /// <summary>
+    /// Creates a query builder for the specified document type within this transaction.
+    /// </summary>
+    /// <typeparam name="T">The document type to query.</typeparam>
+    /// <returns>A query builder for constructing and executing queries.</returns>
     public QueryBuilder<T> Query<T>()
     {
         EnsureActive();
@@ -97,10 +123,16 @@ public class Transaction : IDisposable
         return queryBuilder;
     }
 
+    /// <summary>
+    /// Gets a document by its ID within this transaction's snapshot.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="id">The document ID.</param>
+    /// <returns>The document, or default if not found.</returns>
     public T GetById<T>(int id)
     {
         GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
-        
+
         EnsureActive();
 
         T result = default(T);
@@ -131,6 +163,13 @@ public class Transaction : IDisposable
         return result;
     }
 
+    /// <summary>
+    /// Inserts a document and returns its assigned ID.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="document">The document to insert.</param>
+    /// <returns>The assigned document ID.</returns>
+    /// <exception cref="WriteConflictException">Thrown if a document with the same ID already exists.</exception>
     public int Insert<T>(T document)
     {
         GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
@@ -194,10 +233,17 @@ public class Transaction : IDisposable
         }
     }
 
+    /// <summary>
+    /// Updates an existing document.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="document">The document with updated values.</param>
+    /// <returns>True if the document was found and updated, false otherwise.</returns>
+    /// <exception cref="WriteConflictException">Thrown if the document was modified by a concurrent transaction.</exception>
     public bool Update<T>(T document)
     {
         GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
-        
+
         EnsureActive();
         EnsureWritable();
 
@@ -293,6 +339,13 @@ public class Transaction : IDisposable
         return exists;
     }
 
+    /// <summary>
+    /// Deletes a document by its ID.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="id">The document ID.</param>
+    /// <returns>True if the document was found and deleted, false otherwise.</returns>
+    /// <exception cref="WriteConflictException">Thrown if the document was modified by a concurrent transaction.</exception>
     public bool Delete<T>(int id)
     {
         GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
@@ -370,6 +423,10 @@ public class Transaction : IDisposable
         return exists;
     }
 
+    /// <summary>
+    /// Commits all pending changes in this transaction.
+    /// </summary>
+    /// <exception cref="WriteConflictException">Thrown if a concurrent transaction modified documents in the write set.</exception>
     public void Commit()
     {
         EnsureActive();
@@ -442,6 +499,9 @@ public class Transaction : IDisposable
         }
     }
 
+    /// <summary>
+    /// Rolls back all pending changes and aborts this transaction.
+    /// </summary>
     public void Rollback()
     {
         if (State != TransactionState.Committed && State != TransactionState.Aborted)
@@ -459,10 +519,17 @@ public class Transaction : IDisposable
         }
     }
 
+    /// <summary>
+    /// Asynchronously gets a document by its ID within this transaction's snapshot.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="id">The document ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The document, or default if not found.</returns>
     public async Task<T> GetByIdAsync<T>(int id, CancellationToken cancellationToken = default)
     {
         GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
-        
+
         EnsureActive();
 
         T result = default(T);
@@ -493,10 +560,17 @@ public class Transaction : IDisposable
         return result;
     }
 
+    /// <summary>
+    /// Asynchronously inserts a document and returns its assigned ID.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="document">The document to insert.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The assigned document ID.</returns>
     public Task<int> InsertAsync<T>(T document, CancellationToken cancellationToken = default)
     {
         GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
-        
+
         EnsureActive();
         EnsureWritable();
 
@@ -557,6 +631,13 @@ public class Transaction : IDisposable
         }
     }
 
+    /// <summary>
+    /// Asynchronously updates an existing document.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="document">The document with updated values.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if the document was found and updated, false otherwise.</returns>
     public async Task<bool> UpdateAsync<T>(T document, CancellationToken cancellationToken = default)
     {
         GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
@@ -656,6 +737,13 @@ public class Transaction : IDisposable
         return exists;
     }
 
+    /// <summary>
+    /// Asynchronously deletes a document by its ID.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="id">The document ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if the document was found and deleted, false otherwise.</returns>
     public async Task<bool> DeleteAsync<T>(int id, CancellationToken cancellationToken = default)
     {
         GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
@@ -733,6 +821,11 @@ public class Transaction : IDisposable
         return exists;
     }
 
+    /// <summary>
+    /// Asynchronously commits all pending changes in this transaction.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="WriteConflictException">Thrown if a concurrent transaction modified documents in the write set.</exception>
     public async Task CommitAsync(CancellationToken cancellationToken = default)
     {
         EnsureActive();
@@ -804,6 +897,9 @@ public class Transaction : IDisposable
         }
     }
 
+    /// <summary>
+    /// Disposes the transaction. If not committed, the transaction is rolled back.
+    /// </summary>
     public void Dispose()
     {
         if (!_disposed)

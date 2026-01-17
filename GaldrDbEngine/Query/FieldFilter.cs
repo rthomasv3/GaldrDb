@@ -3,42 +3,60 @@ using System.Collections.Generic;
 
 namespace GaldrDbEngine.Query;
 
+/// <summary>
+/// A filter that compares a document field against a single value.
+/// </summary>
+/// <typeparam name="TDocument">The document type.</typeparam>
+/// <typeparam name="TField">The field type.</typeparam>
 public sealed class FieldFilter<TDocument, TField> : IFieldFilter
 {
     private readonly GaldrField<TDocument, TField> _field;
     private readonly FieldOp _op;
     private readonly TField _value;
 
+    /// <inheritdoc/>
     public string FieldName
     {
         get { return _field.FieldName; }
     }
 
+    /// <inheritdoc/>
     public GaldrFieldType FieldType
     {
         get { return _field.FieldType; }
     }
 
+    /// <inheritdoc/>
     public bool IsIndexed
     {
         get { return _field.IsIndexed; }
     }
 
+    /// <inheritdoc/>
     public FieldOp Operation
     {
         get { return _op; }
     }
 
+    /// <inheritdoc/>
     public Type DocumentType
     {
         get { return typeof(TDocument); }
     }
 
+    /// <summary>The value to compare against.</summary>
     public TField Value
     {
         get { return _value; }
     }
 
+    /// <summary>
+    /// Creates a new field filter.
+    /// </summary>
+    /// <param name="field">The field to filter on.</param>
+    /// <param name="op">The comparison operation.</param>
+    /// <param name="value">The value to compare against.</param>
+    /// <exception cref="ArgumentException">Thrown if the operation is invalid for the field type.</exception>
     public FieldFilter(GaldrField<TDocument, TField> field, FieldOp op, TField value)
     {
         ValidateOperation(field, op);
@@ -63,6 +81,7 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
         }
     }
 
+    /// <inheritdoc/>
     public bool Evaluate(object document)
     {
         TDocument doc = (TDocument)document;
@@ -142,11 +161,13 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
         throw new NotSupportedException($"Contains operation is only supported for string fields");
     }
 
+    /// <inheritdoc/>
     public byte[] GetIndexKeyBytes()
     {
         return IndexKeyEncoder.Encode(_value, _field.FieldType);
     }
 
+    /// <inheritdoc/>
     public byte[] GetIndexKeyEndBytes()
     {
         byte[] result = null;

@@ -1,16 +1,38 @@
 namespace GaldrDbEngine.Query;
 
+/// <summary>
+/// Provides information about how a query will be executed.
+/// </summary>
 public sealed class QueryExplanation
 {
+    /// <summary>The type of scan that will be used.</summary>
     public QueryScanType ScanType { get; }
+
+    /// <summary>A human-readable description of the scan strategy.</summary>
     public string ScanDescription { get; }
+
+    /// <summary>The indexed field being used, if any.</summary>
     public string IndexedField { get; }
+
+    /// <summary>The start of the range being scanned, if applicable.</summary>
     public string RangeStart { get; }
+
+    /// <summary>The end of the range being scanned, if applicable.</summary>
     public string RangeEnd { get; }
+
+    /// <summary>Whether the range start is inclusive.</summary>
     public bool IncludesStart { get; }
+
+    /// <summary>Whether the range end is inclusive.</summary>
     public bool IncludesEnd { get; }
+
+    /// <summary>Total number of filters in the query.</summary>
     public int TotalFilters { get; }
+
+    /// <summary>Number of filters that can be satisfied by the index.</summary>
     public int FiltersUsedByIndex { get; }
+
+    /// <summary>Number of filters that must be applied after the scan.</summary>
     public int FiltersAppliedAfterScan { get; }
 
     private QueryExplanation(
@@ -130,6 +152,7 @@ public sealed class QueryExplanation
         return result;
     }
 
+    /// <inheritdoc/>
     public override string ToString()
     {
         return ScanDescription;

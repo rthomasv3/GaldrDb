@@ -4,15 +4,24 @@ using System.Threading.Tasks;
 
 namespace GaldrDbEngine.Query;
 
+/// <summary>
+/// A query executor that operates on an in-memory collection of documents.
+/// </summary>
+/// <typeparam name="T">The document type.</typeparam>
 public sealed class InMemoryQueryExecutor<T> : IQueryExecutor<T>
 {
     private readonly IEnumerable<T> _documents;
 
+    /// <summary>
+    /// Creates a new in-memory query executor.
+    /// </summary>
+    /// <param name="documents">The collection of documents to query.</param>
     public InMemoryQueryExecutor(IEnumerable<T> documents)
     {
         _documents = documents;
     }
 
+    /// <inheritdoc/>
     public List<T> ExecuteQuery(QueryBuilder<T> query)
     {
         List<T> results = new List<T>();
@@ -51,6 +60,7 @@ public sealed class InMemoryQueryExecutor<T> : IQueryExecutor<T>
         return results;
     }
 
+    /// <inheritdoc/>
     public int ExecuteCount(QueryBuilder<T> query)
     {
         int count = 0;
@@ -76,16 +86,19 @@ public sealed class InMemoryQueryExecutor<T> : IQueryExecutor<T>
         return count;
     }
 
+    /// <inheritdoc/>
     public Task<List<T>> ExecuteQueryAsync(QueryBuilder<T> query, CancellationToken cancellationToken = default)
     {
         return Task.FromResult(ExecuteQuery(query));
     }
 
+    /// <inheritdoc/>
     public Task<int> ExecuteCountAsync(QueryBuilder<T> query, CancellationToken cancellationToken = default)
     {
         return Task.FromResult(ExecuteCount(query));
     }
 
+    /// <inheritdoc/>
     public QueryExplanation GetQueryExplanation(IReadOnlyList<IFieldFilter> filters)
     {
         QueryPlan plan = QueryPlan.FullScan();

@@ -2,8 +2,22 @@ using System;
 
 namespace GaldrDbEngine.Query;
 
+/// <summary>
+/// Extension methods for querying projection types using source document fields.
+/// </summary>
 public static class QueryBuilderExtensions
 {
+    /// <summary>
+    /// Adds a filter using a source document field.
+    /// </summary>
+    /// <typeparam name="T">The projection type.</typeparam>
+    /// <typeparam name="TSource">The source document type.</typeparam>
+    /// <typeparam name="TField">The field type.</typeparam>
+    /// <param name="builder">The query builder.</param>
+    /// <param name="field">The source field to filter on.</param>
+    /// <param name="op">The comparison operation.</param>
+    /// <param name="value">The value to compare against.</param>
+    /// <returns>The query builder for chaining.</returns>
     public static QueryBuilder<T> Where<T, TSource, TField>(
         this QueryBuilder<T> builder,
         GaldrField<TSource, TField> field,
@@ -15,6 +29,17 @@ public static class QueryBuilderExtensions
         return builder;
     }
 
+    /// <summary>
+    /// Adds a between filter using a source document field.
+    /// </summary>
+    /// <typeparam name="T">The projection type.</typeparam>
+    /// <typeparam name="TSource">The source document type.</typeparam>
+    /// <typeparam name="TField">The field type.</typeparam>
+    /// <param name="builder">The query builder.</param>
+    /// <param name="field">The source field to filter on.</param>
+    /// <param name="minValue">The minimum value (inclusive).</param>
+    /// <param name="maxValue">The maximum value (inclusive).</param>
+    /// <returns>The query builder for chaining.</returns>
     public static QueryBuilder<T> WhereBetween<T, TSource, TField>(
         this QueryBuilder<T> builder,
         GaldrField<TSource, TField> field,
@@ -27,6 +52,16 @@ public static class QueryBuilderExtensions
         return builder;
     }
 
+    /// <summary>
+    /// Adds an IN filter using a source document field.
+    /// </summary>
+    /// <typeparam name="T">The projection type.</typeparam>
+    /// <typeparam name="TSource">The source document type.</typeparam>
+    /// <typeparam name="TField">The field type.</typeparam>
+    /// <param name="builder">The query builder.</param>
+    /// <param name="field">The source field to filter on.</param>
+    /// <param name="values">The values to match against.</param>
+    /// <returns>The query builder for chaining.</returns>
     public static QueryBuilder<T> WhereIn<T, TSource, TField>(
         this QueryBuilder<T> builder,
         GaldrField<TSource, TField> field,
@@ -37,6 +72,16 @@ public static class QueryBuilderExtensions
         return builder;
     }
 
+    /// <summary>
+    /// Adds a NOT IN filter using a source document field.
+    /// </summary>
+    /// <typeparam name="T">The projection type.</typeparam>
+    /// <typeparam name="TSource">The source document type.</typeparam>
+    /// <typeparam name="TField">The field type.</typeparam>
+    /// <param name="builder">The query builder.</param>
+    /// <param name="field">The source field to filter on.</param>
+    /// <param name="values">The values to exclude.</param>
+    /// <returns>The query builder for chaining.</returns>
     public static QueryBuilder<T> WhereNotIn<T, TSource, TField>(
         this QueryBuilder<T> builder,
         GaldrField<TSource, TField> field,
