@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 using GaldrDb.UnitTests.TestModels;
 using GaldrDbEngine;
 using GaldrDbEngine.Generated;
 using GaldrDbEngine.Query;
+using GaldrDbEngine.Transactions;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace GaldrDb.UnitTests;
@@ -13,7 +15,7 @@ namespace GaldrDb.UnitTests;
 public class ProjectionQueryTests
 {
     private string _testDbPath;
-    private GaldrDb.UnitTests.TestModels.Person[] _testPeople;
+    private Person[] _testPeople;
 
     [TestInitialize]
     public void Setup()
@@ -49,7 +51,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (GaldrDbEngine.Transactions.Transaction tx = db.BeginTransaction())
+            using (Transaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -74,7 +76,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (GaldrDbEngine.Transactions.Transaction tx = db.BeginTransaction())
+            using (Transaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -98,7 +100,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (GaldrDbEngine.Transactions.Transaction tx = db.BeginTransaction())
+            using (Transaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -121,7 +123,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (GaldrDbEngine.Transactions.Transaction tx = db.BeginTransaction())
+            using (Transaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -144,7 +146,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (GaldrDbEngine.Transactions.Transaction tx = db.BeginTransaction())
+            using (Transaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -168,7 +170,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (GaldrDbEngine.Transactions.Transaction tx = db.BeginTransaction())
+            using (Transaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -195,7 +197,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (GaldrDbEngine.Transactions.Transaction tx = db.BeginTransaction())
+            using (Transaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -238,7 +240,7 @@ public class ProjectionQueryTests
         {
             int personId = db.Insert(new Person { Name = "Original", Age = 25, Email = "orig@example.com" });
 
-            using (GaldrDbEngine.Transactions.Transaction tx = db.BeginTransaction())
+            using (Transaction tx = db.BeginTransaction())
             {
                 Person person = tx.GetById<Person>(personId);
                 person.Name = "Updated";
@@ -260,13 +262,13 @@ public class ProjectionQueryTests
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
             int personId;
-            using (GaldrDbEngine.Transactions.Transaction tx = db.BeginTransaction())
+            using (Transaction tx = db.BeginTransaction())
             {
                 personId = tx.Insert(new Person { Name = "ToDelete", Age = 25, Email = "del@example.com" });
                 tx.Commit();
             }
 
-            using (GaldrDbEngine.Transactions.Transaction tx = db.BeginTransaction())
+            using (Transaction tx = db.BeginTransaction())
             {
                 tx.Delete<Person>(personId);
 
@@ -282,7 +284,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (GaldrDbEngine.Transactions.Transaction tx = db.BeginTransaction())
+            using (Transaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -305,7 +307,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (GaldrDbEngine.Transactions.Transaction tx = db.BeginTransaction())
+            using (Transaction tx = db.BeginTransaction())
             {
                 tx.Insert(new Person { Name = "Alice", Age = 30, Email = "alice@example.com" });
                 tx.Commit();
@@ -324,7 +326,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (GaldrDbEngine.Transactions.Transaction tx = db.BeginTransaction())
+            using (Transaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -346,7 +348,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (GaldrDbEngine.Transactions.Transaction tx = db.BeginTransaction())
+            using (Transaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -373,7 +375,7 @@ public class ProjectionQueryTests
         // Test combining source field filters (PersonMeta) and projection field filters (PersonSummaryMeta)
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (GaldrDbEngine.Transactions.Transaction tx = db.BeginTransaction())
+            using (Transaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -403,7 +405,7 @@ public class ProjectionQueryTests
         // combined with a projection field filter
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (GaldrDbEngine.Transactions.Transaction tx = db.BeginTransaction())
+            using (Transaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -420,6 +422,157 @@ public class ProjectionQueryTests
 
             Assert.HasCount(1, results);
             Assert.AreEqual("Charlie", results[0].Name);
+        }
+    }
+
+    [TestMethod]
+    public void Count_ProjectionUnfiltered_ReturnsCorrectCount()
+    {
+        using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
+        {
+            using (Transaction tx = db.BeginTransaction())
+            {
+                foreach (Person person in _testPeople)
+                {
+                    tx.Insert(person);
+                }
+                tx.Commit();
+            }
+
+            int count = db.Query<PersonSummary>().Count();
+
+            Assert.AreEqual(5, count);
+        }
+    }
+
+    [TestMethod]
+    public void Count_ProjectionWithSourceFilterOnly_ReturnsCorrectCount()
+    {
+        using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
+        {
+            using (Transaction tx = db.BeginTransaction())
+            {
+                foreach (Person person in _testPeople)
+                {
+                    tx.Insert(person);
+                }
+                tx.Commit();
+            }
+
+            int count = db.Query<PersonSummary>()
+                .Where(PersonMeta.Age, FieldOp.GreaterThanOrEqual, 30)
+                .Count();
+
+            Assert.AreEqual(3, count);
+        }
+    }
+
+    [TestMethod]
+    public void Count_ProjectionWithProjectionFilterOnly_ReturnsCorrectCount()
+    {
+        using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
+        {
+            using (Transaction tx = db.BeginTransaction())
+            {
+                foreach (Person person in _testPeople)
+                {
+                    tx.Insert(person);
+                }
+                tx.Commit();
+            }
+
+            int count = db.Query<PersonSummary>()
+                .Where(PersonSummaryMeta.Name, FieldOp.StartsWith, "A")
+                .Count();
+
+            Assert.AreEqual(1, count);
+        }
+    }
+
+    [TestMethod]
+    public void Count_ProjectionWithMixedFilters_ReturnsCorrectCount()
+    {
+        using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
+        {
+            using (Transaction tx = db.BeginTransaction())
+            {
+                foreach (Person person in _testPeople)
+                {
+                    tx.Insert(person);
+                }
+                tx.Commit();
+            }
+
+            int count = db.Query<PersonSummary>()
+                .Where(PersonMeta.Age, FieldOp.GreaterThanOrEqual, 25)
+                .Where(PersonSummaryMeta.Name, FieldOp.Contains, "a")
+                .Count();
+
+            Assert.AreEqual(2, count);
+        }
+    }
+
+    [TestMethod]
+    public void Count_ProjectionWithWriteSetInsert_IncludesUncommittedInserts()
+    {
+        using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
+        {
+            using (Transaction tx = db.BeginTransaction())
+            {
+                tx.Insert(new Person { Name = "Alice", Age = 30, Email = "alice@example.com" });
+                tx.Insert(new Person { Name = "Bob", Age = 25, Email = "bob@example.com" });
+
+                int count = tx.Query<PersonSummary>().Count();
+
+                Assert.AreEqual(2, count);
+            }
+        }
+    }
+
+    [TestMethod]
+    public void Count_ProjectionWithWriteSetDelete_ExcludesDeletedDocuments()
+    {
+        using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
+        {
+            using (Transaction tx = db.BeginTransaction())
+            {
+                foreach (Person person in _testPeople)
+                {
+                    tx.Insert(person);
+                }
+                tx.Commit();
+            }
+
+            using (Transaction tx = db.BeginTransaction())
+            {
+                tx.Delete<Person>(1);
+
+                int count = tx.Query<PersonSummary>().Count();
+
+                Assert.AreEqual(4, count);
+            }
+        }
+    }
+
+    [TestMethod]
+    public async Task CountAsync_ProjectionWithSourceFilter_ReturnsCorrectCount()
+    {
+        using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
+        {
+            using (Transaction tx = db.BeginTransaction())
+            {
+                foreach (Person person in _testPeople)
+                {
+                    await tx.InsertAsync(person);
+                }
+                await tx.CommitAsync();
+            }
+
+            int count = await db.Query<PersonSummary>()
+                .Where(PersonMeta.Age, FieldOp.GreaterThanOrEqual, 30)
+                .CountAsync();
+
+            Assert.AreEqual(3, count);
         }
     }
 }

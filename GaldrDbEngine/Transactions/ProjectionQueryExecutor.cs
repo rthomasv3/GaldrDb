@@ -75,7 +75,54 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
 
     public int ExecuteCount(QueryBuilder<T> query)
     {
-        return ExecuteQuery(query).Count;
+        string collectionName = _projTypeInfo.CollectionName;
+        (List<IFieldFilter> sourceFilters, List<IFieldFilter> projectionFilters) = SeparateFilters(query.Filters);
+        CollectionEntry collection = _db.GetCollection(collectionName);
+        int count;
+
+        if (query.Filters.Count == 0)
+        {
+            count = GetUnfilteredCount(collectionName, collection);
+        }
+        else if (projectionFilters.Count == 0)
+        {
+            QueryPlan plan = CreateQueryPlan(collection, sourceFilters);
+            HashSet<int> countedDocIds;
+
+            if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+            {
+                (count, countedDocIds) = CountPrimaryKeyRangeScan(collectionName, plan, sourceFilters);
+            }
+            else
+            {
+                (count, countedDocIds) = CountFullScan(collectionName, sourceFilters);
+            }
+
+            int adjustment = GetWriteSetCountAdjustment(collectionName, countedDocIds, sourceFilters);
+            count += adjustment;
+        }
+        else
+        {
+            QueryPlan plan = CreateQueryPlan(collection, sourceFilters);
+            List<object> sourceDocuments;
+            HashSet<int> snapshotDocIds;
+
+            if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+            {
+                (sourceDocuments, snapshotDocIds) = ExecutePrimaryKeyRangeScan(collectionName, plan, sourceFilters);
+            }
+            else
+            {
+                (sourceDocuments, snapshotDocIds) = ExecuteFullScan(collectionName, sourceFilters);
+            }
+
+            List<object> merged = ApplyWriteSetOverlay(sourceDocuments, snapshotDocIds, sourceFilters);
+            List<T> projections = ConvertToProjections(merged);
+            List<T> filteredProjections = ApplyProjectionFilters(projections, projectionFilters);
+            count = filteredProjections.Count;
+        }
+
+        return count;
     }
 
     public async Task<List<T>> ExecuteQueryAsync(QueryBuilder<T> query, CancellationToken cancellationToken = default)
@@ -111,7 +158,54 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
 
     public async Task<int> ExecuteCountAsync(QueryBuilder<T> query, CancellationToken cancellationToken = default)
     {
-        return (await ExecuteQueryAsync(query, cancellationToken).ConfigureAwait(false)).Count;
+        string collectionName = _projTypeInfo.CollectionName;
+        (List<IFieldFilter> sourceFilters, List<IFieldFilter> projectionFilters) = SeparateFilters(query.Filters);
+        CollectionEntry collection = _db.GetCollection(collectionName);
+        int count;
+
+        if (query.Filters.Count == 0)
+        {
+            count = GetUnfilteredCount(collectionName, collection);
+        }
+        else if (projectionFilters.Count == 0)
+        {
+            QueryPlan plan = CreateQueryPlan(collection, sourceFilters);
+            HashSet<int> countedDocIds;
+
+            if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+            {
+                (count, countedDocIds) = await CountPrimaryKeyRangeScanAsync(collectionName, plan, sourceFilters, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                (count, countedDocIds) = await CountFullScanAsync(collectionName, sourceFilters, cancellationToken).ConfigureAwait(false);
+            }
+
+            int adjustment = GetWriteSetCountAdjustment(collectionName, countedDocIds, sourceFilters);
+            count += adjustment;
+        }
+        else
+        {
+            QueryPlan plan = CreateQueryPlan(collection, sourceFilters);
+            List<object> sourceDocuments;
+            HashSet<int> snapshotDocIds;
+
+            if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+            {
+                (sourceDocuments, snapshotDocIds) = await ExecutePrimaryKeyRangeScanAsync(collectionName, plan, sourceFilters, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                (sourceDocuments, snapshotDocIds) = await ExecuteFullScanAsync(collectionName, sourceFilters, cancellationToken).ConfigureAwait(false);
+            }
+
+            List<object> merged = ApplyWriteSetOverlay(sourceDocuments, snapshotDocIds, sourceFilters);
+            List<T> projections = ConvertToProjections(merged);
+            List<T> filteredProjections = ApplyProjectionFilters(projections, projectionFilters);
+            count = filteredProjections.Count;
+        }
+
+        return count;
     }
 
     public QueryExplanation GetQueryExplanation(IReadOnlyList<IFieldFilter> filters)
@@ -493,5 +587,188 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         }
 
         return results;
+    }
+
+    private int GetUnfilteredCount(string collectionName, CollectionEntry collection)
+    {
+        int count = collection?.DocumentCount ?? 0;
+
+        IReadOnlyDictionary<(string CollectionName, int DocId), WriteSetEntry> writeSet = _transaction.GetWriteSet();
+
+        foreach (KeyValuePair<(string CollectionName, int DocId), WriteSetEntry> kvp in writeSet)
+        {
+            if (kvp.Key.CollectionName == collectionName)
+            {
+                WriteSetEntry entry = kvp.Value;
+
+                if (entry.Operation == WriteOperation.Insert)
+                {
+                    count++;
+                }
+                else if (entry.Operation == WriteOperation.Delete)
+                {
+                    count--;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    private (int Count, HashSet<int> DocIds) CountFullScan(string collectionName, List<IFieldFilter> filters)
+    {
+        int count = 0;
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, filters))
+            {
+                count++;
+                docIds.Add(_projTypeInfo.GetSourceId(sourceDoc));
+            }
+        }
+
+        return (count, docIds);
+    }
+
+    private async Task<(int Count, HashSet<int> DocIds)> CountFullScanAsync(string collectionName, List<IFieldFilter> filters, CancellationToken cancellationToken)
+    {
+        int count = 0;
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, filters))
+            {
+                count++;
+                docIds.Add(_projTypeInfo.GetSourceId(sourceDoc));
+            }
+        }
+
+        return (count, docIds);
+    }
+
+    private (int Count, HashSet<int> DocIds) CountPrimaryKeyRangeScan(string collectionName, QueryPlan plan, List<IFieldFilter> filters)
+    {
+        int count = 0;
+        HashSet<int> docIds = new HashSet<int>();
+
+        int startId = plan.StartDocId ?? int.MinValue;
+        int endId = plan.EndDocId ?? int.MaxValue;
+
+        List<int> rangeDocIds = _db.SearchDocIdRange(collectionName, startId, endId, plan.IncludeStart, plan.IncludeEnd);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
+
+        List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, remainingFilters))
+            {
+                count++;
+                docIds.Add(version.DocumentId);
+            }
+        }
+
+        return (count, docIds);
+    }
+
+    private async Task<(int Count, HashSet<int> DocIds)> CountPrimaryKeyRangeScanAsync(string collectionName, QueryPlan plan, List<IFieldFilter> filters, CancellationToken cancellationToken)
+    {
+        int count = 0;
+        HashSet<int> docIds = new HashSet<int>();
+
+        int startId = plan.StartDocId ?? int.MinValue;
+        int endId = plan.EndDocId ?? int.MaxValue;
+
+        List<int> rangeDocIds = await _db.SearchDocIdRangeAsync(collectionName, startId, endId, plan.IncludeStart, plan.IncludeEnd, cancellationToken).ConfigureAwait(false);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
+
+        List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, remainingFilters))
+            {
+                count++;
+                docIds.Add(version.DocumentId);
+            }
+        }
+
+        return (count, docIds);
+    }
+
+    private int GetWriteSetCountAdjustment(string collectionName, HashSet<int> countedDocIds, List<IFieldFilter> filters)
+    {
+        int adjustment = 0;
+        IReadOnlyDictionary<(string CollectionName, int DocId), WriteSetEntry> writeSet = _transaction.GetWriteSet();
+
+        foreach (KeyValuePair<(string CollectionName, int DocId), WriteSetEntry> kvp in writeSet)
+        {
+            if (kvp.Key.CollectionName != collectionName)
+            {
+                continue;
+            }
+
+            int docId = kvp.Key.DocId;
+            WriteSetEntry entry = kvp.Value;
+
+            if (entry.Operation == WriteOperation.Delete)
+            {
+                if (countedDocIds.Contains(docId))
+                {
+                    adjustment--;
+                }
+            }
+            else if (entry.Operation == WriteOperation.Update)
+            {
+                object sourceDoc = DeserializeSourceDocument(entry.SerializedData);
+                bool nowMatches = PassesFilters(sourceDoc, filters);
+                bool wasCountedBefore = countedDocIds.Contains(docId);
+
+                if (wasCountedBefore && !nowMatches)
+                {
+                    adjustment--;
+                }
+                else if (!wasCountedBefore && nowMatches)
+                {
+                    adjustment++;
+                }
+            }
+            else if (entry.Operation == WriteOperation.Insert)
+            {
+                if (!countedDocIds.Contains(docId))
+                {
+                    object sourceDoc = DeserializeSourceDocument(entry.SerializedData);
+                    if (PassesFilters(sourceDoc, filters))
+                    {
+                        adjustment++;
+                    }
+                }
+            }
+        }
+
+        return adjustment;
     }
 }

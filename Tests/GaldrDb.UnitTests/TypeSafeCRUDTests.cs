@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 using GaldrDb.UnitTests.TestModels;
 using GaldrDbEngine;
 using GaldrDbEngine.Generated;
 using GaldrDbEngine.Query;
+using GaldrDbEngine.Transactions;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using GaldrDbInstance = GaldrDbEngine.GaldrDb;
 
@@ -766,6 +768,249 @@ public class TypeSafeCRUDTests
 
             Assert.HasCount(1, results);
             Assert.AreEqual("Bob", results[0].Name);
+        }
+    }
+
+    #endregion
+
+    #region Optimized Count Tests
+
+    [TestMethod]
+    public void Count_UnfilteredWithWriteSetInserts_IncludesUncommittedInserts()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
+
+            using (Transaction tx = db.BeginTransaction())
+            {
+                tx.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
+                tx.Insert(new Person { Name = "Diana", Age = 28, Email = "diana@example.com" });
+
+                int count = tx.Query<Person>().Count();
+
+                Assert.AreEqual(4, count);
+            }
+        }
+    }
+
+    [TestMethod]
+    public void Count_UnfilteredWithWriteSetDeletes_ExcludesDeletedDocuments()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
+            db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
+
+            using (Transaction tx = db.BeginTransaction())
+            {
+                tx.Delete<Person>(1);
+
+                int count = tx.Query<Person>().Count();
+
+                Assert.AreEqual(2, count);
+            }
+        }
+    }
+
+    [TestMethod]
+    public void Count_FilteredWithWriteSetInserts_IncludesMatchingUncommittedInserts()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
+
+            using (Transaction tx = db.BeginTransaction())
+            {
+                tx.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
+                tx.Insert(new Person { Name = "Diana", Age = 22, Email = "diana@example.com" });
+
+                int count = tx.Query<Person>()
+                    .Where(PersonMeta.Age, FieldOp.GreaterThanOrEqual, 30)
+                    .Count();
+
+                Assert.AreEqual(2, count);
+            }
+        }
+    }
+
+    [TestMethod]
+    public void Count_FilteredWithWriteSetDeletes_ExcludesDeletedMatchingDocuments()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
+            db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
+
+            using (Transaction tx = db.BeginTransaction())
+            {
+                tx.Delete<Person>(2);
+
+                int count = tx.Query<Person>()
+                    .Where(PersonMeta.Age, FieldOp.GreaterThanOrEqual, 30)
+                    .Count();
+
+                Assert.AreEqual(1, count);
+            }
+        }
+    }
+
+    [TestMethod]
+    public void Count_FilteredWithWriteSetUpdates_ReflectsUpdatedValues()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
+            db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
+
+            using (Transaction tx = db.BeginTransaction())
+            {
+                tx.Update(new Person { Id = 1, Name = "Alice", Age = 40, Email = "alice@example.com" });
+
+                int count = tx.Query<Person>()
+                    .Where(PersonMeta.Age, FieldOp.GreaterThanOrEqual, 30)
+                    .Count();
+
+                Assert.AreEqual(3, count);
+            }
+        }
+    }
+
+    [TestMethod]
+    public void Count_FilteredWithWriteSetUpdates_ExcludesNoLongerMatchingDocuments()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
+            db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
+
+            using (Transaction tx = db.BeginTransaction())
+            {
+                tx.Update(new Person { Id = 2, Name = "Bob", Age = 20, Email = "bob@example.com" });
+
+                int count = tx.Query<Person>()
+                    .Where(PersonMeta.Age, FieldOp.GreaterThanOrEqual, 30)
+                    .Count();
+
+                Assert.AreEqual(1, count);
+            }
+        }
+    }
+
+    [TestMethod]
+    public void Count_EmptyCollection_ReturnsZero()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            int count = db.Query<Person>().Count();
+
+            Assert.AreEqual(0, count);
+        }
+    }
+
+    [TestMethod]
+    public void Count_FilteredNoMatches_ReturnsZero()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
+
+            int count = db.Query<Person>()
+                .Where(PersonMeta.Age, FieldOp.GreaterThan, 100)
+                .Count();
+
+            Assert.AreEqual(0, count);
+        }
+    }
+
+    [TestMethod]
+    public async Task CountAsync_Unfiltered_ReturnsCorrectCount()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            await db.InsertAsync(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+            await db.InsertAsync(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
+            await db.InsertAsync(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
+
+            int count = await db.Query<Person>().CountAsync();
+
+            Assert.AreEqual(3, count);
+        }
+    }
+
+    [TestMethod]
+    public async Task CountAsync_Filtered_ReturnsCorrectCount()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            await db.InsertAsync(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+            await db.InsertAsync(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
+            await db.InsertAsync(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
+
+            int count = await db.Query<Person>()
+                .Where(PersonMeta.Age, FieldOp.GreaterThanOrEqual, 30)
+                .CountAsync();
+
+            Assert.AreEqual(2, count);
+        }
+    }
+
+    [TestMethod]
+    public void Count_WithIdFilter_UsesOptimizedPrimaryKeyPath()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            for (int i = 1; i <= 10; i++)
+            {
+                db.Insert(new Person { Name = $"Person {i}", Age = 20 + i, Email = $"person{i}@example.com" });
+            }
+
+            int count = db.Query<Person>()
+                .Where(PersonMeta.Id, FieldOp.GreaterThanOrEqual, 5)
+                .Where(PersonMeta.Id, FieldOp.LessThanOrEqual, 8)
+                .Count();
+
+            Assert.AreEqual(4, count);
         }
     }
 

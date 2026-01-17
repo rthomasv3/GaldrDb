@@ -63,7 +63,33 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
 
     public int ExecuteCount(QueryBuilder<T> query)
     {
-        return ExecuteQuery(query).Count;
+        string collectionName = _typeInfo.CollectionName;
+        CollectionEntry collection = _db.GetCollection(collectionName);
+        int count;
+
+        if (query.Filters.Count == 0)
+        {
+            count = GetUnfilteredCount(collectionName, collection);
+        }
+        else
+        {
+            QueryPlan plan = CreateQueryPlan(collection, query.Filters);
+            HashSet<int> countedDocIds;
+
+            if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+            {
+                (count, countedDocIds) = CountPrimaryKeyRangeScan(collectionName, plan, query.Filters);
+            }
+            else
+            {
+                (count, countedDocIds) = CountFullScan(collectionName, query.Filters);
+            }
+
+            int adjustment = GetWriteSetCountAdjustment(collectionName, countedDocIds, query.Filters);
+            count += adjustment;
+        }
+
+        return count;
     }
 
     public async Task<List<T>> ExecuteQueryAsync(QueryBuilder<T> query, CancellationToken cancellationToken = default)
@@ -92,7 +118,33 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
 
     public async Task<int> ExecuteCountAsync(QueryBuilder<T> query, CancellationToken cancellationToken = default)
     {
-        return (await ExecuteQueryAsync(query, cancellationToken).ConfigureAwait(false)).Count;
+        string collectionName = _typeInfo.CollectionName;
+        CollectionEntry collection = _db.GetCollection(collectionName);
+        int count;
+
+        if (query.Filters.Count == 0)
+        {
+            count = GetUnfilteredCount(collectionName, collection);
+        }
+        else
+        {
+            QueryPlan plan = CreateQueryPlan(collection, query.Filters);
+            HashSet<int> countedDocIds;
+
+            if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+            {
+                (count, countedDocIds) = await CountPrimaryKeyRangeScanAsync(collectionName, plan, query.Filters, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                (count, countedDocIds) = await CountFullScanAsync(collectionName, query.Filters, cancellationToken).ConfigureAwait(false);
+            }
+
+            int adjustment = GetWriteSetCountAdjustment(collectionName, countedDocIds, query.Filters);
+            count += adjustment;
+        }
+
+        return count;
     }
 
     public QueryExplanation GetQueryExplanation(IReadOnlyList<IFieldFilter> filters)
@@ -398,5 +450,184 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
         }
 
         return results;
+    }
+
+    private int GetUnfilteredCount(string collectionName, CollectionEntry collection)
+    {
+        int count = collection?.DocumentCount ?? 0;
+
+        IReadOnlyDictionary<(string CollectionName, int DocId), WriteSetEntry> writeSet = _transaction.GetWriteSet();
+
+        foreach (KeyValuePair<(string CollectionName, int DocId), WriteSetEntry> kvp in writeSet)
+        {
+            if (kvp.Key.CollectionName == collectionName)
+            {
+                WriteSetEntry entry = kvp.Value;
+
+                if (entry.Operation == WriteOperation.Insert)
+                {
+                    count++;
+                }
+                else if (entry.Operation == WriteOperation.Delete)
+                {
+                    count--;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    private (int Count, HashSet<int> DocIds) CountFullScan(string collectionName, IReadOnlyList<IFieldFilter> filters)
+    {
+        int count = 0;
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+            T document = _jsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(jsonBytes), _jsonOptions);
+
+            if (PassesFilters(document, filters))
+            {
+                count++;
+                docIds.Add(_typeInfo.IdGetter(document));
+            }
+        }
+
+        return (count, docIds);
+    }
+
+    private async Task<(int Count, HashSet<int> DocIds)> CountFullScanAsync(string collectionName, IReadOnlyList<IFieldFilter> filters, CancellationToken cancellationToken)
+    {
+        int count = 0;
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+            T document = _jsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(jsonBytes), _jsonOptions);
+
+            if (PassesFilters(document, filters))
+            {
+                count++;
+                docIds.Add(_typeInfo.IdGetter(document));
+            }
+        }
+
+        return (count, docIds);
+    }
+
+    private (int Count, HashSet<int> DocIds) CountPrimaryKeyRangeScan(string collectionName, QueryPlan plan, IReadOnlyList<IFieldFilter> filters)
+    {
+        int count = 0;
+        HashSet<int> docIds = new HashSet<int>();
+
+        int startId = plan.StartDocId ?? int.MinValue;
+        int endId = plan.EndDocId ?? int.MaxValue;
+
+        List<int> rangeDocIds = _db.SearchDocIdRange(collectionName, startId, endId, plan.IncludeStart, plan.IncludeEnd);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
+
+        IReadOnlyList<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+            T document = _jsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(jsonBytes), _jsonOptions);
+
+            if (PassesFilters(document, remainingFilters))
+            {
+                count++;
+                docIds.Add(version.DocumentId);
+            }
+        }
+
+        return (count, docIds);
+    }
+
+    private async Task<(int Count, HashSet<int> DocIds)> CountPrimaryKeyRangeScanAsync(string collectionName, QueryPlan plan, IReadOnlyList<IFieldFilter> filters, CancellationToken cancellationToken)
+    {
+        int count = 0;
+        HashSet<int> docIds = new HashSet<int>();
+
+        int startId = plan.StartDocId ?? int.MinValue;
+        int endId = plan.EndDocId ?? int.MaxValue;
+
+        List<int> rangeDocIds = await _db.SearchDocIdRangeAsync(collectionName, startId, endId, plan.IncludeStart, plan.IncludeEnd, cancellationToken).ConfigureAwait(false);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
+
+        IReadOnlyList<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+            T document = _jsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(jsonBytes), _jsonOptions);
+
+            if (PassesFilters(document, remainingFilters))
+            {
+                count++;
+                docIds.Add(version.DocumentId);
+            }
+        }
+
+        return (count, docIds);
+    }
+
+    private int GetWriteSetCountAdjustment(string collectionName, HashSet<int> countedDocIds, IReadOnlyList<IFieldFilter> filters)
+    {
+        int adjustment = 0;
+        IReadOnlyDictionary<(string CollectionName, int DocId), WriteSetEntry> writeSet = _transaction.GetWriteSet();
+
+        foreach (KeyValuePair<(string CollectionName, int DocId), WriteSetEntry> kvp in writeSet)
+        {
+            if (kvp.Key.CollectionName != collectionName)
+            {
+                continue;
+            }
+
+            int docId = kvp.Key.DocId;
+            WriteSetEntry entry = kvp.Value;
+
+            if (entry.Operation == WriteOperation.Delete)
+            {
+                if (countedDocIds.Contains(docId))
+                {
+                    adjustment--;
+                }
+            }
+            else if (entry.Operation == WriteOperation.Update)
+            {
+                T document = DeserializeDocument(entry.SerializedData);
+                bool nowMatches = PassesFilters(document, filters);
+                bool wasCountedBefore = countedDocIds.Contains(docId);
+
+                if (wasCountedBefore && !nowMatches)
+                {
+                    adjustment--;
+                }
+                else if (!wasCountedBefore && nowMatches)
+                {
+                    adjustment++;
+                }
+            }
+            else if (entry.Operation == WriteOperation.Insert)
+            {
+                if (!countedDocIds.Contains(docId))
+                {
+                    T document = DeserializeDocument(entry.SerializedData);
+                    if (PassesFilters(document, filters))
+                    {
+                        adjustment++;
+                    }
+                }
+            }
+        }
+
+        return adjustment;
     }
 }
