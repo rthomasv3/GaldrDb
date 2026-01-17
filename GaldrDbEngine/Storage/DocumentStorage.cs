@@ -49,8 +49,7 @@ internal class DocumentStorage : IDisposable
             {
                 _pageIO.ReadPage(pageId, pageBuffer);
 
-                bool wasInitialized = IsPageInitialized(pageBuffer);
-                if (wasInitialized)
+                if (IsPageInitialized(pageBuffer))
                 {
                     DocumentPage.DeserializeTo(pageBuffer, page, _pageSize);
                 }
@@ -414,9 +413,7 @@ internal class DocumentStorage : IDisposable
 
     private bool IsPageInitialized(byte[] pageBytes)
     {
-        bool result = pageBytes[0] == PageConstants.PAGE_TYPE_DOCUMENT;
-
-        return result;
+        return pageBytes[0] == PageConstants.PAGE_TYPE_DOCUMENT;
     }
 
     public async Task<DocumentLocation> WriteDocumentAsync(byte[] documentBytes, CancellationToken cancellationToken = default)
