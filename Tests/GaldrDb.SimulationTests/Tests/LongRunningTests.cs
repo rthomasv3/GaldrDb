@@ -332,10 +332,9 @@ public class LongRunningTests
 
         int totalOperations = 0;
         int crashCount = 0;
-        DateTime startTime = DateTime.UtcNow;
-        TimeSpan maxDuration = TimeSpan.FromSeconds(10);
+        int iterations = 400;
 
-        while (DateTime.UtcNow - startTime < maxDuration)
+        for (int i = 0; i < iterations; i++)
         {
             runner.Run();
             totalOperations += config.OperationCount;

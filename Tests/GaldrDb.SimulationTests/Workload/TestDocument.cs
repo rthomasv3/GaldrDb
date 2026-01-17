@@ -25,7 +25,7 @@ public class TestDocument
             Id = 0, // Will be assigned by database
             Name = GenerateRandomString(rng, 10, 50),
             Counter = rng.Next(0, 10000),
-            CreatedAt = DateTime.UtcNow.AddDays(-rng.Next(0, 365)),
+            CreatedAt = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddDays(rng.Next(0, 365)),
             Category = categories[rng.Next(categories.Length)]
         };
 
