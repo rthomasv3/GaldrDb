@@ -22,7 +22,8 @@ public class Transaction : IDisposable
     private readonly VersionIndex _versionIndex;
     private readonly IGaldrJsonSerializer _jsonSerializer;
     private readonly GaldrJsonOptions _jsonOptions;
-    private readonly Dictionary<(string CollectionName, int DocId), WriteSetEntry> _writeSet;
+    private readonly Dictionary<DocumentKey, WriteSetEntry> _writeSet;
+    private readonly Dictionary<DocumentKey, TxId> _readSet;
     private readonly Dictionary<string, int> _nextIdByCollection;
     private readonly bool _isReadOnly;
     private bool _disposed;
@@ -61,7 +62,8 @@ public class Transaction : IDisposable
         _isReadOnly = isReadOnly;
         _jsonSerializer = jsonSerializer;
         _jsonOptions = jsonOptions;
-        _writeSet = new Dictionary<(string CollectionName, int DocId), WriteSetEntry>();
+        _writeSet = new Dictionary<DocumentKey, WriteSetEntry>();
+        _readSet = new Dictionary<DocumentKey, TxId>();
         _nextIdByCollection = new Dictionary<string, int>();
         State = TransactionState.Active;
         _disposed = false;
@@ -137,9 +139,10 @@ public class Transaction : IDisposable
 
         T result = default(T);
         string collectionName = typeInfo.CollectionName;
+        DocumentKey key = new DocumentKey(collectionName, id);
 
         // Check write set first (read your own writes)
-        if (_writeSet.TryGetValue((collectionName, id), out WriteSetEntry entry))
+        if (_writeSet.TryGetValue(key, out WriteSetEntry entry))
         {
             if (entry.Operation != WriteOperation.Delete)
             {
@@ -157,6 +160,12 @@ public class Transaction : IDisposable
                 byte[] jsonBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
                 string jsonStr = Encoding.UTF8.GetString(jsonBytes);
                 result = _jsonSerializer.Deserialize<T>(jsonStr, _jsonOptions);
+
+                // Track this read for conflict detection at commit time
+                if (!_readSet.ContainsKey(key))
+                {
+                    _readSet[key] = visibleVersion.CreatedBy;
+                }
             }
         }
 
@@ -223,7 +232,7 @@ public class Transaction : IDisposable
                 OldIndexFields = null
             };
 
-            _writeSet[(collectionName, assignedId)] = entry;
+            _writeSet[new DocumentKey(collectionName, assignedId)] = entry;
 
             return assignedId;
         }
@@ -274,8 +283,9 @@ public class Transaction : IDisposable
         DocumentLocation? previousLocation = null;
         IReadOnlyList<IndexFieldEntry> oldIndexFields = null;
         TxId? readVersionTxId = null;
+        DocumentKey key = new DocumentKey(collectionName, id);
 
-        if (_writeSet.TryGetValue((collectionName, id), out WriteSetEntry existingEntry))
+        if (_writeSet.TryGetValue(key, out WriteSetEntry existingEntry))
         {
             if (existingEntry.Operation != WriteOperation.Delete)
             {
@@ -292,7 +302,17 @@ public class Transaction : IDisposable
             if (visibleVersion != null)
             {
                 exists = true;
-                readVersionTxId = latestVersion?.CreatedBy;
+
+                // Use the version from our read set if available (for proper conflict detection)
+                // Otherwise fall back to the visible version
+                if (_readSet.TryGetValue(key, out TxId trackedReadVersion))
+                {
+                    readVersionTxId = trackedReadVersion;
+                }
+                else
+                {
+                    readVersionTxId = visibleVersion.CreatedBy;
+                }
 
                 // Only read document if there are indexes to clean up
                 if (typeInfo.IndexedFieldNames.Count > 0)
@@ -328,7 +348,7 @@ public class Transaction : IDisposable
                     ReadVersionTxId = readVersionTxId
                 };
 
-                _writeSet[(collectionName, id)] = entry;
+                _writeSet[key] = entry;
             }
             finally
             {
@@ -372,8 +392,9 @@ public class Transaction : IDisposable
         bool exists = false;
         IReadOnlyList<IndexFieldEntry> oldIndexFields = null;
         TxId? readVersionTxId = null;
+        DocumentKey key = new DocumentKey(collectionName, id);
 
-        if (_writeSet.TryGetValue((collectionName, id), out WriteSetEntry existingEntry))
+        if (_writeSet.TryGetValue(key, out WriteSetEntry existingEntry))
         {
             if (existingEntry.Operation != WriteOperation.Delete)
             {
@@ -389,7 +410,17 @@ public class Transaction : IDisposable
             if (visibleVersion != null)
             {
                 exists = true;
-                readVersionTxId = latestVersion?.CreatedBy;
+
+                // Use the version from our read set if available (for proper conflict detection)
+                // Otherwise fall back to the visible version
+                if (_readSet.TryGetValue(key, out TxId trackedReadVersion))
+                {
+                    readVersionTxId = trackedReadVersion;
+                }
+                else
+                {
+                    readVersionTxId = visibleVersion.CreatedBy;
+                }
 
                 // Only read document if there are indexes to clean up
                 if (typeInfo.IndexedFieldNames.Count > 0)
@@ -417,7 +448,7 @@ public class Transaction : IDisposable
                 ReadVersionTxId = readVersionTxId
             };
 
-            _writeSet[(collectionName, id)] = entry;
+            _writeSet[key] = entry;
         }
 
         return exists;
@@ -448,7 +479,7 @@ public class Transaction : IDisposable
                 // Phase 1: Write all data to storage, collect version operations
                 List<VersionOperation> versionOps = new List<VersionOperation>();
 
-                foreach (KeyValuePair<(string CollectionName, int DocId), WriteSetEntry> kvp in _writeSet)
+                foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in _writeSet)
                 {
                     WriteSetEntry entry = kvp.Value;
                     DocumentLocation location;
@@ -534,9 +565,10 @@ public class Transaction : IDisposable
 
         T result = default(T);
         string collectionName = typeInfo.CollectionName;
+        DocumentKey key = new DocumentKey(collectionName, id);
 
         // Check write set first (read your own writes)
-        if (_writeSet.TryGetValue((collectionName, id), out WriteSetEntry entry))
+        if (_writeSet.TryGetValue(key, out WriteSetEntry entry))
         {
             if (entry.Operation != WriteOperation.Delete)
             {
@@ -621,7 +653,7 @@ public class Transaction : IDisposable
                 OldIndexFields = null
             };
 
-            _writeSet[(collectionName, assignedId)] = entry;
+            _writeSet[new DocumentKey(collectionName, assignedId)] = entry;
 
             return Task.FromResult(assignedId);
         }
@@ -672,8 +704,9 @@ public class Transaction : IDisposable
         DocumentLocation? previousLocation = null;
         IReadOnlyList<IndexFieldEntry> oldIndexFields = null;
         TxId? readVersionTxId = null;
+        DocumentKey key = new DocumentKey(collectionName, id);
 
-        if (_writeSet.TryGetValue((collectionName, id), out WriteSetEntry existingEntry))
+        if (_writeSet.TryGetValue(key, out WriteSetEntry existingEntry))
         {
             if (existingEntry.Operation != WriteOperation.Delete)
             {
@@ -690,7 +723,17 @@ public class Transaction : IDisposable
             if (visibleVersion != null)
             {
                 exists = true;
-                readVersionTxId = latestVersion?.CreatedBy;
+
+                // Use the version from our read set if available (for proper conflict detection)
+                // Otherwise fall back to the visible version
+                if (_readSet.TryGetValue(key, out TxId trackedReadVersion))
+                {
+                    readVersionTxId = trackedReadVersion;
+                }
+                else
+                {
+                    readVersionTxId = visibleVersion.CreatedBy;
+                }
 
                 // Only read document if there are indexes to clean up
                 if (typeInfo.IndexedFieldNames.Count > 0)
@@ -726,7 +769,7 @@ public class Transaction : IDisposable
                     ReadVersionTxId = readVersionTxId
                 };
 
-                _writeSet[(collectionName, id)] = entry;
+                _writeSet[key] = entry;
             }
             finally
             {
@@ -770,8 +813,9 @@ public class Transaction : IDisposable
         bool exists = false;
         IReadOnlyList<IndexFieldEntry> oldIndexFields = null;
         TxId? readVersionTxId = null;
+        DocumentKey key = new DocumentKey(collectionName, id);
 
-        if (_writeSet.TryGetValue((collectionName, id), out WriteSetEntry existingEntry))
+        if (_writeSet.TryGetValue(key, out WriteSetEntry existingEntry))
         {
             if (existingEntry.Operation != WriteOperation.Delete)
             {
@@ -787,7 +831,17 @@ public class Transaction : IDisposable
             if (visibleVersion != null)
             {
                 exists = true;
-                readVersionTxId = latestVersion?.CreatedBy;
+
+                // Use the version from our read set if available (for proper conflict detection)
+                // Otherwise fall back to the visible version
+                if (_readSet.TryGetValue(key, out TxId trackedReadVersion))
+                {
+                    readVersionTxId = trackedReadVersion;
+                }
+                else
+                {
+                    readVersionTxId = visibleVersion.CreatedBy;
+                }
 
                 // Only read document if there are indexes to clean up
                 if (typeInfo.IndexedFieldNames.Count > 0)
@@ -815,7 +869,7 @@ public class Transaction : IDisposable
                 ReadVersionTxId = readVersionTxId
             };
 
-            _writeSet[(collectionName, id)] = entry;
+            _writeSet[key] = entry;
         }
 
         return exists;
@@ -847,7 +901,7 @@ public class Transaction : IDisposable
                 // Phase 1: Write all data to storage, collect version operations
                 List<VersionOperation> versionOps = new List<VersionOperation>();
 
-                foreach (KeyValuePair<(string CollectionName, int DocId), WriteSetEntry> kvp in _writeSet)
+                foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in _writeSet)
                 {
                     WriteSetEntry entry = kvp.Value;
                     DocumentLocation location;
@@ -913,9 +967,18 @@ public class Transaction : IDisposable
         }
     }
 
-    internal IReadOnlyDictionary<(string CollectionName, int DocId), WriteSetEntry> GetWriteSet()
+    internal IReadOnlyDictionary<DocumentKey, WriteSetEntry> GetWriteSet()
     {
         return _writeSet;
+    }
+
+    internal void RecordRead(string collectionName, int docId, TxId versionCreatedBy)
+    {
+        DocumentKey key = new DocumentKey(collectionName, docId);
+        if (!_readSet.ContainsKey(key))
+        {
+            _readSet[key] = versionCreatedBy;
+        }
     }
 
     private void EnsureActive()

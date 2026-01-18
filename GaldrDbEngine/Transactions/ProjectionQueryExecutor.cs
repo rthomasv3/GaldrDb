@@ -259,6 +259,7 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
             {
                 results.Add(sourceDoc);
                 docIds.Add(version.DocumentId);
+                _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
             }
         }
 
@@ -288,6 +289,7 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
             {
                 results.Add(sourceDoc);
                 docIds.Add(version.DocumentId);
+                _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
             }
         }
 
@@ -310,7 +312,8 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
             if (PassesFilters(sourceDoc, filters))
             {
                 results.Add(sourceDoc);
-                docIds.Add(_projTypeInfo.GetSourceId(sourceDoc));
+                docIds.Add(version.DocumentId);
+                _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
             }
         }
 
@@ -333,7 +336,8 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
             if (PassesFilters(sourceDoc, filters))
             {
                 results.Add(sourceDoc);
-                docIds.Add(_projTypeInfo.GetSourceId(sourceDoc));
+                docIds.Add(version.DocumentId);
+                _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
             }
         }
 
@@ -370,12 +374,12 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
     private List<object> ApplyWriteSetOverlay(List<object> snapshotResults, HashSet<int> snapshotDocIds, List<IFieldFilter> filters)
     {
         string collectionName = _projTypeInfo.CollectionName;
-        IReadOnlyDictionary<(string CollectionName, int DocId), WriteSetEntry> writeSet = _transaction.GetWriteSet();
+        IReadOnlyDictionary<DocumentKey, WriteSetEntry> writeSet = _transaction.GetWriteSet();
 
         HashSet<int> idsToRemove = new HashSet<int>();
         List<object> documentsToAdd = new List<object>();
 
-        foreach (KeyValuePair<(string CollectionName, int DocId), WriteSetEntry> kvp in writeSet)
+        foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in writeSet)
         {
             if (kvp.Key.CollectionName != collectionName)
             {
@@ -593,9 +597,9 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
     {
         int count = collection?.DocumentCount ?? 0;
 
-        IReadOnlyDictionary<(string CollectionName, int DocId), WriteSetEntry> writeSet = _transaction.GetWriteSet();
+        IReadOnlyDictionary<DocumentKey, WriteSetEntry> writeSet = _transaction.GetWriteSet();
 
-        foreach (KeyValuePair<(string CollectionName, int DocId), WriteSetEntry> kvp in writeSet)
+        foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in writeSet)
         {
             if (kvp.Key.CollectionName == collectionName)
             {
@@ -722,9 +726,9 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
     private int GetWriteSetCountAdjustment(string collectionName, HashSet<int> countedDocIds, List<IFieldFilter> filters)
     {
         int adjustment = 0;
-        IReadOnlyDictionary<(string CollectionName, int DocId), WriteSetEntry> writeSet = _transaction.GetWriteSet();
+        IReadOnlyDictionary<DocumentKey, WriteSetEntry> writeSet = _transaction.GetWriteSet();
 
-        foreach (KeyValuePair<(string CollectionName, int DocId), WriteSetEntry> kvp in writeSet)
+        foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in writeSet)
         {
             if (kvp.Key.CollectionName != collectionName)
             {
