@@ -1788,21 +1788,20 @@ public class GaldrDb : IDisposable
             throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
         }
 
+        if (oldIndexFields != null && oldIndexFields.Count > 0)
+        {
+            DeleteFromIndexesInternal(collection, docId, oldIndexFields);
+        }
+
         int order = CalculateBTreeOrder(_options.PageSize);
         BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
-        DocumentLocation? location = btree.Search(docId);
 
-        if (location != null)
+        // Note: We do NOT delete the document from storage for MVCC.
+        // Old versions must remain readable until garbage collection.
+        bool deleted = btree.Delete(docId);
+
+        if (deleted)
         {
-            if (oldIndexFields != null && oldIndexFields.Count > 0)
-            {
-                DeleteFromIndexesInternal(collection, docId, oldIndexFields);
-            }
-
-            // Note: We do NOT delete the document from storage for MVCC.
-            // Old versions must remain readable until garbage collection.
-            btree.Delete(docId);
-
             int newRootPageId = btree.GetRootPageId();
             if (newRootPageId != collection.RootPage)
             {
@@ -1810,7 +1809,6 @@ public class GaldrDb : IDisposable
             }
 
             collection.DocumentCount--;
-            _collectionsMetadata.UpdateCollection(collection);
             WriteCollectionsMetadataWithGrowth();
         }
     }
@@ -1965,21 +1963,20 @@ public class GaldrDb : IDisposable
             throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
         }
 
+        if (oldIndexFields != null && oldIndexFields.Count > 0)
+        {
+            DeleteFromIndexesInternal(collection, docId, oldIndexFields);
+        }
+
         int order = CalculateBTreeOrder(_options.PageSize);
         BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
-        DocumentLocation? location = await btree.SearchAsync(docId, cancellationToken).ConfigureAwait(false);
 
-        if (location != null)
+        // Note: We do NOT delete the document from storage for MVCC.
+        // Old versions must remain readable until garbage collection.
+        bool deleted = await btree.DeleteAsync(docId, cancellationToken).ConfigureAwait(false);
+
+        if (deleted)
         {
-            if (oldIndexFields != null && oldIndexFields.Count > 0)
-            {
-                DeleteFromIndexesInternal(collection, docId, oldIndexFields);
-            }
-
-            // Note: We do NOT delete the document from storage for MVCC.
-            // Old versions must remain readable until garbage collection.
-            await btree.DeleteAsync(docId, cancellationToken).ConfigureAwait(false);
-
             int newRootPageId = btree.GetRootPageId();
             if (newRootPageId != collection.RootPage)
             {
@@ -1987,7 +1984,6 @@ public class GaldrDb : IDisposable
             }
 
             collection.DocumentCount--;
-            _collectionsMetadata.UpdateCollection(collection);
             WriteCollectionsMetadataWithGrowth();
         }
     }
