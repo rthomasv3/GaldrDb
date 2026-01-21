@@ -321,7 +321,8 @@ internal class PageManager
 
         if (newTotalPages > bitmapCapacity || newTotalPages > fsmCapacity)
         {
-            throw new InvalidOperationException("File expansion would exceed bitmap/FSM capacity");
+            GrowBitmapAndFsm(newTotalPages, maxPagesPerBitmapPage, maxPagesPerFsmPage);
+            oldTotalPages = _header.TotalPageCount;
         }
 
         byte[] emptyPage = new byte[_pageSize];
@@ -337,13 +338,97 @@ internal class PageManager
         _bitmap.Resize(newTotalPages);
         _fsm.Resize(newTotalPages);
 
-        // for (int pageId = oldTotalPages; pageId < newTotalPages; pageId++)
-        // {
-        //     _fsm.SetFreeSpaceLevel(pageId, FreeSpaceLevel.High);
-        // }
-
         _bitmap.WriteToDisk();
         _fsm.WriteToDisk();
+    }
+
+    private void GrowBitmapAndFsm(int requiredTotalPages, int maxPagesPerBitmapPage, int maxPagesPerFsmPage)
+    {
+        int currentBitmapPages = _header.BitmapPageCount;
+        int currentFsmPages = _header.FsmPageCount;
+
+        int neededBitmapPages = (requiredTotalPages + maxPagesPerBitmapPage - 1) / maxPagesPerBitmapPage;
+        int neededFsmPages = (requiredTotalPages + maxPagesPerFsmPage - 1) / maxPagesPerFsmPage;
+
+        int additionalBitmapPages = Math.Max(0, neededBitmapPages - currentBitmapPages);
+        int additionalFsmPages = Math.Max(0, neededFsmPages - currentFsmPages);
+
+        if (additionalBitmapPages > 0 || additionalFsmPages > 0)
+        {
+            int oldBitmapStart = _header.BitmapStartPage;
+            int oldFsmStart = _header.FsmStartPage;
+
+            int totalNewMetaPages = neededBitmapPages + neededFsmPages;
+            int oldTotalPages = _header.TotalPageCount;
+            int newStartForMeta = oldTotalPages;
+
+            int expandedTotalPages = oldTotalPages + totalNewMetaPages;
+            byte[] emptyPage = new byte[_pageSize];
+            for (int pageId = oldTotalPages; pageId < expandedTotalPages; pageId++)
+            {
+                _pageIO.WritePage(pageId, emptyPage);
+            }
+
+            int newBitmapStart = newStartForMeta;
+            int newFsmStart = newStartForMeta + neededBitmapPages;
+
+            byte[] pageBuffer = BufferPool.Rent(_pageSize);
+            try
+            {
+                for (int i = 0; i < currentBitmapPages; i++)
+                {
+                    _pageIO.ReadPage(oldBitmapStart + i, pageBuffer);
+                    _pageIO.WritePage(newBitmapStart + i, pageBuffer);
+                }
+
+                for (int i = 0; i < currentFsmPages; i++)
+                {
+                    _pageIO.ReadPage(oldFsmStart + i, pageBuffer);
+                    _pageIO.WritePage(newFsmStart + i, pageBuffer);
+                }
+            }
+            finally
+            {
+                BufferPool.Return(pageBuffer);
+            }
+
+            _bitmap.SetPageAllocation(newBitmapStart, neededBitmapPages);
+            _fsm.SetPageAllocation(newFsmStart, neededFsmPages);
+
+            _header.BitmapStartPage = newBitmapStart;
+            _header.BitmapPageCount = neededBitmapPages;
+            _header.FsmStartPage = newFsmStart;
+            _header.FsmPageCount = neededFsmPages;
+            _header.TotalPageCount = expandedTotalPages;
+
+            byte[] headerBytes = _header.Serialize(_pageSize);
+            _pageIO.WritePage(0, headerBytes);
+
+            _bitmap.Resize(expandedTotalPages);
+            _fsm.Resize(expandedTotalPages);
+
+            for (int i = 0; i < currentBitmapPages; i++)
+            {
+                _bitmap.DeallocatePage(oldBitmapStart + i);
+                _fsm.SetFreeSpaceLevel(oldBitmapStart + i, FreeSpaceLevel.High);
+            }
+            for (int i = 0; i < currentFsmPages; i++)
+            {
+                _bitmap.DeallocatePage(oldFsmStart + i);
+                _fsm.SetFreeSpaceLevel(oldFsmStart + i, FreeSpaceLevel.High);
+            }
+
+            for (int i = 0; i < neededBitmapPages; i++)
+            {
+                _bitmap.AllocatePage(newBitmapStart + i);
+                _fsm.SetFreeSpaceLevel(newBitmapStart + i, FreeSpaceLevel.None);
+            }
+            for (int i = 0; i < neededFsmPages; i++)
+            {
+                _bitmap.AllocatePage(newFsmStart + i);
+                _fsm.SetFreeSpaceLevel(newFsmStart + i, FreeSpaceLevel.None);
+            }
+        }
     }
 
     private int CalculateExpansionSize(int currentPageCount)

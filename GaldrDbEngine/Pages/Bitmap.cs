@@ -9,8 +9,8 @@ namespace GaldrDbEngine.Pages;
 internal class Bitmap
 {
     private IPageIO _pageIO;
-    private readonly int _startPage;
-    private readonly int _pageCount;
+    private int _startPage;
+    private int _pageCount;
     private readonly int _pageSize;
     private int _totalPages;
     private byte[] _bitmap;
@@ -26,10 +26,26 @@ internal class Bitmap
         int bitmapSizeBytes = (totalPages + 7) / 8;
         _bitmap = new byte[bitmapSizeBytes];
     }
-    
+
+    public int StartPage
+    {
+        get { return _startPage; }
+    }
+
+    public int PageCount
+    {
+        get { return _pageCount; }
+    }
+
     public void SetPageIO(IPageIO pageIO)
     {
         _pageIO = pageIO;
+    }
+
+    public void SetPageAllocation(int startPage, int pageCount)
+    {
+        _startPage = startPage;
+        _pageCount = pageCount;
     }
 
     public bool IsAllocated(int pageId)
