@@ -144,19 +144,18 @@ internal class MmapPageIO : IPageIO
             long requiredSize = offset + _pageSize;
             long currentFileSize = _fileStream.Length;
 
+            // SetLength should be called before writes to new pages, but handle edge case
             if (requiredSize > currentFileSize)
             {
-                long newSize = Math.Max(requiredSize, currentFileSize * 2);
-
                 _accessor?.Dispose();
                 _memoryMappedFile?.Dispose();
 
-                _fileStream.SetLength(newSize);
+                _fileStream.SetLength(requiredSize);
 
                 _memoryMappedFile = MemoryMappedFile.CreateFromFile(
                     _fileStream,
                     null,
-                    newSize,
+                    requiredSize,
                     MemoryMappedFileAccess.ReadWrite,
                     HandleInheritability.None,
                     true);
@@ -188,6 +187,36 @@ internal class MmapPageIO : IPageIO
         {
             _accessor?.Flush();
             _fileStream?.Flush();
+        }
+        finally
+        {
+            _rwLock.ExitWriteLock();
+        }
+    }
+
+    public void SetLength(long newSize)
+    {
+        _rwLock.EnterWriteLock();
+        try
+        {
+            long currentSize = _fileStream.Length;
+            if (newSize > currentSize)
+            {
+                _accessor?.Dispose();
+                _memoryMappedFile?.Dispose();
+
+                _fileStream.SetLength(newSize);
+
+                _memoryMappedFile = MemoryMappedFile.CreateFromFile(
+                    _fileStream,
+                    null,
+                    newSize,
+                    MemoryMappedFileAccess.ReadWrite,
+                    HandleInheritability.None,
+                    true);
+
+                _accessor = _memoryMappedFile.CreateViewAccessor();
+            }
         }
         finally
         {

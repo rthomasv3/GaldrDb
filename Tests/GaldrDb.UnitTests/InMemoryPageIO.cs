@@ -73,6 +73,11 @@ internal class InMemoryPageIO : IPageIO
         // No-op for in-memory storage
     }
 
+    public void SetLength(long newSize)
+    {
+        // No-op for sparse in-memory storage - pages are created on demand
+    }
+
     public void Close()
     {
         Dispose();

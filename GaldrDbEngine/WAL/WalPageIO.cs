@@ -206,6 +206,12 @@ internal class WalPageIO : IPageIO
         _innerPageIO.Flush();
     }
 
+    public void SetLength(long newSize)
+    {
+        // Delegate directly to inner IO - file extension bypasses WAL
+        _innerPageIO.SetLength(newSize);
+    }
+
     public async Task ReadPageAsync(int pageId, Memory<byte> destination, CancellationToken cancellationToken = default)
     {
         // Check shared cache first

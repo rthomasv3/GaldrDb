@@ -65,6 +65,12 @@ public class GaldrDbOptions
     /// </summary>
     public int JsonWriterPoolWarmupCount { get; set; } = 4;
 
+    /// <summary>
+    /// Number of pages to add when the database file needs to expand. Default is 256 pages.
+    /// With the default 8KB page size, this equals 2MB per expansion.
+    /// </summary>
+    public int ExpansionPageCount { get; set; } = 256;
+
     // Internal: for simulation testing only (null in production)
     internal IPageIO CustomPageIO { get; set; }
     internal Stream CustomWalStream { get; set; }

@@ -10,18 +10,16 @@ internal class PageManager
 {
     private IPageIO _pageIO;
     private readonly int _pageSize;
-    private readonly double _growthFactor;
-    private readonly int _minimumExpansion;
+    private readonly int _expansionPageCount;
     private HeaderPage _header;
     private Bitmap _bitmap;
     private FreeSpaceMap _fsm;
 
-    public PageManager(IPageIO pageIO, int pageSize, double growthFactor = 2.0, int minimumExpansion = 16)
+    public PageManager(IPageIO pageIO, int pageSize, int expansionPageCount = 256)
     {
         _pageIO = pageIO;
         _pageSize = pageSize;
-        _growthFactor = growthFactor;
-        _minimumExpansion = minimumExpansion;
+        _expansionPageCount = expansionPageCount;
     }
 
     public HeaderPage Header
@@ -151,7 +149,7 @@ internal class PageManager
             if (pageId == -1)
             {
                 int needed = count - allocated;
-                int expansionSize = Math.Max(_minimumExpansion, needed * 2);
+                int expansionSize = Math.Max(_expansionPageCount, needed);
                 Expand(expansionSize);
 
                 pageId = _bitmap.FindFreePage();
@@ -311,7 +309,7 @@ internal class PageManager
     private void Expand(int? requestedPages = null)
     {
         int oldTotalPages = _header.TotalPageCount;
-        int additionalPages = requestedPages ?? CalculateExpansionSize(oldTotalPages);
+        int additionalPages = requestedPages ?? _expansionPageCount;
         int newTotalPages = oldTotalPages + additionalPages;
 
         int maxPagesPerBitmapPage = _pageSize * 8;
@@ -325,11 +323,9 @@ internal class PageManager
             oldTotalPages = _header.TotalPageCount;
         }
 
-        byte[] emptyPage = new byte[_pageSize];
-        for (int pageId = oldTotalPages; pageId < newTotalPages; pageId++)
-        {
-            _pageIO.WritePage(pageId, emptyPage);
-        }
+        // Extend file without writing empty pages through WAL
+        long newFileSize = (long)newTotalPages * _pageSize;
+        _pageIO.SetLength(newFileSize);
 
         _header.TotalPageCount = newTotalPages;
         byte[] headerBytes = _header.Serialize(_pageSize);
@@ -363,11 +359,10 @@ internal class PageManager
             int newStartForMeta = oldTotalPages;
 
             int expandedTotalPages = oldTotalPages + totalNewMetaPages;
-            byte[] emptyPage = new byte[_pageSize];
-            for (int pageId = oldTotalPages; pageId < expandedTotalPages; pageId++)
-            {
-                _pageIO.WritePage(pageId, emptyPage);
-            }
+
+            // Extend file without writing empty pages through WAL
+            long newFileSize = (long)expandedTotalPages * _pageSize;
+            _pageIO.SetLength(newFileSize);
 
             int newBitmapStart = newStartForMeta;
             int newFsmStart = newStartForMeta + neededBitmapPages;
@@ -431,9 +426,4 @@ internal class PageManager
         }
     }
 
-    private int CalculateExpansionSize(int currentPageCount)
-    {
-        int calculated = (int)(currentPageCount * (_growthFactor - 1.0));
-        return Math.Max(_minimumExpansion, calculated);
-    }
 }

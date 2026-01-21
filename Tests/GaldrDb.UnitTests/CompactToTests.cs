@@ -255,20 +255,24 @@ public class CompactToTests
         string sourcePath = Path.Combine(_testDirectory, "source.db");
         string targetPath = Path.Combine(_testDirectory, "target.db");
 
-        using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(sourcePath, new GaldrDbOptions()))
+        // Use smaller expansion to make test faster while still exercising multiple expansions
+        GaldrDbOptions options = new GaldrDbOptions { ExpansionPageCount = 32 };
+        using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(sourcePath, options))
         {
+            // Insert enough documents to cause multiple expansions
             using (Transaction tx = db.BeginTransaction())
             {
-                for (int i = 0; i < 500; i++)
+                for (int i = 0; i < 2000; i++)
                 {
-                    tx.Insert(new Person { Name = $"Person{i} with a longer name to take up more space", Age = 20 + i, Email = $"person{i}@example.com" });
+                    tx.Insert(new Person { Name = $"Person{i} with a longer name to take up more space in the database file", Age = 20 + i, Email = $"person{i}@example.com" });
                 }
                 tx.Commit();
             }
 
+            // Delete most documents
             using (Transaction tx = db.BeginTransaction())
             {
-                for (int i = 1; i <= 400; i++)
+                for (int i = 1; i <= 1900; i++)
                 {
                     tx.Delete<Person>(i);
                 }

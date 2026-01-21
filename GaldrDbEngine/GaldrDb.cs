@@ -1192,7 +1192,7 @@ public class GaldrDb : IDisposable
         SetupIO();
         
         // always initialize the file with a valid header
-        _pageManager = new PageManager(_basePageIO, _options.PageSize);
+        _pageManager = new PageManager(_basePageIO, _options.PageSize, _options.ExpansionPageCount);
         _pageManager.Initialize();
         _pageManager.Flush();
 
@@ -1235,8 +1235,8 @@ public class GaldrDb : IDisposable
             else
             {
                 InitializeWalFile();
-                
-                _pageManager = new PageManager(_pageIO, _options.PageSize);
+
+                _pageManager = new PageManager(_pageIO, _options.PageSize, _options.ExpansionPageCount);
                 _pageManager.Load();
 
                 if (_options.PageSize == 0 || _options.PageSize != _pageManager.Header.PageSize)
@@ -1255,16 +1255,16 @@ public class GaldrDb : IDisposable
         }
         else
         {
-            _pageManager = new PageManager(_pageIO, _options.PageSize);
+            _pageManager = new PageManager(_pageIO, _options.PageSize, _options.ExpansionPageCount);
             _pageManager.Load();
 
             if (_options.PageSize == 0 || _options.PageSize != _pageManager.Header.PageSize)
             {
                 _options.PageSize = _pageManager.Header.PageSize;
             }
-            
+
             _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize);
-            
+
             _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataStartPage, _pageManager.Header.CollectionsMetadataPageCount, _pageManager.Header.PageSize);
             _collectionsMetadata.LoadFromDisk();
             
@@ -1379,14 +1379,14 @@ public class GaldrDb : IDisposable
         _walPageIO = new WalPageIO(_basePageIO, _wal, _options.PageSize);
         _pageIO = _walPageIO;
         
-        _pageManager = new PageManager(_pageIO, _options.PageSize);
+        _pageManager = new PageManager(_pageIO, _options.PageSize, _options.ExpansionPageCount);
         _pageManager.Load();
 
         if (_options.PageSize == 0 || _options.PageSize != _pageManager.Header.PageSize)
         {
             _options.PageSize = _pageManager.Header.PageSize;
         }
-        
+
         _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataStartPage, _pageManager.Header.CollectionsMetadataPageCount, _pageManager.Header.PageSize);
         _collectionsMetadata.LoadFromDisk();
 

@@ -147,6 +147,11 @@ public class SimulationPageIO : IPageIO
         _unflushedPages.Clear();
     }
 
+    public void SetLength(long newSize)
+    {
+        // No-op for simulation - pages are created on demand
+    }
+
     public void Close()
     {
         // Match real file behavior: closing flushes pending writes

@@ -9,6 +9,7 @@ namespace GaldrDbEngine.IO;
 
 internal class StandardPageIO : IPageIO
 {
+    private readonly string _filePath;
     private readonly int _pageSize;
     private readonly SafeFileHandle _fileHandle;
     private readonly AsyncReaderWriterLock _rwLock;
@@ -16,6 +17,7 @@ internal class StandardPageIO : IPageIO
 
     public StandardPageIO(string filePath, int pageSize, bool createNew)
     {
+        _filePath = filePath;
         _pageSize = pageSize;
         _rwLock = new AsyncReaderWriterLock();
         _disposed = false;
@@ -88,6 +90,19 @@ internal class StandardPageIO : IPageIO
         try
         {
             RandomAccess.FlushToDisk(_fileHandle);
+        }
+        finally
+        {
+            _rwLock.ExitWriteLock();
+        }
+    }
+
+    public void SetLength(long newSize)
+    {
+        _rwLock.EnterWriteLock();
+        try
+        {
+            RandomAccess.SetLength(_fileHandle, newSize);
         }
         finally
         {
