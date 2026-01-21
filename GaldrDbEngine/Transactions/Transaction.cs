@@ -318,9 +318,8 @@ public class Transaction : IDisposable
                 if (typeInfo.IndexedFieldNames.Count > 0)
                 {
                     byte[] docBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
-                    string json = Encoding.UTF8.GetString(docBytes);
-                    T existing = _jsonSerializer.Deserialize<T>(json, _jsonOptions);
-                    oldIndexFields = ExtractIndexFields(existing, typeInfo);
+                    CollectionEntry collection = _db.GetCollection(collectionName);
+                    oldIndexFields = IndexFieldExtractor.ExtractFromBytes(docBytes, collection.Indexes);
                 }
             }
         }
@@ -426,9 +425,8 @@ public class Transaction : IDisposable
                 if (typeInfo.IndexedFieldNames.Count > 0)
                 {
                     byte[] docBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
-                    string json = Encoding.UTF8.GetString(docBytes);
-                    T existing = _jsonSerializer.Deserialize<T>(json, _jsonOptions);
-                    oldIndexFields = ExtractIndexFields(existing, typeInfo);
+                    CollectionEntry collection = _db.GetCollection(collectionName);
+                    oldIndexFields = IndexFieldExtractor.ExtractFromBytes(docBytes, collection.Indexes);
                 }
             }
         }
@@ -739,9 +737,8 @@ public class Transaction : IDisposable
                 if (typeInfo.IndexedFieldNames.Count > 0)
                 {
                     byte[] docBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
-                    string json = Encoding.UTF8.GetString(docBytes);
-                    T existing = _jsonSerializer.Deserialize<T>(json, _jsonOptions);
-                    oldIndexFields = ExtractIndexFields(existing, typeInfo);
+                    CollectionEntry collection = _db.GetCollection(collectionName);
+                    oldIndexFields = IndexFieldExtractor.ExtractFromBytes(docBytes, collection.Indexes);
                 }
             }
         }
@@ -847,9 +844,8 @@ public class Transaction : IDisposable
                 if (typeInfo.IndexedFieldNames.Count > 0)
                 {
                     byte[] docBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
-                    string json = Encoding.UTF8.GetString(docBytes);
-                    T existing = _jsonSerializer.Deserialize<T>(json, _jsonOptions);
-                    oldIndexFields = ExtractIndexFields(existing, typeInfo);
+                    CollectionEntry collection = _db.GetCollection(collectionName);
+                    oldIndexFields = IndexFieldExtractor.ExtractFromBytes(docBytes, collection.Indexes);
                 }
             }
         }
