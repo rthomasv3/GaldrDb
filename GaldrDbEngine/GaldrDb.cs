@@ -874,6 +874,19 @@ public class GaldrDb : IDisposable
     }
 
     /// <summary>
+    /// Creates a partial update builder for updating specific fields of a document by ID.
+    /// The update is executed in an auto-committed transaction when Execute() is called.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="id">The document ID.</param>
+    /// <returns>An UpdateBuilder for chaining Set calls.</returns>
+    public UpdateBuilder<T> UpdateById<T>(int id)
+    {
+        GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
+        return new UpdateBuilder<T>(this, typeInfo, id);
+    }
+
+    /// <summary>
     /// Deletes a document by its ID.
     /// </summary>
     /// <typeparam name="T">The document type.</typeparam>

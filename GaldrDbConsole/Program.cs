@@ -88,6 +88,10 @@ class Program
                 Console.WriteLine("Running JSON document benchmarks...");
                 BenchmarkRunner.Run<JsonDocumentBenchmarks>(config);
                 break;
+            case "update":
+                Console.WriteLine("Running update comparison benchmarks...");
+                BenchmarkRunner.Run<UpdateBenchmarks>(config);
+                break;
             case "all":
                 Console.WriteLine("Running all benchmarks...");
                 BenchmarkRunner.Run<SingleOperationBenchmarks>(config);
@@ -125,6 +129,7 @@ class Program
         Console.WriteLine("  delete      Delete-only benchmarks (isolated GaldrDb delete)");
         Console.WriteLine("  serialize   Serialization comparison benchmarks");
         Console.WriteLine("  json        JSON document benchmarks (GaldrDocument vs System.Text.Json)");
+        Console.WriteLine("  update      Update comparison benchmarks (Full Update vs UpdateById)");
         Console.WriteLine("  query       Query benchmarks (Phase 2 - not yet implemented)");
         Console.WriteLine("  bulk        Bulk operation benchmarks (Phase 3 - not yet implemented)");
         Console.WriteLine("  concurrent  Concurrent operation benchmarks (Phase 4 - not yet implemented)");

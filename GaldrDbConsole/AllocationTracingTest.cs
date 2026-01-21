@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using GaldrDbConsole.Models;
 using GaldrDbEngine;
+using GaldrDbEngine.Generated;
 using GaldrDbEngine.Transactions;
 
 namespace GaldrDbConsole;
@@ -12,53 +13,104 @@ public static class AllocationTracingTest
     {
         string testDir = Path.Combine(Path.GetTempPath(), $"GaldrDbAllocTest_{Guid.NewGuid()}");
         Directory.CreateDirectory(testDir);
-        string dbPathNoIndex = Path.Combine(testDir, "test_noindex.galdr");
-        string dbPathWithIndex = Path.Combine(testDir, "test_withindex.galdr");
+        string dbPath = Path.Combine(testDir, "test.galdr");
 
         try
         {
-            Console.WriteLine("=== Secondary Index Allocation Test ===");
-            Console.WriteLine("Comparing allocations: with vs without secondary index");
+            Console.WriteLine("=== UpdateById Allocation Tracing ===");
             Console.WriteLine();
 
-            // Test 1: Without secondary index
-            Console.WriteLine("--- Test 1: Without Secondary Index ---");
-            long[] noIndexAllocs = RunInsertTest<BenchmarkPersonNoIndex>(dbPathNoIndex, "NoIndex");
-
-            // Test 2: With secondary index
-            Console.WriteLine();
-            Console.WriteLine("--- Test 2: With Secondary Index (Name field) ---");
-            long[] withIndexAllocs = RunInsertTest<BenchmarkPerson>(dbPathWithIndex, "WithIndex");
-
-            // Summary comparison
-            Console.WriteLine();
-            Console.WriteLine("=== Summary Comparison ===");
-            Console.WriteLine();
-            Console.WriteLine("Batch    | No Index    | With Index  | Difference  | Overhead");
-            Console.WriteLine("---------|-------------|-------------|-------------|----------");
-
-            for (int i = 0; i < 10; i++)
+            using (GaldrDb db = GaldrDb.Create(dbPath, new GaldrDbOptions
             {
-                long diff = withIndexAllocs[i] - noIndexAllocs[i];
-                double overhead = noIndexAllocs[i] > 0 ? (double)diff / noIndexAllocs[i] * 100 : 0;
-                Console.WriteLine($"Batch {i + 1,2} | {noIndexAllocs[i],8} B | {withIndexAllocs[i],8} B | {diff,+8} B | {overhead,6:F1}%");
-            }
-
-            Console.WriteLine();
-            long avgNoIndex = 0, avgWithIndex = 0;
-            for (int i = 0; i < 10; i++)
+                UseWal = true,
+                WarmupOnOpen = true
+            }))
             {
-                avgNoIndex += noIndexAllocs[i];
-                avgWithIndex += withIndexAllocs[i];
-            }
-            avgNoIndex /= 10;
-            avgWithIndex /= 10;
-            long avgDiff = avgWithIndex - avgNoIndex;
-            double avgOverhead = avgNoIndex > 0 ? (double)avgDiff / avgNoIndex * 100 : 0;
+                // Insert a document to update
+                int id = db.Insert(new BenchmarkPerson
+                {
+                    Name = "Test Person",
+                    Age = 30,
+                    Email = "test@example.com",
+                    Address = "123 Main St",
+                    Phone = "555-1234"
+                });
 
-            Console.WriteLine($"Average  | {avgNoIndex,8} B | {avgWithIndex,8} B | {avgDiff,+8} B | {avgOverhead,6:F1}%");
-            Console.WriteLine();
-            Console.WriteLine($"Secondary index adds ~{avgDiff:N0} bytes ({avgOverhead:F1}%) per insert on average");
+                // Warm up
+                for (int i = 0; i < 100; i++)
+                {
+                    db.UpdateById<BenchmarkPerson>(id)
+                        .Set(BenchmarkPersonMeta.Age, 31)
+                        .Execute();
+                }
+
+                // Force GC to get clean baseline
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+
+                Console.WriteLine("--- UpdateById (single field) ---");
+                long[] updateByIdAllocs = new long[10];
+                for (int batch = 0; batch < 10; batch++)
+                {
+                    long batchTotal = 0;
+                    for (int i = 0; i < 1000; i++)
+                    {
+                        long before = GC.GetAllocatedBytesForCurrentThread();
+
+                        db.UpdateById<BenchmarkPerson>(id)
+                            .Set(BenchmarkPersonMeta.Age, 31 + (i % 10))
+                            .Execute();
+
+                        long after = GC.GetAllocatedBytesForCurrentThread();
+                        batchTotal += (after - before);
+                    }
+                    updateByIdAllocs[batch] = batchTotal / 1000;
+                    Console.WriteLine($"  Batch {batch + 1}: {updateByIdAllocs[batch]} bytes/update avg");
+                }
+
+                Console.WriteLine();
+                Console.WriteLine("--- GetById + Update (single field) ---");
+                long[] fullUpdateAllocs = new long[10];
+                for (int batch = 0; batch < 10; batch++)
+                {
+                    long batchTotal = 0;
+                    for (int i = 0; i < 1000; i++)
+                    {
+                        long before = GC.GetAllocatedBytesForCurrentThread();
+
+                        BenchmarkPerson person = db.GetById<BenchmarkPerson>(id);
+                        person.Age = 31 + (i % 10);
+                        db.Update(person);
+
+                        long after = GC.GetAllocatedBytesForCurrentThread();
+                        batchTotal += (after - before);
+                    }
+                    fullUpdateAllocs[batch] = batchTotal / 1000;
+                    Console.WriteLine($"  Batch {batch + 1}: {fullUpdateAllocs[batch]} bytes/update avg");
+                }
+
+                // Summary
+                Console.WriteLine();
+                Console.WriteLine("=== Summary ===");
+                long avgUpdateById = 0, avgFullUpdate = 0;
+                for (int i = 0; i < 10; i++)
+                {
+                    avgUpdateById += updateByIdAllocs[i];
+                    avgFullUpdate += fullUpdateAllocs[i];
+                }
+                avgUpdateById /= 10;
+                avgFullUpdate /= 10;
+
+                Console.WriteLine($"UpdateById avg:     {avgUpdateById,6} bytes/update");
+                Console.WriteLine($"GetById+Update avg: {avgFullUpdate,6} bytes/update");
+                Console.WriteLine($"Difference:         {avgFullUpdate - avgUpdateById,6} bytes ({(avgFullUpdate > 0 ? (double)(avgFullUpdate - avgUpdateById) / avgFullUpdate * 100 : 0):F1}% savings)");
+
+                // Detailed breakdown using transaction
+                Console.WriteLine();
+                Console.WriteLine("=== Detailed Breakdown (with transaction) ===");
+                TraceDetailedAllocations(db, id);
+            }
         }
         finally
         {
@@ -69,69 +121,76 @@ public static class AllocationTracingTest
         }
     }
 
-    private static long[] RunInsertTest<T>(string dbPath, string label) where T : new()
+    private static void TraceDetailedAllocations(GaldrDb db, int id)
     {
-        long[] batchAllocs = new long[10];
-
-        using (GaldrDb db = GaldrDb.Create(dbPath, new GaldrDbOptions
+        // Warm up
+        for (int i = 0; i < 100; i++)
         {
-            UseWal = true,
-            WarmupOnOpen = true,
-            AutoGarbageCollection = true
-        }))
-        {
-            int batchIndex = 0;
-            long batchTotal = 0;
-
-            for (int i = 0; i < 100000; i++)
+            using (Transaction tx = db.BeginTransaction())
             {
-                T person = CreatePerson<T>(i);
-
-                long before = GC.GetAllocatedBytesForCurrentThread();
-
-                Transaction tx = db.BeginTransaction();
-                tx.Insert(person);
+                tx.UpdateById<BenchmarkPerson>(id)
+                    .Set(BenchmarkPersonMeta.Age, 31)
+                    .Execute();
                 tx.Commit();
-                tx.Dispose();
-
-                long after = GC.GetAllocatedBytesForCurrentThread();
-                batchTotal += (after - before);
-
-                if ((i + 1) % 10000 == 0 && batchIndex < 10)
-                {
-                    batchAllocs[batchIndex] = batchTotal / 10000;
-                    Console.WriteLine($"  Batch {batchIndex + 1}: {batchAllocs[batchIndex]} bytes/insert avg");
-                    batchTotal = 0;
-                    batchIndex++;
-                }
             }
         }
 
-        return batchAllocs;
-    }
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
 
-    private static T CreatePerson<T>(int index) where T : new()
-    {
-        T person = new T();
+        // Measure individual steps (average of 100 iterations)
+        long beginTxTotal = 0;
+        long updateByIdTotal = 0;
+        long setTotal = 0;
+        long executeTotal = 0;
+        long commitTotal = 0;
+        long disposeTotal = 0;
 
-        // Use reflection-free approach by checking type
-        if (person is BenchmarkPersonNoIndex noIndex)
+        int iterations = 100;
+
+        for (int i = 0; i < iterations; i++)
         {
-            noIndex.Name = $"Person {index}";
-            noIndex.Age = 25 + (index % 50);
-            noIndex.Email = $"person{index}@example.com";
-            noIndex.Address = "123 Main St";
-            noIndex.Phone = "555-1234";
-        }
-        else if (person is BenchmarkPerson withIndex)
-        {
-            withIndex.Name = $"Person {index}";
-            withIndex.Age = 25 + (index % 50);
-            withIndex.Email = $"person{index}@example.com";
-            withIndex.Address = "123 Main St";
-            withIndex.Phone = "555-1234";
+            long before, after;
+
+            before = GC.GetAllocatedBytesForCurrentThread();
+            Transaction tx = db.BeginTransaction();
+            after = GC.GetAllocatedBytesForCurrentThread();
+            beginTxTotal += (after - before);
+
+            before = GC.GetAllocatedBytesForCurrentThread();
+            UpdateBuilder<BenchmarkPerson> builder = tx.UpdateById<BenchmarkPerson>(id);
+            after = GC.GetAllocatedBytesForCurrentThread();
+            updateByIdTotal += (after - before);
+
+            before = GC.GetAllocatedBytesForCurrentThread();
+            builder.Set(BenchmarkPersonMeta.Age, 31 + (i % 10));
+            after = GC.GetAllocatedBytesForCurrentThread();
+            setTotal += (after - before);
+
+            before = GC.GetAllocatedBytesForCurrentThread();
+            builder.Execute();
+            after = GC.GetAllocatedBytesForCurrentThread();
+            executeTotal += (after - before);
+
+            before = GC.GetAllocatedBytesForCurrentThread();
+            tx.Commit();
+            after = GC.GetAllocatedBytesForCurrentThread();
+            commitTotal += (after - before);
+
+            before = GC.GetAllocatedBytesForCurrentThread();
+            tx.Dispose();
+            after = GC.GetAllocatedBytesForCurrentThread();
+            disposeTotal += (after - before);
         }
 
-        return person;
+        Console.WriteLine($"  BeginTransaction:  {beginTxTotal / iterations,6} bytes");
+        Console.WriteLine($"  UpdateById<T>():   {updateByIdTotal / iterations,6} bytes");
+        Console.WriteLine($"  Set():             {setTotal / iterations,6} bytes");
+        Console.WriteLine($"  Execute():         {executeTotal / iterations,6} bytes");
+        Console.WriteLine($"  Commit():          {commitTotal / iterations,6} bytes");
+        Console.WriteLine($"  Dispose():         {disposeTotal / iterations,6} bytes");
+        Console.WriteLine($"  --------------------------------");
+        Console.WriteLine($"  Total:             {(beginTxTotal + updateByIdTotal + setTotal + executeTotal + commitTotal + disposeTotal) / iterations,6} bytes");
     }
 }

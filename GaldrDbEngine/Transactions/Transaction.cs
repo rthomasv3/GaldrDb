@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using GaldrDbEngine.Json;
 using GaldrDbEngine.MVCC;
 using GaldrDbEngine.Query;
 using GaldrDbEngine.Storage;
@@ -356,6 +357,22 @@ public class Transaction : IDisposable
         }
 
         return exists;
+    }
+
+    /// <summary>
+    /// Creates a partial update builder for updating specific fields of a document by ID.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="id">The document ID.</param>
+    /// <returns>An UpdateBuilder for chaining Set calls.</returns>
+    public UpdateBuilder<T> UpdateById<T>(int id)
+    {
+        GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
+
+        EnsureActive();
+        EnsureWritable();
+
+        return new UpdateBuilder<T>(this, typeInfo, id);
     }
 
     /// <summary>
@@ -1016,5 +1033,283 @@ public class Transaction : IDisposable
         IndexFieldWriter writer = new IndexFieldWriter();
         typeInfo.ExtractIndexedFields(document, writer);
         return writer.GetFields();
+    }
+
+    internal bool ExecutePartialUpdate<T>(
+        GaldrTypeInfo<T> typeInfo,
+        int documentId,
+        List<FieldModification> modifications)
+    {
+        string collectionName = typeInfo.CollectionName;
+        DocumentKey key = new DocumentKey(collectionName, documentId);
+
+        // Check if document exists and get current data
+        bool exists = false;
+        byte[] existingBytes = null;
+        IReadOnlyList<IndexFieldEntry> oldIndexFields = null;
+        TxId? readVersionTxId = null;
+
+        if (_writeSet.TryGetValue(key, out WriteSetEntry existingEntry))
+        {
+            if (existingEntry.Operation != WriteOperation.Delete)
+            {
+                exists = true;
+                existingBytes = existingEntry.SerializedData;
+                oldIndexFields = existingEntry.IndexFields;
+                readVersionTxId = existingEntry.ReadVersionTxId;
+            }
+        }
+        else
+        {
+            DocumentVersion latestVersion = _versionIndex.GetLatestVersion(collectionName, documentId);
+
+            if (latestVersion != null && latestVersion.CreatedBy > SnapshotTxId)
+            {
+                throw new WriteConflictException(
+                    $"Document {collectionName}/{documentId} was modified by a concurrent transaction",
+                    collectionName,
+                    documentId,
+                    latestVersion.CreatedBy);
+            }
+
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, documentId, SnapshotTxId);
+
+            if (visibleVersion != null)
+            {
+                exists = true;
+                existingBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
+
+                if (_readSet.TryGetValue(key, out TxId trackedReadVersion))
+                {
+                    readVersionTxId = trackedReadVersion;
+                }
+                else
+                {
+                    readVersionTxId = visibleVersion.CreatedBy;
+                }
+            }
+        }
+
+        if (exists)
+        {
+            // Check if any indexed fields are being modified
+            bool hasIndexedFieldModifications = HasIndexedFieldModifications(modifications, typeInfo.IndexedFieldNames);
+
+            // Extract old index fields if needed
+            if (hasIndexedFieldModifications && oldIndexFields == null && typeInfo.IndexedFieldNames.Count > 0)
+            {
+                CollectionEntry collection = _db.GetCollection(collectionName);
+                oldIndexFields = IndexFieldExtractor.ExtractFromBytes(existingBytes, collection.Indexes);
+            }
+
+            // Parse, modify, and serialize
+            JsonDocument doc = JsonDocument.Parse(existingBytes);
+            ApplyModifications(doc, modifications);
+            byte[] newBytes = doc.ToUtf8Bytes();
+
+            // Extract new index fields
+            IReadOnlyList<IndexFieldEntry> newIndexFields;
+            if (hasIndexedFieldModifications)
+            {
+                CollectionEntry collection = _db.GetCollection(collectionName);
+                newIndexFields = IndexFieldExtractor.ExtractFromBytes(newBytes, collection.Indexes);
+            }
+            else
+            {
+                newIndexFields = oldIndexFields;
+            }
+
+            // Add to write set
+            WriteSetEntry entry = new WriteSetEntry
+            {
+                Operation = WriteOperation.Update,
+                CollectionName = collectionName,
+                DocumentId = documentId,
+                SerializedData = newBytes,
+                PreviousLocation = null,
+                NewLocation = null,
+                IndexFields = newIndexFields,
+                OldIndexFields = oldIndexFields,
+                ReadVersionTxId = readVersionTxId
+            };
+
+            _writeSet[key] = entry;
+        }
+
+        return exists;
+    }
+
+    internal async Task<bool> ExecutePartialUpdateAsync<T>(
+        GaldrTypeInfo<T> typeInfo,
+        int documentId,
+        List<FieldModification> modifications,
+        CancellationToken cancellationToken)
+    {
+        string collectionName = typeInfo.CollectionName;
+        DocumentKey key = new DocumentKey(collectionName, documentId);
+
+        // Check if document exists and get current data
+        bool exists = false;
+        byte[] existingBytes = null;
+        IReadOnlyList<IndexFieldEntry> oldIndexFields = null;
+        TxId? readVersionTxId = null;
+
+        if (_writeSet.TryGetValue(key, out WriteSetEntry existingEntry))
+        {
+            if (existingEntry.Operation != WriteOperation.Delete)
+            {
+                exists = true;
+                existingBytes = existingEntry.SerializedData;
+                oldIndexFields = existingEntry.IndexFields;
+                readVersionTxId = existingEntry.ReadVersionTxId;
+            }
+        }
+        else
+        {
+            DocumentVersion latestVersion = _versionIndex.GetLatestVersion(collectionName, documentId);
+
+            if (latestVersion != null && latestVersion.CreatedBy > SnapshotTxId)
+            {
+                throw new WriteConflictException(
+                    $"Document {collectionName}/{documentId} was modified by a concurrent transaction",
+                    collectionName,
+                    documentId,
+                    latestVersion.CreatedBy);
+            }
+
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, documentId, SnapshotTxId);
+
+            if (visibleVersion != null)
+            {
+                exists = true;
+                existingBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
+
+                if (_readSet.TryGetValue(key, out TxId trackedReadVersion))
+                {
+                    readVersionTxId = trackedReadVersion;
+                }
+                else
+                {
+                    readVersionTxId = visibleVersion.CreatedBy;
+                }
+            }
+        }
+
+        if (exists)
+        {
+            // Check if any indexed fields are being modified
+            bool hasIndexedFieldModifications = HasIndexedFieldModifications(modifications, typeInfo.IndexedFieldNames);
+
+            // Extract old index fields if needed
+            if (hasIndexedFieldModifications && oldIndexFields == null && typeInfo.IndexedFieldNames.Count > 0)
+            {
+                CollectionEntry collection = _db.GetCollection(collectionName);
+                oldIndexFields = IndexFieldExtractor.ExtractFromBytes(existingBytes, collection.Indexes);
+            }
+
+            // Parse, modify, and serialize
+            JsonDocument doc = JsonDocument.Parse(existingBytes);
+            ApplyModifications(doc, modifications);
+            byte[] newBytes = doc.ToUtf8Bytes();
+
+            // Extract new index fields
+            IReadOnlyList<IndexFieldEntry> newIndexFields;
+            if (hasIndexedFieldModifications)
+            {
+                CollectionEntry collection = _db.GetCollection(collectionName);
+                newIndexFields = IndexFieldExtractor.ExtractFromBytes(newBytes, collection.Indexes);
+            }
+            else
+            {
+                newIndexFields = oldIndexFields;
+            }
+
+            // Add to write set
+            WriteSetEntry entry = new WriteSetEntry
+            {
+                Operation = WriteOperation.Update,
+                CollectionName = collectionName,
+                DocumentId = documentId,
+                SerializedData = newBytes,
+                PreviousLocation = null,
+                NewLocation = null,
+                IndexFields = newIndexFields,
+                OldIndexFields = oldIndexFields,
+                ReadVersionTxId = readVersionTxId
+            };
+
+            _writeSet[key] = entry;
+        }
+
+        return exists;
+    }
+
+    private bool HasIndexedFieldModifications(
+        List<FieldModification> modifications,
+        IReadOnlyList<string> indexedFieldNames)
+    {
+        bool result = false;
+
+        for (int i = 0; i < modifications.Count && !result; i++)
+        {
+            string modifiedField = modifications[i].FieldName;
+            for (int j = 0; j < indexedFieldNames.Count && !result; j++)
+            {
+                if (modifiedField == indexedFieldNames[j])
+                {
+                    result = true;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private void ApplyModifications(JsonDocument doc, List<FieldModification> modifications)
+    {
+        for (int i = 0; i < modifications.Count; i++)
+        {
+            FieldModification mod = modifications[i];
+
+            if (mod.Value == null)
+            {
+                doc.SetNull(mod.FieldName);
+            }
+            else
+            {
+                switch (mod.FieldType)
+                {
+                    case GaldrFieldType.String:
+                        doc.SetString(mod.FieldName, (string)mod.Value);
+                        break;
+                    case GaldrFieldType.Int32:
+                        doc.SetInt32(mod.FieldName, (int)mod.Value);
+                        break;
+                    case GaldrFieldType.Int64:
+                        doc.SetInt64(mod.FieldName, (long)mod.Value);
+                        break;
+                    case GaldrFieldType.Double:
+                        doc.SetDouble(mod.FieldName, (double)mod.Value);
+                        break;
+                    case GaldrFieldType.Decimal:
+                        doc.SetDecimal(mod.FieldName, (decimal)mod.Value);
+                        break;
+                    case GaldrFieldType.Boolean:
+                        doc.SetBoolean(mod.FieldName, (bool)mod.Value);
+                        break;
+                    case GaldrFieldType.DateTime:
+                        doc.SetDateTime(mod.FieldName, (DateTime)mod.Value);
+                        break;
+                    case GaldrFieldType.DateTimeOffset:
+                        doc.SetDateTimeOffset(mod.FieldName, (DateTimeOffset)mod.Value);
+                        break;
+                    case GaldrFieldType.Guid:
+                        doc.SetGuid(mod.FieldName, (Guid)mod.Value);
+                        break;
+                    default:
+                        throw new NotSupportedException($"Partial update for field type {mod.FieldType} is not yet supported");
+                }
+            }
+        }
     }
 }
