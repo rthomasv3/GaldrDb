@@ -18,18 +18,16 @@ internal class CollectionEntry
         Indexes = new List<IndexDefinition>();
     }
 
-    public byte[] Serialize()
+    public int SerializeTo(byte[] buffer, int startOffset)
     {
-        byte[] nameBytes = Encoding.UTF8.GetBytes(Name);
-        int totalSize = GetSerializedSize();
-        byte[] buffer = new byte[totalSize];
-        int offset = 0;
+        int offset = startOffset;
+        int nameByteCount = Encoding.UTF8.GetByteCount(Name);
 
-        BinaryHelper.WriteInt32LE(buffer, offset, nameBytes.Length);
+        BinaryHelper.WriteInt32LE(buffer, offset, nameByteCount);
         offset += 4;
 
-        Array.Copy(nameBytes, 0, buffer, offset, nameBytes.Length);
-        offset += nameBytes.Length;
+        Encoding.UTF8.GetBytes(Name, 0, Name.Length, buffer, offset);
+        offset += nameByteCount;
 
         BinaryHelper.WriteInt32LE(buffer, offset, RootPage);
         offset += 4;
@@ -45,12 +43,10 @@ internal class CollectionEntry
 
         for (int i = 0; i < Indexes.Count; i++)
         {
-            byte[] indexBytes = Indexes[i].Serialize();
-            Array.Copy(indexBytes, 0, buffer, offset, indexBytes.Length);
-            offset += indexBytes.Length;
+            offset += Indexes[i].SerializeTo(buffer, offset);
         }
 
-        return buffer;
+        return offset - startOffset;
     }
 
     public static CollectionEntry Deserialize(byte[] buffer, int startOffset, out int bytesRead)

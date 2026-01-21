@@ -12,18 +12,16 @@ internal class IndexDefinition
     public int RootPageId { get; set; }
     public bool IsUnique { get; set; }
 
-    public byte[] Serialize()
+    public int SerializeTo(byte[] buffer, int startOffset)
     {
-        byte[] nameBytes = Encoding.UTF8.GetBytes(FieldName);
-        int totalSize = 4 + nameBytes.Length + 1 + 4 + 1;
-        byte[] buffer = new byte[totalSize];
-        int offset = 0;
+        int offset = startOffset;
+        int nameByteCount = Encoding.UTF8.GetByteCount(FieldName);
 
-        BinaryHelper.WriteInt32LE(buffer, offset, nameBytes.Length);
+        BinaryHelper.WriteInt32LE(buffer, offset, nameByteCount);
         offset += 4;
 
-        Array.Copy(nameBytes, 0, buffer, offset, nameBytes.Length);
-        offset += nameBytes.Length;
+        Encoding.UTF8.GetBytes(FieldName, 0, FieldName.Length, buffer, offset);
+        offset += nameByteCount;
 
         buffer[offset] = (byte)FieldType;
         offset += 1;
@@ -34,7 +32,7 @@ internal class IndexDefinition
         buffer[offset] = IsUnique ? (byte)1 : (byte)0;
         offset += 1;
 
-        return buffer;
+        return offset - startOffset;
     }
 
     public static IndexDefinition Deserialize(byte[] buffer, int startOffset, out int bytesRead)

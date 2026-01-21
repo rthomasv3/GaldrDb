@@ -492,7 +492,7 @@ public class Transaction : IDisposable
             try
             {
                 // Phase 1: Write all data to storage, collect version operations
-                List<VersionOperation> versionOps = new List<VersionOperation>();
+                List<VersionOperation> versionOps = new List<VersionOperation>(_writeSet.Count);
 
                 foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in _writeSet)
                 {
@@ -531,7 +531,6 @@ public class Transaction : IDisposable
                 _writeSet.Clear();
 
                 _db.TryRunGarbageCollection();
-
                 _db.TryRunAutoCheckpoint();
             }
             catch

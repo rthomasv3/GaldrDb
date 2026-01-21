@@ -86,9 +86,7 @@ internal class CollectionsMetadata
 
             foreach (KeyValuePair<string, CollectionEntry> kvp in _collections)
             {
-                byte[] entryBytes = kvp.Value.Serialize();
-                Array.Copy(entryBytes, 0, combinedBuffer, offset, entryBytes.Length);
-                offset += entryBytes.Length;
+                offset += kvp.Value.SerializeTo(combinedBuffer, offset);
             }
 
             int bufferOffset = 0;

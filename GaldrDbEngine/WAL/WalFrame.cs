@@ -156,6 +156,11 @@ internal class WalFrame
 
     private static uint CalculateFrameChecksumInPlace(byte[] buffer, int totalSize)
     {
+        return CalculateFrameChecksumInPlace(buffer, 0, totalSize);
+    }
+
+    private static uint CalculateFrameChecksumInPlace(byte[] buffer, int startOffset, int totalSize)
+    {
         // Calculate checksum over frame header (excluding checksum field at bytes 36-39) + data
         // Segment 1: bytes 0-35 (header before checksum)
         // Segment 2: bytes 40+ (data after header)
@@ -167,15 +172,76 @@ internal class WalFrame
         {
             checksum = BinaryHelper.CalculateCRC32Segmented(
                 buffer,
-                0, headerBeforeChecksum,
-                FRAME_HEADER_SIZE, dataLength);
+                startOffset, headerBeforeChecksum,
+                startOffset + FRAME_HEADER_SIZE, dataLength);
         }
         else
         {
-            checksum = BinaryHelper.CalculateCRC32(buffer, 0, headerBeforeChecksum);
+            checksum = BinaryHelper.CalculateCRC32(buffer, startOffset, headerBeforeChecksum);
         }
 
         return checksum;
+    }
+
+    public static int SerializeFrameTo(
+        byte[] buffer,
+        int startOffset,
+        long frameNumber,
+        ulong txId,
+        int pageId,
+        byte pageType,
+        WalFrameFlags flags,
+        uint salt1,
+        uint salt2,
+        byte[] data)
+    {
+        int dataLength = data != null ? data.Length : 0;
+        int totalSize = FRAME_HEADER_SIZE + dataLength;
+        int offset = startOffset;
+
+        BinaryHelper.WriteUInt64LE(buffer, offset, (ulong)frameNumber);
+        offset += 8;
+
+        BinaryHelper.WriteUInt64LE(buffer, offset, txId);
+        offset += 8;
+
+        BinaryHelper.WriteInt32LE(buffer, offset, pageId);
+        offset += 4;
+
+        buffer[offset] = pageType;
+        offset += 1;
+
+        buffer[offset] = (byte)flags;
+        offset += 1;
+
+        // Reserved 2 bytes
+        buffer[offset] = 0;
+        buffer[offset + 1] = 0;
+        offset += 2;
+
+        BinaryHelper.WriteInt32LE(buffer, offset, dataLength);
+        offset += 4;
+
+        BinaryHelper.WriteUInt32LE(buffer, offset, salt1);
+        offset += 4;
+
+        BinaryHelper.WriteUInt32LE(buffer, offset, salt2);
+        offset += 4;
+
+        // Checksum placeholder - skip for now
+        offset += 4;
+
+        // Write data
+        if (dataLength > 0)
+        {
+            Array.Copy(data, 0, buffer, offset, dataLength);
+        }
+
+        // Calculate checksum over entire frame (excluding checksum field at bytes 36-39)
+        uint checksum = CalculateFrameChecksumInPlace(buffer, startOffset, totalSize);
+        BinaryHelper.WriteUInt32LE(buffer, startOffset + FRAME_HEADER_SIZE - 4, checksum);
+
+        return totalSize;
     }
 
 }

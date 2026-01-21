@@ -140,23 +140,21 @@ internal class WriteAheadLog : IDisposable
 
             byte[] frameData = data ?? Array.Empty<byte>();
 
-            WalFrame frame = new WalFrame
-            {
-                FrameNumber = _currentFrameNumber,
-                TxId = txId,
-                PageId = pageId,
-                PageType = pageType,
-                Flags = flags,
-                Salt1 = _header.Salt1,
-                Salt2 = _header.Salt2,
-                Data = frameData
-            };
-
             int frameBufferSize = WalFrame.FRAME_HEADER_SIZE + _pageSize;
             byte[] frameBuffer = BufferPool.Rent(frameBufferSize);
             try
             {
-                int bytesWritten = frame.SerializeTo(frameBuffer);
+                int bytesWritten = WalFrame.SerializeFrameTo(
+                    frameBuffer,
+                    0,
+                    _currentFrameNumber,
+                    txId,
+                    pageId,
+                    pageType,
+                    flags,
+                    _header.Salt1,
+                    _header.Salt2,
+                    frameData);
 
                 long framePosition = WalHeader.HEADER_SIZE + (_currentFrameNumber - 1) * (WalFrame.FRAME_HEADER_SIZE + _pageSize);
                 _walStream.Position = framePosition;
@@ -216,38 +214,26 @@ internal class WriteAheadLog : IDisposable
                     _currentFrameNumber++;
                     PendingPageWrite write = pendingWrites[i];
                     bool isLastFrame = (i == pendingWrites.Count - 1);
+                    WalFrameFlags flags = isLastFrame ? WalFrameFlags.Commit : WalFrameFlags.None;
+                    byte[] data = write.Data ?? Array.Empty<byte>();
 
-                    WalFrame frame = new WalFrame
+                    int bytesWritten = WalFrame.SerializeFrameTo(
+                        batchBuffer,
+                        bufferOffset,
+                        _currentFrameNumber,
+                        txId,
+                        write.PageId,
+                        write.PageType,
+                        flags,
+                        _header.Salt1,
+                        _header.Salt2,
+                        data);
+
+                    // Pad to full frame size if data is smaller
+                    int paddingNeeded = frameSize - bytesWritten;
+                    if (paddingNeeded > 0)
                     {
-                        FrameNumber = _currentFrameNumber,
-                        TxId = txId,
-                        PageId = write.PageId,
-                        PageType = write.PageType,
-                        Flags = isLastFrame ? WalFrameFlags.Commit : WalFrameFlags.None,
-                        Salt1 = _header.Salt1,
-                        Salt2 = _header.Salt2,
-                        Data = write.Data ?? Array.Empty<byte>()
-                    };
-
-                    // Serialize frame header + data
-                    byte[] frameBuffer = BufferPool.Rent(frameSize);
-                    try
-                    {
-                        int bytesWritten = frame.SerializeTo(frameBuffer);
-
-                        // Copy to batch buffer
-                        Array.Copy(frameBuffer, 0, batchBuffer, bufferOffset, bytesWritten);
-
-                        // Pad to full frame size if data is smaller
-                        int paddingNeeded = frameSize - bytesWritten;
-                        if (paddingNeeded > 0)
-                        {
-                            Array.Clear(batchBuffer, bufferOffset + bytesWritten, paddingNeeded);
-                        }
-                    }
-                    finally
-                    {
-                        BufferPool.Return(frameBuffer);
+                        Array.Clear(batchBuffer, bufferOffset + bytesWritten, paddingNeeded);
                     }
 
                     bufferOffset += frameSize;

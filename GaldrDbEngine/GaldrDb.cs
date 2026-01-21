@@ -1728,7 +1728,8 @@ public class GaldrDb : IDisposable
             InsertIntoIndexesInternal(collection, docId, newLocation, newIndexFields);
         }
 
-        _collectionsMetadata.UpdateCollection(collection);
+        // Note: No need to call UpdateCollection - collection is a reference type
+        // and modifications (like RootPage) are already reflected in the dictionary
         WriteCollectionsMetadataWithGrowth();
 
         return newLocation;
