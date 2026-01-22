@@ -9,6 +9,157 @@ internal class BTreeNode
 {
     private const int HEADER_SIZE = 8;
 
+    // Buffer layout offsets
+    private const int OFFSET_PAGE_TYPE = 0;
+    private const int OFFSET_NODE_TYPE = 1;
+    private const int OFFSET_KEY_COUNT = 2;
+    private const int OFFSET_NEXT_LEAF = 4;
+    private const int OFFSET_KEYS = 8;
+
+    #region Static Buffer Access Methods
+
+    public static bool IsLeafNode(byte[] buffer)
+    {
+        return buffer[OFFSET_NODE_TYPE] == (byte)BTreeNodeType.Leaf;
+    }
+
+    public static ushort GetKeyCount(byte[] buffer)
+    {
+        return BinaryHelper.ReadUInt16LE(buffer, OFFSET_KEY_COUNT);
+    }
+
+    public static void SetKeyCount(byte[] buffer, ushort count)
+    {
+        BinaryHelper.WriteUInt16LE(buffer, OFFSET_KEY_COUNT, count);
+    }
+
+    public static int GetKey(byte[] buffer, int index)
+    {
+        return BinaryHelper.ReadInt32LE(buffer, OFFSET_KEYS + index * 4);
+    }
+
+    public static void SetKey(byte[] buffer, int index, int key)
+    {
+        BinaryHelper.WriteInt32LE(buffer, OFFSET_KEYS + index * 4, key);
+    }
+
+    public static int GetChildPageId(byte[] buffer, int keyCount, int childIndex)
+    {
+        int childrenOffset = OFFSET_KEYS + keyCount * 4;
+        return BinaryHelper.ReadInt32LE(buffer, childrenOffset + childIndex * 4);
+    }
+
+    public static void SetChildPageId(byte[] buffer, int keyCount, int childIndex, int pageId)
+    {
+        int childrenOffset = OFFSET_KEYS + keyCount * 4;
+        BinaryHelper.WriteInt32LE(buffer, childrenOffset + childIndex * 4, pageId);
+    }
+
+    public static DocumentLocation GetLeafValue(byte[] buffer, int keyCount, int index)
+    {
+        int valuesOffset = OFFSET_KEYS + keyCount * 4 + index * 8;
+        int pageId = BinaryHelper.ReadInt32LE(buffer, valuesOffset);
+        int slotIndex = BinaryHelper.ReadInt32LE(buffer, valuesOffset + 4);
+        return new DocumentLocation(pageId, slotIndex);
+    }
+
+    public static void SetLeafValue(byte[] buffer, int keyCount, int index, DocumentLocation location)
+    {
+        int valuesOffset = OFFSET_KEYS + keyCount * 4 + index * 8;
+        BinaryHelper.WriteInt32LE(buffer, valuesOffset, location.PageId);
+        BinaryHelper.WriteInt32LE(buffer, valuesOffset + 4, location.SlotIndex);
+    }
+
+    /// <summary>
+    /// Binary search for the position where key should be inserted.
+    /// Returns the index of the first key greater than or equal to the target,
+    /// or keyCount if all keys are less than target.
+    /// </summary>
+    public static int FindKeyPosition(byte[] buffer, int keyCount, int targetKey)
+    {
+        int left = 0;
+        int right = keyCount;
+
+        while (left < right)
+        {
+            int mid = left + (right - left) / 2;
+            int midKey = GetKey(buffer, mid);
+
+            if (midKey < targetKey)
+            {
+                left = mid + 1;
+            }
+            else
+            {
+                right = mid;
+            }
+        }
+
+        return left;
+    }
+
+    /// <summary>
+    /// Find the child index to follow for a given key in an internal node.
+    /// </summary>
+    public static int FindChildIndex(byte[] buffer, int keyCount, int targetKey)
+    {
+        return FindKeyPosition(buffer, keyCount, targetKey);
+    }
+
+    /// <summary>
+    /// Check if node is full (for a given order).
+    /// </summary>
+    public static bool IsNodeFull(byte[] buffer, int order)
+    {
+        return GetKeyCount(buffer) >= order - 1;
+    }
+
+    /// <summary>
+    /// Insert a key and value into a leaf node at the correct position.
+    /// Shifts existing entries to make room. Returns the insert position.
+    /// </summary>
+    public static int InsertIntoLeaf(byte[] buffer, int keyCount, int key, DocumentLocation value, int order)
+    {
+        int insertPos = FindKeyPosition(buffer, keyCount, key);
+
+        int oldValuesStart = OFFSET_KEYS + keyCount * 4;
+        int newValuesStart = OFFSET_KEYS + (keyCount + 1) * 4;
+
+        // FIRST: Shift ALL values to their new positions (working backwards to avoid overwrites)
+        // Values at index >= insertPos also shift one position right in the array
+        for (int i = keyCount - 1; i >= 0; i--)
+        {
+            int oldValueOffset = oldValuesStart + i * 8;
+            int newIndex = (i >= insertPos) ? i + 1 : i;
+            int newValueOffset = newValuesStart + newIndex * 8;
+
+            int pageId = BinaryHelper.ReadInt32LE(buffer, oldValueOffset);
+            int slotIndex = BinaryHelper.ReadInt32LE(buffer, oldValueOffset + 4);
+            BinaryHelper.WriteInt32LE(buffer, newValueOffset, pageId);
+            BinaryHelper.WriteInt32LE(buffer, newValueOffset + 4, slotIndex);
+        }
+
+        // SECOND: Shift keys at and after insertPos (safe now that values are moved)
+        for (int i = keyCount - 1; i >= insertPos; i--)
+        {
+            int existingKey = GetKey(buffer, i);
+            SetKey(buffer, i + 1, existingKey);
+        }
+
+        // Insert new key and value
+        SetKey(buffer, insertPos, key);
+        int valueOffset = newValuesStart + insertPos * 8;
+        BinaryHelper.WriteInt32LE(buffer, valueOffset, value.PageId);
+        BinaryHelper.WriteInt32LE(buffer, valueOffset + 4, value.SlotIndex);
+
+        // Update key count
+        SetKeyCount(buffer, (ushort)(keyCount + 1));
+
+        return insertPos;
+    }
+
+    #endregion
+
     private readonly int _pageSize;
     private readonly int _order;
 
