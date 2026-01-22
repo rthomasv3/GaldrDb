@@ -198,6 +198,7 @@ public class FaultInjectionTests
         {
             PageSize = 8192,
             UseWal = true,
+            PageCacheSize = 0,
             CustomPageIO = pageIO,
             CustomWalStream = walStream,
             CustomWalSaltGenerator = () => rng.NextUInt()
@@ -225,6 +226,7 @@ public class FaultInjectionTests
         {
             PageSize = 8192,
             UseWal = true,
+            PageCacheSize = 0,
             CustomPageIO = pageIO,
             CustomWalStream = walStream,
             CustomWalSaltGenerator = () => rng.NextUInt()

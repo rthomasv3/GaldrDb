@@ -33,6 +33,7 @@ public class GaldrDb : IDisposable
     private readonly HashSet<string> _ensuredCollections;
     private readonly object _ddlLock;
     private IPageIO _basePageIO;
+    private LruPageCache _pageCache;
     private IPageIO _pageIO;
     private WriteAheadLog _wal;
     private WalPageIO _walPageIO;
@@ -191,7 +192,14 @@ public class GaldrDb : IDisposable
             _documentStorage = null;
         }
 
-        if (_basePageIO != null)
+        if (_pageCache != null)
+        {
+            _pageCache.Close();
+            _pageCache.Dispose();
+            _pageCache = null;
+            _basePageIO = null;
+        }
+        else if (_basePageIO != null)
         {
             _basePageIO.Close();
             _basePageIO.Dispose();
@@ -1311,7 +1319,15 @@ public class GaldrDb : IDisposable
             }
         }
 
-        _pageIO = _basePageIO;
+        if (_options.PageCacheSize > 0)
+        {
+            _pageCache = new LruPageCache(_basePageIO, _options.PageSize, _options.PageCacheSize);
+            _pageIO = _pageCache;
+        }
+        else
+        {
+            _pageIO = _basePageIO;
+        }
     }
 
     private void InitializeWalFile()
@@ -1329,7 +1345,8 @@ public class GaldrDb : IDisposable
 
         _wal.Create();
 
-        _walPageIO = new WalPageIO(_basePageIO, _wal, _options.PageSize);
+        IPageIO innerIO = _pageCache ?? _basePageIO;
+        _walPageIO = new WalPageIO(innerIO, _wal, _options.PageSize);
         _pageIO = _walPageIO;
     }
 
@@ -1384,7 +1401,8 @@ public class GaldrDb : IDisposable
         _wal.Truncate();
 
         // Set up WAL page IO for future operations
-        _walPageIO = new WalPageIO(_basePageIO, _wal, _options.PageSize);
+        IPageIO innerIO = _pageCache ?? _basePageIO;
+        _walPageIO = new WalPageIO(innerIO, _wal, _options.PageSize);
         _pageIO = _walPageIO;
         
         _pageManager = new PageManager(_pageIO, _options.PageSize, _options.ExpansionPageCount);

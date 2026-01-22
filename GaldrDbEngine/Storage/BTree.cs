@@ -33,31 +33,34 @@ internal class BTree
 
     public void Insert(int docId, DocumentLocation location)
     {
-        byte[] rootBuffer = BufferPool.Rent(_pageSize);
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        byte[] childBuffer = BufferPool.Rent(_pageSize);
         BTreeNode newRoot = null;
         try
         {
-            _pageIO.ReadPage(_rootPageId, rootBuffer);
+            _pageIO.ReadPage(_rootPageId, buffer);
 
-            if (BTreeNode.IsNodeFull(rootBuffer, _order))
+            if (BTreeNode.IsNodeFull(buffer, _order))
             {
                 // Root is full - need to split it first
                 BTreeNode root = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
                 try
                 {
-                    BTreeNode.DeserializeTo(rootBuffer, root, _order);
+                    BTreeNode.DeserializeTo(buffer, root, _order);
 
                     int newRootPageId = _pageManager.AllocatePage();
                     newRoot = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Internal);
                     newRoot.ChildPageIds.Add(_rootPageId);
 
-                    newRoot.SerializeTo(rootBuffer);
-                    _pageIO.WritePage(newRootPageId, rootBuffer);
+                    newRoot.SerializeTo(buffer);
+                    _pageIO.WritePage(newRootPageId, buffer);
 
                     SplitChild(newRootPageId, 0, _rootPageId);
                     _rootPageId = newRootPageId;
 
-                    InsertNonFull(newRootPageId, docId, location);
+                    // Re-read the new root for InsertNonFull
+                    _pageIO.ReadPage(_rootPageId, buffer);
+                    InsertNonFull(_rootPageId, buffer, childBuffer, docId, location);
                 }
                 finally
                 {
@@ -66,12 +69,14 @@ internal class BTree
             }
             else
             {
-                InsertNonFull(_rootPageId, docId, location);
+                // Pass the already-read buffer to InsertNonFull
+                InsertNonFull(_rootPageId, buffer, childBuffer, docId, location);
             }
         }
         finally
         {
-            BufferPool.Return(rootBuffer);
+            BufferPool.Return(buffer);
+            BufferPool.Return(childBuffer);
             BTreeNodePool.Return(newRoot);
         }
     }
@@ -669,59 +674,55 @@ internal class BTree
         return result;
     }
 
-    private void InsertNonFull(int pageId, int docId, DocumentLocation location)
+    private void InsertNonFull(int pageId, byte[] buffer, byte[] childBuffer, int docId, DocumentLocation location)
     {
-        byte[] buffer = BufferPool.Rent(_pageSize);
-        byte[] childBuffer = BufferPool.Rent(_pageSize);
-        try
-        {
-            int currentPageId = pageId;
+        int currentPageId = pageId;
 
-            while (true)
+        while (true)
+        {
+            ushort keyCount = BTreeNode.GetKeyCount(buffer);
+
+            if (BTreeNode.IsLeafNode(buffer))
             {
-                _pageIO.ReadPage(currentPageId, buffer);
-                ushort keyCount = BTreeNode.GetKeyCount(buffer);
-
-                if (BTreeNode.IsLeafNode(buffer))
-                {
-                    // Insert directly into the buffer
-                    BTreeNode.InsertIntoLeaf(buffer, keyCount, docId, location, _order);
-                    _pageIO.WritePage(currentPageId, buffer);
-                    break;
-                }
-                else
-                {
-                    // Find child to descend into
-                    int childIndex = BTreeNode.FindChildIndex(buffer, keyCount, docId);
-                    int childPageId = BTreeNode.GetChildPageId(buffer, keyCount, childIndex);
-
-                    // Check if child is full
-                    _pageIO.ReadPage(childPageId, childBuffer);
-                    if (BTreeNode.IsNodeFull(childBuffer, _order))
-                    {
-                        // Need to split - use traditional approach for this case
-                        SplitChild(currentPageId, childIndex, childPageId);
-
-                        // Re-read current node after split to get updated key
-                        _pageIO.ReadPage(currentPageId, buffer);
-                        keyCount = BTreeNode.GetKeyCount(buffer);
-
-                        // Check which child to descend into after split
-                        if (docId > BTreeNode.GetKey(buffer, childIndex))
-                        {
-                            childIndex++;
-                        }
-                        childPageId = BTreeNode.GetChildPageId(buffer, keyCount, childIndex);
-                    }
-
-                    currentPageId = childPageId;
-                }
+                // Insert directly into the buffer
+                BTreeNode.InsertIntoLeaf(buffer, keyCount, docId, location, _order);
+                _pageIO.WritePage(currentPageId, buffer);
+                break;
             }
-        }
-        finally
-        {
-            BufferPool.Return(childBuffer);
-            BufferPool.Return(buffer);
+            else
+            {
+                // Find child to descend into
+                int childIndex = BTreeNode.FindChildIndex(buffer, keyCount, docId);
+                int childPageId = BTreeNode.GetChildPageId(buffer, keyCount, childIndex);
+
+                // Read child and check if full
+                _pageIO.ReadPage(childPageId, childBuffer);
+                if (BTreeNode.IsNodeFull(childBuffer, _order))
+                {
+                    // Need to split child
+                    SplitChild(currentPageId, childIndex, childPageId);
+
+                    // Re-read current node after split to get updated key
+                    _pageIO.ReadPage(currentPageId, buffer);
+                    keyCount = BTreeNode.GetKeyCount(buffer);
+
+                    // Check which child to descend into after split
+                    if (docId > BTreeNode.GetKey(buffer, childIndex))
+                    {
+                        childIndex++;
+                    }
+                    childPageId = BTreeNode.GetChildPageId(buffer, keyCount, childIndex);
+
+                    // Read the correct child after split
+                    _pageIO.ReadPage(childPageId, childBuffer);
+                }
+
+                // Swap buffers: childBuffer becomes buffer for next iteration
+                byte[] temp = buffer;
+                buffer = childBuffer;
+                childBuffer = temp;
+                currentPageId = childPageId;
+            }
         }
     }
 
@@ -896,31 +897,34 @@ internal class BTree
 
     public async Task InsertAsync(int docId, DocumentLocation location, CancellationToken cancellationToken = default)
     {
-        byte[] rootBuffer = BufferPool.Rent(_pageSize);
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        byte[] childBuffer = BufferPool.Rent(_pageSize);
         BTreeNode newRoot = null;
         try
         {
-            await _pageIO.ReadPageAsync(_rootPageId, rootBuffer, cancellationToken).ConfigureAwait(false);
+            await _pageIO.ReadPageAsync(_rootPageId, buffer, cancellationToken).ConfigureAwait(false);
 
-            if (BTreeNode.IsNodeFull(rootBuffer, _order))
+            if (BTreeNode.IsNodeFull(buffer, _order))
             {
                 // Root is full - need to split it first
                 BTreeNode root = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
                 try
                 {
-                    BTreeNode.DeserializeTo(rootBuffer, root, _order);
+                    BTreeNode.DeserializeTo(buffer, root, _order);
 
                     int newRootPageId = _pageManager.AllocatePage();
                     newRoot = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Internal);
                     newRoot.ChildPageIds.Add(_rootPageId);
 
-                    newRoot.SerializeTo(rootBuffer);
-                    await _pageIO.WritePageAsync(newRootPageId, rootBuffer, cancellationToken).ConfigureAwait(false);
+                    newRoot.SerializeTo(buffer);
+                    await _pageIO.WritePageAsync(newRootPageId, buffer, cancellationToken).ConfigureAwait(false);
 
                     await SplitChildAsync(newRootPageId, 0, _rootPageId, cancellationToken).ConfigureAwait(false);
                     _rootPageId = newRootPageId;
 
-                    await InsertNonFullAsync(newRootPageId, docId, location, cancellationToken).ConfigureAwait(false);
+                    // Re-read the new root for InsertNonFullAsync
+                    await _pageIO.ReadPageAsync(_rootPageId, buffer, cancellationToken).ConfigureAwait(false);
+                    await InsertNonFullAsync(_rootPageId, buffer, childBuffer, docId, location, cancellationToken).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -929,12 +933,14 @@ internal class BTree
             }
             else
             {
-                await InsertNonFullAsync(_rootPageId, docId, location, cancellationToken).ConfigureAwait(false);
+                // Pass the already-read buffer to InsertNonFullAsync
+                await InsertNonFullAsync(_rootPageId, buffer, childBuffer, docId, location, cancellationToken).ConfigureAwait(false);
             }
         }
         finally
         {
-            BufferPool.Return(rootBuffer);
+            BufferPool.Return(buffer);
+            BufferPool.Return(childBuffer);
             BTreeNodePool.Return(newRoot);
         }
     }
@@ -981,59 +987,55 @@ internal class BTree
         return result;
     }
 
-    private async Task InsertNonFullAsync(int pageId, int docId, DocumentLocation location, CancellationToken cancellationToken)
+    private async Task InsertNonFullAsync(int pageId, byte[] buffer, byte[] childBuffer, int docId, DocumentLocation location, CancellationToken cancellationToken)
     {
-        byte[] buffer = BufferPool.Rent(_pageSize);
-        byte[] childBuffer = BufferPool.Rent(_pageSize);
-        try
-        {
-            int currentPageId = pageId;
+        int currentPageId = pageId;
 
-            while (true)
+        while (true)
+        {
+            ushort keyCount = BTreeNode.GetKeyCount(buffer);
+
+            if (BTreeNode.IsLeafNode(buffer))
             {
-                await _pageIO.ReadPageAsync(currentPageId, buffer, cancellationToken).ConfigureAwait(false);
-                ushort keyCount = BTreeNode.GetKeyCount(buffer);
-
-                if (BTreeNode.IsLeafNode(buffer))
-                {
-                    // Insert directly into the buffer
-                    BTreeNode.InsertIntoLeaf(buffer, keyCount, docId, location, _order);
-                    await _pageIO.WritePageAsync(currentPageId, buffer, cancellationToken).ConfigureAwait(false);
-                    break;
-                }
-                else
-                {
-                    // Find child to descend into
-                    int childIndex = BTreeNode.FindChildIndex(buffer, keyCount, docId);
-                    int childPageId = BTreeNode.GetChildPageId(buffer, keyCount, childIndex);
-
-                    // Check if child is full
-                    await _pageIO.ReadPageAsync(childPageId, childBuffer, cancellationToken).ConfigureAwait(false);
-                    if (BTreeNode.IsNodeFull(childBuffer, _order))
-                    {
-                        // Need to split - use traditional approach for this case
-                        await SplitChildAsync(currentPageId, childIndex, childPageId, cancellationToken).ConfigureAwait(false);
-
-                        // Re-read current node after split to get updated key
-                        await _pageIO.ReadPageAsync(currentPageId, buffer, cancellationToken).ConfigureAwait(false);
-                        keyCount = BTreeNode.GetKeyCount(buffer);
-
-                        // Check which child to descend into after split
-                        if (docId > BTreeNode.GetKey(buffer, childIndex))
-                        {
-                            childIndex++;
-                        }
-                        childPageId = BTreeNode.GetChildPageId(buffer, keyCount, childIndex);
-                    }
-
-                    currentPageId = childPageId;
-                }
+                // Insert directly into the buffer
+                BTreeNode.InsertIntoLeaf(buffer, keyCount, docId, location, _order);
+                await _pageIO.WritePageAsync(currentPageId, buffer, cancellationToken).ConfigureAwait(false);
+                break;
             }
-        }
-        finally
-        {
-            BufferPool.Return(childBuffer);
-            BufferPool.Return(buffer);
+            else
+            {
+                // Find child to descend into
+                int childIndex = BTreeNode.FindChildIndex(buffer, keyCount, docId);
+                int childPageId = BTreeNode.GetChildPageId(buffer, keyCount, childIndex);
+
+                // Read child and check if full
+                await _pageIO.ReadPageAsync(childPageId, childBuffer, cancellationToken).ConfigureAwait(false);
+                if (BTreeNode.IsNodeFull(childBuffer, _order))
+                {
+                    // Need to split child
+                    await SplitChildAsync(currentPageId, childIndex, childPageId, cancellationToken).ConfigureAwait(false);
+
+                    // Re-read current node after split to get updated key
+                    await _pageIO.ReadPageAsync(currentPageId, buffer, cancellationToken).ConfigureAwait(false);
+                    keyCount = BTreeNode.GetKeyCount(buffer);
+
+                    // Check which child to descend into after split
+                    if (docId > BTreeNode.GetKey(buffer, childIndex))
+                    {
+                        childIndex++;
+                    }
+                    childPageId = BTreeNode.GetChildPageId(buffer, keyCount, childIndex);
+
+                    // Read the correct child after split
+                    await _pageIO.ReadPageAsync(childPageId, childBuffer, cancellationToken).ConfigureAwait(false);
+                }
+
+                // Swap buffers: childBuffer becomes buffer for next iteration
+                byte[] temp = buffer;
+                buffer = childBuffer;
+                childBuffer = temp;
+                currentPageId = childPageId;
+            }
         }
     }
 

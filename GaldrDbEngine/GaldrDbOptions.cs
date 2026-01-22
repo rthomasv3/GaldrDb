@@ -71,6 +71,13 @@ public class GaldrDbOptions
     /// </summary>
     public int ExpansionPageCount { get; set; } = 256;
 
+    /// <summary>
+    /// Maximum number of pages to keep in the page cache. Default is 2000 pages.
+    /// With the default 8KB page size, this equals 16MB of cache.
+    /// Set to 0 to disable the page cache.
+    /// </summary>
+    public int PageCacheSize { get; set; } = 2000;
+
     // Internal: for simulation testing only (null in production)
     internal IPageIO CustomPageIO { get; set; }
     internal Stream CustomWalStream { get; set; }
