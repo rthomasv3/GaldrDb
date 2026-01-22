@@ -91,14 +91,27 @@ internal class Bitmap
         _bitmap[byteIndex] = (byte)(_bitmap[byteIndex] & ~mask);
     }
 
-    public int FindFreePage()
+    public int FindFreePage(int hint)
     {
         int result = -1;
         int byteLength = _bitmap.Length;
         int ulongCount = byteLength / 8;
 
+        // Clamp hint to valid range
+        if (hint < 0)
+        {
+            hint = 0;
+        }
+        else if (hint >= _totalPages)
+        {
+            hint = 0;
+        }
+
+        // Start scanning from the hint's ulong-aligned position
+        int startUlong = hint / 64;
+
         // Process 64 bits at a time using hardware intrinsics
-        for (int i = 0; i < ulongCount; i++)
+        for (int i = startUlong; i < ulongCount && result == -1; i++)
         {
             int offset = i * 8;
             ulong chunk = BinaryPrimitives.ReadUInt64LittleEndian(_bitmap.AsSpan(offset, 8));
@@ -114,15 +127,14 @@ internal class Bitmap
                 {
                     result = pageId;
                 }
-                break;
             }
         }
 
         // Handle remaining bytes that don't fill a complete ulong
         if (result == -1)
         {
-            int startByte = ulongCount * 8;
-            for (int byteIndex = startByte; byteIndex < byteLength; byteIndex++)
+            int startByte = Math.Max(ulongCount * 8, (hint / 8));
+            for (int byteIndex = startByte; byteIndex < byteLength && result == -1; byteIndex++)
             {
                 byte b = _bitmap[byteIndex];
                 if (b != 0xFF)
@@ -134,7 +146,6 @@ internal class Bitmap
                     {
                         result = pageId;
                     }
-                    break;
                 }
             }
         }

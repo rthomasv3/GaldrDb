@@ -171,6 +171,12 @@ public class GaldrDb : IDisposable
     /// </summary>
     public void Dispose()
     {
+        // Persist header (includes NextFreePageHint) before closing
+        if (_pageManager != null)
+        {
+            _pageManager.PersistHeader();
+        }
+
         // Flush WAL to ensure all committed data is persisted
         if (_wal != null)
         {
@@ -203,6 +209,7 @@ public class GaldrDb : IDisposable
     {
         if (_walPageIO != null)
         {
+            _pageManager.PersistHeader();
             _walPageIO.Checkpoint();
         }
     }
@@ -215,6 +222,7 @@ public class GaldrDb : IDisposable
     {
         if (_walPageIO != null)
         {
+            _pageManager.PersistHeader();
             await _walPageIO.CheckpointAsync(cancellationToken).ConfigureAwait(false);
         }
     }

@@ -33,26 +33,31 @@ internal class SecondaryIndexBTree
     public void Insert(byte[] key, DocumentLocation location)
     {
         byte[] rootBuffer = BufferPool.Rent(_pageSize);
-        SecondaryIndexNode root = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
-        SecondaryIndexNode newRoot = null;
         try
         {
             _pageIO.ReadPage(_rootPageId, rootBuffer);
-            SecondaryIndexNode.DeserializeTo(rootBuffer, root);
 
-            if (root.IsFull())
+            if (SecondaryIndexNode.IsNodeFull(rootBuffer, _maxKeys, _pageSize))
             {
-                int newRootPageId = _pageManager.AllocatePage();
-                newRoot = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Internal);
-                newRoot.ChildPageIds.Add(_rootPageId);
+                // Root is full - need to split it first
+                SecondaryIndexNode newRoot = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Internal);
+                try
+                {
+                    int newRootPageId = _pageManager.AllocatePage();
+                    newRoot.ChildPageIds.Add(_rootPageId);
 
-                newRoot.SerializeTo(rootBuffer);
-                _pageIO.WritePage(newRootPageId, rootBuffer);
+                    newRoot.SerializeTo(rootBuffer);
+                    _pageIO.WritePage(newRootPageId, rootBuffer);
 
-                SplitChild(newRootPageId, 0, _rootPageId);
-                _rootPageId = newRootPageId;
+                    SplitChild(newRootPageId, 0, _rootPageId);
+                    _rootPageId = newRootPageId;
 
-                InsertNonFull(newRootPageId, key, location);
+                    InsertNonFull(newRootPageId, key, location);
+                }
+                finally
+                {
+                    SecondaryIndexNodePool.Return(newRoot);
+                }
             }
             else
             {
@@ -62,8 +67,6 @@ internal class SecondaryIndexBTree
         finally
         {
             BufferPool.Return(rootBuffer);
-            SecondaryIndexNodePool.Return(root);
-            SecondaryIndexNodePool.Return(newRoot);
         }
     }
 
@@ -715,76 +718,69 @@ internal class SecondaryIndexBTree
     private void InsertNonFull(int pageId, byte[] key, DocumentLocation location)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
-        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
+        byte[] childBuffer = BufferPool.Rent(_pageSize);
         try
         {
-            _pageIO.ReadPage(pageId, buffer);
-            SecondaryIndexNode.DeserializeTo(buffer, node);
-
+            int currentPageId = pageId;
             ReadOnlySpan<byte> keySpan = key.AsSpan();
-            int i = node.KeyCount - 1;
 
-            if (node.NodeType == BTreeNodeType.Leaf)
+            while (true)
             {
-                node.Keys.Add(default);
-                node.LeafValues.Add(default);
+                _pageIO.ReadPage(currentPageId, buffer);
+                ushort keyCount = SecondaryIndexNode.GetKeyCount(buffer);
 
-                while (i >= 0 && KeyBuffer.Compare(keySpan, node.Keys[i]) < 0)
+                if (SecondaryIndexNode.IsLeafNode(buffer))
                 {
-                    node.Keys[i + 1] = node.Keys[i];
-                    node.LeafValues[i + 1] = node.LeafValues[i];
-                    i--;
+                    SecondaryIndexNode.InsertIntoLeaf(buffer, keyCount, key, location, _pageSize);
+                    _pageIO.WritePage(currentPageId, buffer);
+                    break;
                 }
-
-                node.Keys[i + 1] = KeyBuffer.FromCopy(key, 0, key.Length);
-                node.LeafValues[i + 1] = location;
-                node.KeyCount++;
-
-                node.SerializeTo(buffer);
-                _pageIO.WritePage(pageId, buffer);
-            }
-            else
-            {
-                while (i >= 0 && KeyBuffer.Compare(keySpan, node.Keys[i]) < 0)
+                else
                 {
-                    i--;
-                }
-                i++;
+                    int childIndex = SecondaryIndexNode.FindKeyPosition(buffer, keyCount, keySpan);
+                    int childPageId = SecondaryIndexNode.GetChildPageId(buffer, keyCount, childIndex);
 
-                byte[] childBuffer = BufferPool.Rent(_pageSize);
-                SecondaryIndexNode child = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
-                try
-                {
-                    _pageIO.ReadPage(node.ChildPageIds[i], childBuffer);
-                    SecondaryIndexNode.DeserializeTo(childBuffer, child);
-
-                    if (child.IsFull())
+                    _pageIO.ReadPage(childPageId, childBuffer);
+                    if (SecondaryIndexNode.IsNodeFull(childBuffer, _maxKeys, _pageSize))
                     {
-                        SplitChild(pageId, i, node.ChildPageIds[i]);
+                        SplitChild(currentPageId, childIndex, childPageId);
 
-                        _pageIO.ReadPage(pageId, buffer);
-                        SecondaryIndexNode.DeserializeTo(buffer, node);
+                        // Re-read current node after split
+                        _pageIO.ReadPage(currentPageId, buffer);
+                        keyCount = SecondaryIndexNode.GetKeyCount(buffer);
 
-                        if (KeyBuffer.Compare(keySpan, node.Keys[i]) > 0)
+                        // Check which child to descend into after split
+                        int splitKeyOffset = GetKeyOffsetAtIndex(buffer, childIndex);
+                        ushort splitKeyLength = BinaryHelper.ReadUInt16LE(buffer, splitKeyOffset);
+                        ReadOnlySpan<byte> splitKey = buffer.AsSpan(splitKeyOffset + 2, splitKeyLength);
+
+                        if (keySpan.SequenceCompareTo(splitKey) > 0)
                         {
-                            i++;
+                            childIndex++;
                         }
+                        childPageId = SecondaryIndexNode.GetChildPageId(buffer, keyCount, childIndex);
                     }
-                }
-                finally
-                {
-                    BufferPool.Return(childBuffer);
-                    SecondaryIndexNodePool.Return(child);
-                }
 
-                InsertNonFull(node.ChildPageIds[i], key, location);
+                    currentPageId = childPageId;
+                }
             }
         }
         finally
         {
+            BufferPool.Return(childBuffer);
             BufferPool.Return(buffer);
-            SecondaryIndexNodePool.Return(node);
         }
+    }
+
+    private static int GetKeyOffsetAtIndex(byte[] buffer, int index)
+    {
+        int offset = 10; // OFFSET_KEYS
+        for (int i = 0; i < index; i++)
+        {
+            ushort len = BinaryHelper.ReadUInt16LE(buffer, offset);
+            offset += 2 + len;
+        }
+        return offset;
     }
 
     private void SplitChild(int parentPageId, int index, int childPageId)

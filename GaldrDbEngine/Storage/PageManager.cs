@@ -49,7 +49,8 @@ internal class PageManager
             FsmPageCount = fsmPageCount,
             CollectionsMetadataStartPage = collectionsMetadataStartPage,
             CollectionsMetadataPageCount = collectionsMetadataPageCount,
-            MmapHint = 1
+            MmapHint = 1,
+            NextFreePageHint = totalPages
         };
 
         byte[] headerBytes = _header.Serialize(_pageSize);
@@ -107,16 +108,26 @@ internal class PageManager
 
         _fsm = new FreeSpaceMap(_pageIO, _header.FsmStartPage, _header.FsmPageCount, _header.TotalPageCount, _header.PageSize);
         _fsm.LoadFromDisk();
+
+        // Initialize hint if not set (old database format or first load)
+        if (_header.NextFreePageHint == 0)
+        {
+            int firstFree = _bitmap.FindFreePage(0);
+            if (firstFree != -1)
+            {
+                _header.NextFreePageHint = firstFree;
+            }
+        }
     }
 
     public int AllocatePage()
     {
-        int pageId = _bitmap.FindFreePage();
+        int pageId = _bitmap.FindFreePage(_header.NextFreePageHint);
 
         if (pageId == -1)
         {
             Expand();
-            pageId = _bitmap.FindFreePage();
+            pageId = _bitmap.FindFreePage(_header.NextFreePageHint);
 
             if (pageId == -1)
             {
@@ -126,6 +137,8 @@ internal class PageManager
 
         _bitmap.AllocatePage(pageId);
         _fsm.SetFreeSpaceLevel(pageId, FreeSpaceLevel.None);
+        _header.NextFreePageHint = pageId + 1;
+
         _bitmap.WriteToDisk();
         _fsm.WriteToDisk();
 
@@ -144,7 +157,7 @@ internal class PageManager
 
         while (allocated < count)
         {
-            int pageId = _bitmap.FindFreePage();
+            int pageId = _bitmap.FindFreePage(_header.NextFreePageHint);
 
             if (pageId == -1)
             {
@@ -152,7 +165,7 @@ internal class PageManager
                 int expansionSize = Math.Max(_expansionPageCount, needed);
                 Expand(expansionSize);
 
-                pageId = _bitmap.FindFreePage();
+                pageId = _bitmap.FindFreePage(_header.NextFreePageHint);
 
                 if (pageId == -1)
                 {
@@ -162,6 +175,7 @@ internal class PageManager
 
             _bitmap.AllocatePage(pageId);
             _fsm.SetFreeSpaceLevel(pageId, FreeSpaceLevel.None);
+            _header.NextFreePageHint = pageId + 1;
             pageIds[allocated] = pageId;
             allocated++;
         }
@@ -176,6 +190,12 @@ internal class PageManager
     {
         _bitmap.DeallocatePage(pageId);
         _fsm.SetFreeSpaceLevel(pageId, FreeSpaceLevel.High);
+
+        if (pageId < _header.NextFreePageHint)
+        {
+            _header.NextFreePageHint = pageId;
+        }
+
         _bitmap.WriteToDisk();
         _fsm.WriteToDisk();
     }
@@ -424,6 +444,18 @@ internal class PageManager
                 _fsm.SetFreeSpaceLevel(newFsmStart + i, FreeSpaceLevel.None);
             }
         }
+    }
+
+    public void PersistHeader()
+    {
+        byte[] headerBytes = _header.Serialize(_pageSize);
+        _pageIO.WritePage(0, headerBytes);
+    }
+
+    private void WriteHeader()
+    {
+        byte[] headerBytes = _header.Serialize(_pageSize);
+        _pageIO.WritePage(0, headerBytes);
     }
 
 }

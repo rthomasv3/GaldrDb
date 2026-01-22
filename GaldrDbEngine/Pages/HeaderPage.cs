@@ -15,6 +15,7 @@ internal class HeaderPage
     public int CollectionsMetadataStartPage { get; set; }
     public int CollectionsMetadataPageCount { get; set; }
     public byte MmapHint { get; set; }
+    public int NextFreePageHint { get; set; }
 
     public byte[] Serialize(int pageSize)
     {
@@ -52,6 +53,9 @@ internal class HeaderPage
         offset += 4;
 
         buffer[offset] = MmapHint;
+        offset += 1;
+
+        BinaryHelper.WriteInt32LE(buffer, offset, NextFreePageHint);
 
         byte[] result = buffer;
 
@@ -94,6 +98,9 @@ internal class HeaderPage
         offset += 4;
 
         header.MmapHint = buffer[offset];
+        offset += 1;
+
+        header.NextFreePageHint = BinaryHelper.ReadInt32LE(buffer, offset);
 
         HeaderPage result = header;
 

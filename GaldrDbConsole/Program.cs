@@ -35,6 +35,10 @@ class Program
             case "-ta":
                 AllocationTracingTest.Run();
                 break;
+            case "--test-perf":
+            case "-tp":
+                PerformanceTracingTest.Run();
+                break;
             case "--test-diag":
             case "-td":
                 DiagnosticTest.Run();
@@ -92,6 +96,10 @@ class Program
                 Console.WriteLine("Running update comparison benchmarks...");
                 BenchmarkRunner.Run<UpdateBenchmarks>(config);
                 break;
+            case "aot":
+                Console.WriteLine("Running AOT comparison benchmarks...");
+                BenchmarkRunner.Run<SingleOperationAotBenchmarks>(config);
+                break;
             case "all":
                 Console.WriteLine("Running all benchmarks...");
                 BenchmarkRunner.Run<SingleOperationBenchmarks>(config);
@@ -130,6 +138,7 @@ class Program
         Console.WriteLine("  serialize   Serialization comparison benchmarks");
         Console.WriteLine("  json        JSON document benchmarks (GaldrDocument vs System.Text.Json)");
         Console.WriteLine("  update      Update comparison benchmarks (Full Update vs UpdateById)");
+        Console.WriteLine("  aot         AOT comparison benchmarks (GaldrDb vs SQLite, JIT vs NativeAOT)");
         Console.WriteLine("  query       Query benchmarks (Phase 2 - not yet implemented)");
         Console.WriteLine("  bulk        Bulk operation benchmarks (Phase 3 - not yet implemented)");
         Console.WriteLine("  concurrent  Concurrent operation benchmarks (Phase 4 - not yet implemented)");

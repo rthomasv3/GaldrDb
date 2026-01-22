@@ -223,11 +223,10 @@ public class HeaderAndBitmapTests
     public void Open_InvalidMagicNumber_ThrowsException()
     {
         string dbPath = Path.Combine(_testDirectory, "test.db");
-        GaldrDbOptions options = new GaldrDbOptions();
+        GaldrDbOptions options = new GaldrDbOptions { UseWal = false };
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, options))
         {
-            db.Checkpoint();
         }
 
         byte[] corruptedHeader = File.ReadAllBytes(dbPath);

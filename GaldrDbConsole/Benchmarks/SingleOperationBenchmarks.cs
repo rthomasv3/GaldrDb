@@ -5,6 +5,7 @@ using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Order;
 using GaldrDbConsole.Models;
 using GaldrDbEngine;
+using GaldrDbEngine.Generated;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
@@ -13,7 +14,7 @@ namespace GaldrDbConsole.Benchmarks;
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
 [RankColumn]
-[SimpleJob(warmupCount: 3, iterationCount: 10)]
+[SimpleJob(warmupCount: 3, iterationCount: 15)]
 public class SingleOperationBenchmarks
 {
     private string _testDirectory;
@@ -130,9 +131,9 @@ public class SingleOperationBenchmarks
 
     [Benchmark(Description = "GaldrDb Insert")]
     [BenchmarkCategory("Insert")]
-    public int GaldrDb_Insert_Serialize()
+    public int GaldrDb_Insert()
     {
-        int id = _galdrDb.Insert(new BenchmarkPerson
+        return _galdrDb.Insert(new BenchmarkPerson
         {
             Name = $"Person {_nextId++}",
             Age = 25,
@@ -140,8 +141,6 @@ public class SingleOperationBenchmarks
             Address = "456 Oak Ave",
             Phone = "555-5678"
         });
-
-        return id;
     }
 
     [Benchmark(Description = "SQLite ADO.NET Insert")]
@@ -193,8 +192,7 @@ public class SingleOperationBenchmarks
     [BenchmarkCategory("Read")]
     public BenchmarkPerson GaldrDb_ReadById()
     {
-        BenchmarkPerson person = _galdrDb.GetById<BenchmarkPerson>(_existingId);
-        return person;
+        return _galdrDb.GetById<BenchmarkPerson>(_existingId);
     }
     
     [Benchmark(Description = "SQLite ADO.NET Read")]
@@ -232,10 +230,9 @@ public class SingleOperationBenchmarks
     public SqlitePerson SqliteEf_ReadById()
     {
         // Use AsNoTracking to bypass change tracker cache and actually hit the database
-        SqlitePerson person = _efContext.People
+        return _efContext.People
             .AsNoTracking()
             .FirstOrDefault(p => p.Id == 1);
-        return person;
     }
 
     #endregion
@@ -246,18 +243,13 @@ public class SingleOperationBenchmarks
     [BenchmarkCategory("Update")]
     public bool GaldrDb_Update()
     {
-        BenchmarkPerson person = new BenchmarkPerson
-        {
-            Id = _existingId,
-            Name = "Updated Person",
-            Age = 31,
-            Email = "updated@example.com",
-            Address = "789 Pine Rd",
-            Phone = "555-9999"
-        };
-
-        bool result = _galdrDb.Update(person);
-        return result;
+        return _galdrDb.UpdateById<BenchmarkPerson>(_existingId)
+            .Set(BenchmarkPersonMeta.Name, "Updated Person")
+            .Set(BenchmarkPersonMeta.Age, 31)
+            .Set(BenchmarkPersonMeta.Email, "updated@example.com")
+            .Set(BenchmarkPersonMeta.Address, "789 Pine Rd")
+            .Set(BenchmarkPersonMeta.Phone, "555-9999")
+            .Execute();
     }
 
     [Benchmark(Description = "SQLite ADO.NET Update")]
@@ -325,8 +317,7 @@ public class SingleOperationBenchmarks
     [BenchmarkCategory("Delete")]
     public bool GaldrDb_Delete()
     {
-        bool result = _galdrDb.Delete<BenchmarkPerson>(_deleteIdGaldr);
-        return result;
+        return _galdrDb.Delete<BenchmarkPerson>(_deleteIdGaldr);
     }
     
     [IterationSetup(Target = nameof(SqliteAdo_Delete))]
@@ -378,11 +369,9 @@ public class SingleOperationBenchmarks
     public int SqliteEf_Delete()
     {
         // Use ExecuteDelete for direct SQL delete without loading/tracking entity
-        int result = _efContext.People
+        return _efContext.People
             .Where(p => p.Id == _deleteIdEf)
             .ExecuteDelete();
-    
-        return result;
     }
 
     #endregion

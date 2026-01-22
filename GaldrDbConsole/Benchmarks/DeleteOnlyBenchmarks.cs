@@ -10,7 +10,7 @@ namespace GaldrDbConsole.Benchmarks;
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
 [RankColumn]
-[SimpleJob(warmupCount: 3, iterationCount: 10)]
+[SimpleJob(warmupCount: 3, iterationCount: 25)]
 public class DeleteOnlyBenchmarks
 {
     private string _testDirectory;
