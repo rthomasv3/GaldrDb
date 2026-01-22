@@ -7,12 +7,14 @@ namespace GaldrDbEngine.MVCC;
 internal sealed class VersionIndex
 {
     private readonly Dictionary<string, Dictionary<int, DocumentVersion>> _index;
+    private readonly HashSet<DocumentKey> _gcCandidates;
     private readonly object _lock = new object();
     private int _multiVersionDocumentCount;
 
     public VersionIndex()
     {
         _index = new Dictionary<string, Dictionary<int, DocumentVersion>>();
+        _gcCandidates = new HashSet<DocumentKey>();
         _multiVersionDocumentCount = 0;
     }
 
@@ -95,6 +97,8 @@ internal sealed class VersionIndex
                 {
                     _multiVersionDocumentCount++;
                 }
+
+                _gcCandidates.Add(new DocumentKey(collectionName, documentId));
             }
 
             DocumentVersion newVersion = new DocumentVersion(documentId, createdBy, location, previousVersion);
@@ -172,6 +176,8 @@ internal sealed class VersionIndex
             {
                 _multiVersionDocumentCount++;
             }
+
+            _gcCandidates.Add(new DocumentKey(collectionName, documentId));
         }
 
         DocumentVersion newVersion = new DocumentVersion(documentId, createdBy, location, previousVersion);
@@ -185,6 +191,7 @@ internal sealed class VersionIndex
             if (collection.TryGetValue(documentId, out DocumentVersion version))
             {
                 version.MarkDeleted(deletedBy);
+                _gcCandidates.Add(new DocumentKey(collectionName, documentId));
             }
         }
     }
@@ -198,6 +205,7 @@ internal sealed class VersionIndex
                 if (collection.TryGetValue(documentId, out DocumentVersion version))
                 {
                     version.MarkDeleted(deletedBy);
+                    _gcCandidates.Add(new DocumentKey(collectionName, documentId));
                 }
             }
         }
@@ -316,6 +324,8 @@ internal sealed class VersionIndex
         {
             if (_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
             {
+                DocumentKey docKey = new DocumentKey(collectionName, documentId);
+
                 if (previous == null)
                 {
                     // Removing the head version
@@ -323,6 +333,7 @@ internal sealed class VersionIndex
                     {
                         // Last version in chain — remove document entry entirely
                         collection.Remove(documentId);
+                        _gcCandidates.Remove(docKey);
                     }
                     else
                     {
@@ -332,6 +343,11 @@ internal sealed class VersionIndex
                         if (toRemove.PreviousVersion.PreviousVersion == null)
                         {
                             _multiVersionDocumentCount--;
+                            // If now single-version and not deleted, no longer a GC candidate
+                            if (!toRemove.PreviousVersion.IsDeleted)
+                            {
+                                _gcCandidates.Remove(docKey);
+                            }
                         }
                     }
                 }
@@ -346,6 +362,11 @@ internal sealed class VersionIndex
                         if (head.PreviousVersion == null)
                         {
                             _multiVersionDocumentCount--;
+                            // If now single-version and not deleted, no longer a GC candidate
+                            if (!head.IsDeleted)
+                            {
+                                _gcCandidates.Remove(docKey);
+                            }
                         }
                     }
                 }
@@ -389,78 +410,80 @@ internal sealed class VersionIndex
     {
         lock (_lock)
         {
-            foreach (KeyValuePair<string, Dictionary<int, DocumentVersion>> collectionKvp in _index)
+            foreach (DocumentKey docKey in _gcCandidates)
             {
-                string collectionName = collectionKvp.Key;
-
-                foreach (KeyValuePair<int, DocumentVersion> docKvp in collectionKvp.Value)
+                if (!_index.TryGetValue(docKey.CollectionName, out Dictionary<int, DocumentVersion> collection))
                 {
-                    int documentId = docKvp.Key;
-                    DocumentVersion head = docKvp.Value;
+                    continue;
+                }
 
-                    // Handle single-version chains - check if deleted and collectable
-                    if (head.PreviousVersion == null)
+                if (!collection.TryGetValue(docKey.DocId, out DocumentVersion head))
+                {
+                    continue;
+                }
+
+                // Handle single-version chains - check if deleted and collectable
+                if (head.PreviousVersion == null)
+                {
+                    if (head.DeletedBy != TxId.MaxValue && head.DeletedBy <= oldestSnapshot)
                     {
-                        if (head.DeletedBy != TxId.MaxValue && head.DeletedBy <= oldestSnapshot)
+                        CollectableVersion collectable = new CollectableVersion(
+                            docKey.CollectionName,
+                            docKey.DocId,
+                            null,
+                            head,
+                            head.Location);
+                        results.Add(collectable);
+                    }
+                    continue;
+                }
+
+                // Walk the chain and identify collectable versions
+                DocumentVersion current = head;
+                DocumentVersion previous = null;
+                bool foundVisibleVersion = false;
+
+                while (current != null)
+                {
+                    bool canCollect = false;
+
+                    if (foundVisibleVersion)
+                    {
+                        // Version was superseded - collect if deleted at or before oldest snapshot
+                        if (current.DeletedBy != TxId.MaxValue && current.DeletedBy <= oldestSnapshot)
                         {
-                            CollectableVersion collectable = new CollectableVersion(
-                                collectionName,
-                                documentId,
-                                null,
-                                head,
-                                head.Location);
-                            results.Add(collectable);
+                            canCollect = true;
                         }
-                        continue;
+                    }
+                    else
+                    {
+                        if (current.IsVisibleTo(oldestSnapshot))
+                        {
+                            foundVisibleVersion = true;
+                        }
+                        else if (current.DeletedBy != TxId.MaxValue && current.DeletedBy <= oldestSnapshot)
+                        {
+                            // Version is not visible to oldest snapshot - safe to collect
+                            canCollect = true;
+                        }
                     }
 
-                    // Walk the chain and identify collectable versions
-                    DocumentVersion current = head;
-                    DocumentVersion previous = null;
-                    bool foundVisibleVersion = false;
-
-                    while (current != null)
+                    if (canCollect)
                     {
-                        bool canCollect = false;
-
-                        if (foundVisibleVersion)
-                        {
-                            // Version was superseded - collect if deleted at or before oldest snapshot
-                            if (current.DeletedBy != TxId.MaxValue && current.DeletedBy <= oldestSnapshot)
-                            {
-                                canCollect = true;
-                            }
-                        }
-                        else
-                        {
-                            if (current.IsVisibleTo(oldestSnapshot))
-                            {
-                                foundVisibleVersion = true;
-                            }
-                            else if (current.DeletedBy != TxId.MaxValue && current.DeletedBy <= oldestSnapshot)
-                            {
-                                // Version is not visible to oldest snapshot - safe to collect
-                                canCollect = true;
-                            }
-                        }
-
-                        if (canCollect)
-                        {
-                            CollectableVersion collectable = new CollectableVersion(
-                                collectionName,
-                                documentId,
-                                previous,
-                                current,
-                                current.Location);
-                            results.Add(collectable);
-                        }
-                        else
-                        {
-                            previous = current;
-                        }
-
-                        current = current.PreviousVersion;
+                        CollectableVersion collectable = new CollectableVersion(
+                            docKey.CollectionName,
+                            docKey.DocId,
+                            previous,
+                            current,
+                            current.Location);
+                        results.Add(collectable);
                     }
+                    else
+                    {
+                        previous = current;
+                    }
+
+                    current = current.PreviousVersion;
                 }
             }
         }
