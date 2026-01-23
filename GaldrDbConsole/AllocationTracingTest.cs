@@ -104,7 +104,7 @@ public static class AllocationTracingTest
             {
                 BenchmarkPerson person = tx.GetById<BenchmarkPerson>(id);
                 person.Age = 31 + (i % 10);
-                tx.Update(person);
+                tx.Replace(person);
                 tx.Commit();
             }
         }
@@ -138,7 +138,7 @@ public static class AllocationTracingTest
             {
                 BenchmarkPerson person = tx.GetById<BenchmarkPerson>(id);
                 person.Age = 31 + (i % 10);
-                tx.Update(person);
+                tx.Replace(person);
                 tx.Commit();
             }
             long after = GC.GetAllocatedBytesForCurrentThread();

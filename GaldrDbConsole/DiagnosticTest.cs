@@ -87,7 +87,7 @@ public static class DiagnosticTest
                 int idToDelete = insertedIds[i];
 
                 long startTicks = System.Diagnostics.Stopwatch.GetTimestamp();
-                galdrDb.Delete<BenchmarkPerson>(idToDelete);
+                galdrDb.DeleteById<BenchmarkPerson>(idToDelete);
                 long endTicks = System.Diagnostics.Stopwatch.GetTimestamp();
 
                 double microseconds = (endTicks - startTicks) * 1_000_000.0 / System.Diagnostics.Stopwatch.Frequency;
@@ -141,7 +141,7 @@ public static class DiagnosticTest
         Console.WriteLine("Phase 2: Delete last 100 docs...");
         for (int i = 100; i < 200; i++)
         {
-            galdrDb2.Delete<BenchmarkPerson>(ids[i]);
+            galdrDb2.DeleteById<BenchmarkPerson>(ids[i]);
         }
         Console.WriteLine("  Done.");
 

@@ -146,7 +146,7 @@ public class CompactToTests
 
             using (Transaction tx = db.BeginTransaction())
             {
-                tx.Delete<Person>(2);
+                tx.DeleteById<Person>(2);
                 tx.Commit();
             }
 
@@ -274,7 +274,7 @@ public class CompactToTests
             {
                 for (int i = 1; i <= 1900; i++)
                 {
-                    tx.Delete<Person>(i);
+                    tx.DeleteById<Person>(i);
                 }
                 tx.Commit();
             }

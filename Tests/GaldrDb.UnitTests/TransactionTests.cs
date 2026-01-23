@@ -367,7 +367,7 @@ public class TransactionTests
             using (Transaction tx = db.BeginTransaction())
             {
                 Person updated = new Person { Id = insertedId, Name = "Updated", Age = 30, Email = "updated@example.com" };
-                bool result = tx.Update(updated);
+                bool result = tx.Replace(updated);
 
                 Assert.IsTrue(result);
 
@@ -398,7 +398,7 @@ public class TransactionTests
             // Delete in transaction
             using (Transaction tx = db.BeginTransaction())
             {
-                bool result = tx.Delete<Person>(insertedId);
+                bool result = tx.DeleteById<Person>(insertedId);
 
                 Assert.IsTrue(result);
 
@@ -561,7 +561,7 @@ public class TransactionTests
             {
                 // Update within transaction
                 Person updated = new Person { Id = id, Name = "Updated", Age = 30, Email = "updated@example.com" };
-                tx.Update(updated);
+                tx.Replace(updated);
 
                 // Query should see updated version
                 List<Person> results = tx.Query<Person>()
@@ -592,7 +592,7 @@ public class TransactionTests
             using (Transaction tx = db.BeginTransaction())
             {
                 // Delete within transaction
-                tx.Delete<Person>(deleteId);
+                tx.DeleteById<Person>(deleteId);
 
                 // Query should not see deleted document
                 List<Person> results = tx.Query<Person>().ToList();

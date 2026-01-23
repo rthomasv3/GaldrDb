@@ -219,7 +219,7 @@ public class TypeSafeCRUDTests
 
             person.Name = "Updated";
             person.Age = 35;
-            bool result = db.Update(person);
+            bool result = db.Replace(person);
 
             Assert.IsTrue(result);
         }
@@ -239,7 +239,7 @@ public class TypeSafeCRUDTests
             person.Name = "Updated";
             person.Age = 35;
             person.Email = "updated@example.com";
-            db.Update(person);
+            db.Replace(person);
 
             Person retrieved = db.GetById<Person>(id);
 
@@ -258,7 +258,7 @@ public class TypeSafeCRUDTests
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
             Person person = new Person { Id = 999, Name = "Ghost", Age = 0, Email = "ghost@example.com" };
-            bool result = db.Update(person);
+            bool result = db.Replace(person);
 
             Assert.IsFalse(result);
         }
@@ -277,7 +277,7 @@ public class TypeSafeCRUDTests
             try
             {
                 Person person = new Person { Id = 0, Name = "Zero ID", Age = 25, Email = "zero@example.com" };
-                db.Update(person);
+                db.Replace(person);
             }
             catch (InvalidOperationException ex)
             {
@@ -304,7 +304,7 @@ public class TypeSafeCRUDTests
             Person person = new Person { Name = "To Delete", Age = 30, Email = "delete@example.com" };
             int id = db.Insert(person);
 
-            bool result = db.Delete<Person>(id);
+            bool result = db.DeleteById<Person>(id);
 
             Assert.IsTrue(result);
         }
@@ -321,7 +321,7 @@ public class TypeSafeCRUDTests
             Person person = new Person { Name = "To Delete", Age = 30, Email = "delete@example.com" };
             int id = db.Insert(person);
 
-            db.Delete<Person>(id);
+            db.DeleteById<Person>(id);
 
             Person retrieved = db.GetById<Person>(id);
 
@@ -337,7 +337,7 @@ public class TypeSafeCRUDTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            bool result = db.Delete<Person>(999);
+            bool result = db.DeleteById<Person>(999);
 
             Assert.IsFalse(result);
         }
@@ -365,14 +365,14 @@ public class TypeSafeCRUDTests
 
             retrieved.Name = "Updated Cycle";
             retrieved.Age = 30;
-            bool updated = db.Update<Person>(retrieved);
+            bool updated = db.Replace<Person>(retrieved);
             Assert.IsTrue(updated);
 
             Person afterUpdate = db.GetById<Person>(id);
             Assert.AreEqual("Updated Cycle", afterUpdate.Name);
             Assert.AreEqual(30, afterUpdate.Age);
 
-            bool deleted = db.Delete<Person>(id);
+            bool deleted = db.DeleteById<Person>(id);
             Assert.IsTrue(deleted);
 
             Person afterDelete = db.GetById<Person>(id);
@@ -631,7 +631,7 @@ public class TypeSafeCRUDTests
 
             // Update without typeInfo parameter
             retrieved.Age = 43;
-            bool updated = db.Update(retrieved);
+            bool updated = db.Replace(retrieved);
             Assert.IsTrue(updated);
 
             Person afterUpdate = db.GetById<Person>(id);
@@ -648,7 +648,7 @@ public class TypeSafeCRUDTests
             Assert.HasCount(1, all);
 
             // Delete without typeInfo parameter
-            bool deleted = db.Delete<Person>(id);
+            bool deleted = db.DeleteById<Person>(id);
             Assert.IsTrue(deleted);
 
             Person afterDelete = db.GetById<Person>(id);
@@ -717,7 +717,7 @@ public class TypeSafeCRUDTests
         {
             // Update on non-existent collection should auto-create (but return false since doc doesn't exist)
             Person person = new Person { Id = 999, Name = "Update Test", Age = 30, Email = "update@test.com" };
-            bool updated = db.Update(person);
+            bool updated = db.Replace(person);
 
             Assert.IsFalse(updated);
 
@@ -737,7 +737,7 @@ public class TypeSafeCRUDTests
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
             // Delete on non-existent collection should auto-create (but return false since doc doesn't exist)
-            bool deleted = db.Delete<Person>(999);
+            bool deleted = db.DeleteById<Person>(999);
 
             Assert.IsFalse(deleted);
 
@@ -812,7 +812,7 @@ public class TypeSafeCRUDTests
 
             using (Transaction tx = db.BeginTransaction())
             {
-                tx.Delete<Person>(1);
+                tx.DeleteById<Person>(1);
 
                 int count = tx.Query<Person>().Count();
 
@@ -860,7 +860,7 @@ public class TypeSafeCRUDTests
 
             using (Transaction tx = db.BeginTransaction())
             {
-                tx.Delete<Person>(2);
+                tx.DeleteById<Person>(2);
 
                 int count = tx.Query<Person>()
                     .Where(PersonMeta.Age, FieldOp.GreaterThanOrEqual, 30)
@@ -885,7 +885,7 @@ public class TypeSafeCRUDTests
 
             using (Transaction tx = db.BeginTransaction())
             {
-                tx.Update(new Person { Id = 1, Name = "Alice", Age = 40, Email = "alice@example.com" });
+                tx.Replace(new Person { Id = 1, Name = "Alice", Age = 40, Email = "alice@example.com" });
 
                 int count = tx.Query<Person>()
                     .Where(PersonMeta.Age, FieldOp.GreaterThanOrEqual, 30)
@@ -910,7 +910,7 @@ public class TypeSafeCRUDTests
 
             using (Transaction tx = db.BeginTransaction())
             {
-                tx.Update(new Person { Id = 2, Name = "Bob", Age = 20, Email = "bob@example.com" });
+                tx.Replace(new Person { Id = 2, Name = "Bob", Age = 20, Email = "bob@example.com" });
 
                 int count = tx.Query<Person>()
                     .Where(PersonMeta.Age, FieldOp.GreaterThanOrEqual, 30)

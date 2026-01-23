@@ -244,7 +244,7 @@ public class ProjectionQueryTests
             {
                 Person person = tx.GetById<Person>(personId);
                 person.Name = "Updated";
-                tx.Update(person);
+                tx.Replace(person);
 
                 List<PersonSummary> results = tx.Query<PersonSummary>()
                     .Where(PersonSummaryMeta.Id, FieldOp.Equals, personId)
@@ -270,7 +270,7 @@ public class ProjectionQueryTests
 
             using (Transaction tx = db.BeginTransaction())
             {
-                tx.Delete<Person>(personId);
+                tx.DeleteById<Person>(personId);
 
                 List<PersonSummary> results = tx.Query<PersonSummary>().ToList();
 
@@ -545,7 +545,7 @@ public class ProjectionQueryTests
 
             using (Transaction tx = db.BeginTransaction())
             {
-                tx.Delete<Person>(1);
+                tx.DeleteById<Person>(1);
 
                 int count = tx.Query<PersonSummary>().Count();
 

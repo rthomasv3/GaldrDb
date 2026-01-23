@@ -51,7 +51,7 @@ public class ConflictDetectionTests
             using (Transaction tx2 = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Alice Updated", Age = 31 };
-                tx2.Update(updated);
+                tx2.Replace(updated);
                 tx2.Commit();
             }
 
@@ -60,7 +60,7 @@ public class ConflictDetectionTests
 
             Assert.ThrowsExactly<WriteConflictException>(() =>
             {
-                tx1.Update(tx1Update);
+                tx1.Replace(tx1Update);
             });
 
             tx1.Dispose();
@@ -83,14 +83,14 @@ public class ConflictDetectionTests
             using (Transaction tx2 = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Bob Updated", Age = 26 };
-                tx2.Update(updated);
+                tx2.Replace(updated);
                 tx2.Commit();
             }
 
             // Transaction 1 tries to delete the same document - should conflict
             Assert.ThrowsExactly<WriteConflictException>(() =>
             {
-                tx1.Delete<Person>(id);
+                tx1.DeleteById<Person>(id);
             });
 
             tx1.Dispose();
@@ -110,7 +110,7 @@ public class ConflictDetectionTests
             using (Transaction tx = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Charlie Updated", Age = 36 };
-                bool result = tx.Update(updated);
+                bool result = tx.Replace(updated);
                 tx.Commit();
 
                 Assert.IsTrue(result);
@@ -135,13 +135,13 @@ public class ConflictDetectionTests
             // Start transaction 1 and buffer an update (doesn't check yet)
             Transaction tx1 = db.BeginTransaction();
             Person tx1Update = new Person { Id = id, Name = "Diana from tx1", Age = 41 };
-            tx1.Update(tx1Update);
+            tx1.Replace(tx1Update);
 
             // Transaction 2 updates and commits (after tx1 buffered but before tx1 commits)
             using (Transaction tx2 = db.BeginTransaction())
             {
                 Person tx2Update = new Person { Id = id, Name = "Diana from tx2", Age = 42 };
-                tx2.Update(tx2Update);
+                tx2.Replace(tx2Update);
                 tx2.Commit();
             }
 
@@ -195,14 +195,14 @@ public class ConflictDetectionTests
             using (Transaction tx1 = db.BeginTransaction())
             {
                 Person update1 = new Person { Id = id, Name = "Frank v1", Age = 51 };
-                tx1.Update(update1);
+                tx1.Replace(update1);
                 tx1.Commit();
             }
 
             using (Transaction tx2 = db.BeginTransaction())
             {
                 Person update2 = new Person { Id = id, Name = "Frank v2", Age = 52 };
-                tx2.Update(update2);
+                tx2.Replace(update2);
                 tx2.Commit();
             }
 
@@ -230,8 +230,8 @@ public class ConflictDetectionTests
             Person update1 = new Person { Id = id1, Name = "Grace Updated", Age = 31 };
             Person update2 = new Person { Id = id2, Name = "Henry Updated", Age = 36 };
 
-            tx1.Update(update1);
-            tx2.Update(update2);
+            tx1.Replace(update1);
+            tx2.Replace(update2);
 
             tx1.Commit();
             tx2.Commit();
@@ -260,14 +260,14 @@ public class ConflictDetectionTests
             using (Transaction tx2 = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Ivan Updated", Age = 46 };
-                tx2.Update(updated);
+                tx2.Replace(updated);
                 tx2.Commit();
             }
 
             try
             {
                 Person tx1Update = new Person { Id = id, Name = "Ivan from tx1", Age = 47 };
-                tx1.Update(tx1Update);
+                tx1.Replace(tx1Update);
                 Assert.Fail("Expected WriteConflictException");
             }
             catch (WriteConflictException ex)
@@ -295,7 +295,7 @@ public class ConflictDetectionTests
             using (Transaction tx = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Julia Updated", Age = 34 };
-                tx.Update(updated);
+                tx.Replace(updated);
                 tx.Rollback();
             }
 
@@ -303,7 +303,7 @@ public class ConflictDetectionTests
             using (Transaction tx2 = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Julia v2", Age = 35 };
-                tx2.Update(updated);
+                tx2.Replace(updated);
                 tx2.Commit();
             }
 

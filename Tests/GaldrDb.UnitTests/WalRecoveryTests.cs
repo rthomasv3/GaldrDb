@@ -299,10 +299,10 @@ public class WalRecoveryTests
             person1.Id = id1;
             person1.Name = "Updated Name";
             person1.Age = 26;
-            db.Update<Person>(person1);
+            db.Replace<Person>(person1);
 
             // Delete person2
-            db.Delete<Person>(id2);
+            db.DeleteById<Person>(id2);
         }
 
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
@@ -418,7 +418,7 @@ public class WalRecoveryTests
                 // Update within transaction
                 retrieved.Name = "Updated";
                 retrieved.Age = 30;
-                bool updateResult = tx.Update(retrieved);
+                bool updateResult = tx.Replace(retrieved);
 
                 Assert.IsTrue(updateResult);
                 tx.Commit();

@@ -158,7 +158,7 @@ public class SchemaManagementTests
             int countBefore = db.GetCollectionNames().Count;
 
             Person person = db.GetById<Person>(1);
-            db.Delete<Person>(person.Id);
+            db.DeleteById<Person>(person.Id);
 
             db.DropCollection("Person");
 

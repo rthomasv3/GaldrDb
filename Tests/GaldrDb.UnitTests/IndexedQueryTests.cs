@@ -376,7 +376,7 @@ public class IndexedQueryTests
             // Phase 2: Delete the last 100 documents (triggers tree rebalancing)
             for (int i = 100; i < 200; i++)
             {
-                db.Delete<Person>(ids[i]);
+                db.DeleteById<Person>(ids[i]);
             }
 
             // Phase 3: Insert 1000 new documents - this would crash before the fix

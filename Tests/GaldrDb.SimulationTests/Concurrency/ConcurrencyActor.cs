@@ -171,7 +171,7 @@ public class ConcurrencyActor
                 Payload = Array.Empty<byte>()
             };
 
-            bool updated = _currentTransaction.Update(updateDoc);
+            bool updated = _currentTransaction.Replace(updateDoc);
             _currentTransaction.Commit();
             _currentTransaction.Dispose();
             _currentTransaction = null;

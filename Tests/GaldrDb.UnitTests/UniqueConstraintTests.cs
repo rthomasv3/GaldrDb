@@ -118,7 +118,7 @@ public class UniqueConstraintTests
             int id = db.Insert(user);
 
             user.Name = "John Updated";
-            bool updated = db.Update(user);
+            bool updated = db.Replace(user);
 
             Assert.IsTrue(updated);
 
@@ -146,7 +146,7 @@ public class UniqueConstraintTests
 
             InvalidOperationException exception = Assert.ThrowsExactly<InvalidOperationException>(() =>
             {
-                db.Update(user2);
+                db.Replace(user2);
             });
 
             Assert.Contains("Unique constraint violation", exception.Message);
@@ -165,7 +165,7 @@ public class UniqueConstraintTests
             int id = db.Insert(user);
 
             user.Email = "john.doe@example.com";
-            bool updated = db.Update(user);
+            bool updated = db.Replace(user);
 
             Assert.IsTrue(updated);
 
@@ -185,7 +185,7 @@ public class UniqueConstraintTests
             User user1 = new User { Name = "John", Email = "john@example.com", Department = "Engineering" };
             int id1 = db.Insert(user1);
 
-            db.Delete<User>(id1);
+            db.DeleteById<User>(id1);
 
             User user2 = new User { Name = "New John", Email = "john@example.com", Department = "Marketing" };
             int id2 = db.Insert(user2);

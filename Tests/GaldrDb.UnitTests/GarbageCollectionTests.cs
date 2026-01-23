@@ -62,11 +62,11 @@ public class GarbageCollectionTests
             // Update to create a new version (old version becomes superseded)
             person.Id = id;
             person.Name = "Version2";
-            db.Update(person);
+            db.Replace(person);
 
             // Update again
             person.Name = "Version3";
-            db.Update(person);
+            db.Replace(person);
 
             // Now vacuum - should collect the old versions since no active transactions
             GarbageCollectionResult result = db.Vacuum();
@@ -94,7 +94,7 @@ public class GarbageCollectionTests
                 // Update to create a new version
                 person.Id = id;
                 person.Name = "Version2";
-                db.Update(person);
+                db.Replace(person);
 
                 // The read transaction should still see Version1
                 Person fromReadTx = readTx.GetById<Person>(id);
@@ -132,7 +132,7 @@ public class GarbageCollectionTests
             // Update to create a new version
             person.Id = id;
             person.Name = "Version2";
-            db.Update(person);
+            db.Replace(person);
 
             // Now vacuum - the old version should be collectible since no active snapshots
             GarbageCollectionResult result = db.Vacuum();
@@ -166,7 +166,7 @@ public class GarbageCollectionTests
                 // Update to create old versions
                 person.Id = id;
                 person.Name = $"Person{i}_Updated";
-                db.Update(person);
+                db.Replace(person);
             }
 
             // Auto GC should have run by now (after threshold commits)
@@ -195,7 +195,7 @@ public class GarbageCollectionTests
 
             person.Id = id;
             person.Name = "Updated";
-            db.Update(person);
+            db.Replace(person);
 
             // Explicitly call Vacuum to verify it still works when called manually
             GarbageCollectionResult result = db.Vacuum();
@@ -216,7 +216,7 @@ public class GarbageCollectionTests
             Person person = new Person { Name = "ToDelete", Age = 25, Email = "delete@example.com" };
             int id = db.Insert(person);
 
-            db.Delete<Person>(id);
+            db.DeleteById<Person>(id);
 
             // Vacuum should be able to collect the deleted version
             GarbageCollectionResult result = db.Vacuum();
@@ -242,7 +242,7 @@ public class GarbageCollectionTests
             // Update to create old version
             person.Id = id;
             person.Name = "Version2";
-            db.Update(person);
+            db.Replace(person);
 
             // Vacuum and check that CollectableVersions contains location info
             GarbageCollectionResult result = db.Vacuum();
@@ -288,7 +288,7 @@ public class GarbageCollectionTests
                 {
                     Person person = db.GetById<Person>(i);
                     person.Name = $"Person{i}_Round{round}";
-                    db.Update(person);
+                    db.Replace(person);
                 }
             }
 
@@ -352,7 +352,7 @@ public class GarbageCollectionTests
 
             person.Id = docId;
             person.Name = "Updated";
-            db.Update(person);
+            db.Replace(person);
 
             // Vacuum to clean up old version
             GarbageCollectionResult result = db.Vacuum();
@@ -371,7 +371,7 @@ public class GarbageCollectionTests
 
             // Should be able to do more operations
             person.Name = "AfterReopen";
-            bool updated = db.Update(person);
+            bool updated = db.Replace(person);
             Assert.IsTrue(updated);
 
             Person afterUpdate = db.GetById<Person>(docId);
@@ -392,7 +392,7 @@ public class GarbageCollectionTests
             int personId = db.Insert(person);
             person.Id = personId;
             person.Name = "PersonV2";
-            db.Update(person);
+            db.Replace(person);
 
             // Insert into User collection
             User user = new User { Name = "UserV1", Email = "user1@example.com", Department = "Engineering" };
@@ -400,7 +400,7 @@ public class GarbageCollectionTests
             user.Id = userId;
             user.Name = "UserV2";
             user.Email = "user2@example.com";
-            db.Update(user);
+            db.Replace(user);
 
             // Vacuum should clean up old versions from both collections
             GarbageCollectionResult result = db.Vacuum();
@@ -434,7 +434,7 @@ public class GarbageCollectionTests
             // Update with a smaller document
             person.Id = id;
             person.Email = "small@example.com";
-            db.Update(person);
+            db.Replace(person);
 
             // Vacuum should free the continuation pages from the old large document
             GarbageCollectionResult result = db.Vacuum();
@@ -480,7 +480,7 @@ public class GarbageCollectionTests
                 // Update in the same transaction - this overwrites the write set entry
                 person.Id = id;
                 person.Name = "Updated";
-                tx.Update(person);
+                tx.Replace(person);
 
                 tx.Commit();
             }
@@ -508,7 +508,7 @@ public class GarbageCollectionTests
         {
             Person person = new Person { Name = "SingleVersion", Age = 25, Email = "single@example.com" };
             int id = db.Insert(person);
-            db.Delete<Person>(id);
+            db.DeleteById<Person>(id);
 
             GarbageCollectionResult result = db.Vacuum();
 
@@ -533,10 +533,10 @@ public class GarbageCollectionTests
             // Update to create a second version
             person.Id = id;
             person.Name = "Version2";
-            db.Update(person);
+            db.Replace(person);
 
             // Delete the document (marks head as deleted)
-            db.Delete<Person>(id);
+            db.DeleteById<Person>(id);
 
             // First vacuum - should collect ALL versions (both head and interior)
             GarbageCollectionResult result1 = db.Vacuum();
@@ -566,7 +566,7 @@ public class GarbageCollectionTests
             {
                 Person person = new Person { Name = $"Person{i}", Age = 20 + i, Email = $"p{i}@example.com" };
                 int id = db.Insert(person);
-                db.Delete<Person>(id);
+                db.DeleteById<Person>(id);
             }
 
             GarbageCollectionResult result = db.Vacuum();
@@ -592,8 +592,8 @@ public class GarbageCollectionTests
                 int id = db.Insert(person);
                 person.Id = id;
                 person.Name = $"Multi{i}_V2";
-                db.Update(person);
-                db.Delete<Person>(id);
+                db.Replace(person);
+                db.DeleteById<Person>(id);
             }
 
             // Run vacuum until nothing more to collect (max 10 rounds)
@@ -633,8 +633,8 @@ public class GarbageCollectionTests
             }
 
             // Delete some to create fragmentation (holes in the page)
-            db.Delete<Person>(1);
-            db.Delete<Person>(3);
+            db.DeleteById<Person>(1);
+            db.DeleteById<Person>(3);
 
             // Vacuum should run version GC and then compact fragmented pages
             GarbageCollectionResult result = db.Vacuum();
@@ -693,9 +693,9 @@ public class GarbageCollectionTests
             }
 
             // Delete some documents to create fragmentation
-            db.Delete<Person>(2);
-            db.Delete<Person>(5);
-            db.Delete<Person>(8);
+            db.DeleteById<Person>(2);
+            db.DeleteById<Person>(5);
+            db.DeleteById<Person>(8);
 
             // First vacuum: version GC + page compaction
             GarbageCollectionResult result1 = db.Vacuum();
@@ -730,8 +730,8 @@ public class GarbageCollectionTests
             }
 
             // Delete first two documents to create holes
-            db.Delete<Person>(1);
-            db.Delete<Person>(2);
+            db.DeleteById<Person>(1);
+            db.DeleteById<Person>(2);
 
             // Vacuum should compact and reclaim space
             GarbageCollectionResult result = db.Vacuum();

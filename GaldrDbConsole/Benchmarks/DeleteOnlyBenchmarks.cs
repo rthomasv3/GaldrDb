@@ -56,6 +56,6 @@ public class DeleteOnlyBenchmarks
     [Benchmark(Description = "GaldrDb Delete")]
     public bool GaldrDb_Delete()
     {
-        return _galdrDb.Delete<BenchmarkPerson>(_deleteId);
+        return _galdrDb.DeleteById<BenchmarkPerson>(_deleteId);
     }
 }

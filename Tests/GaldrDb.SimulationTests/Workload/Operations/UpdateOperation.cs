@@ -32,7 +32,7 @@ public class UpdateOperation : Operation
             TestDocument doc = TestDocument.Generate(_rng, payloadSize);
             doc.Id = _docId;
 
-            tx.Update(doc);
+            tx.Replace(doc);
             byte[] contentHash = doc.ComputeHash();
 
             result = OperationResult.Succeeded(_docId, contentHash);

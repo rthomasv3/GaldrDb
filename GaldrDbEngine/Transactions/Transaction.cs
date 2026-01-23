@@ -250,7 +250,7 @@ public class Transaction : IDisposable
     /// <param name="document">The document with updated values.</param>
     /// <returns>True if the document was found and updated, false otherwise.</returns>
     /// <exception cref="WriteConflictException">Thrown if the document was modified by a concurrent transaction.</exception>
-    public bool Update<T>(T document)
+    public bool Replace<T>(T document)
     {
         GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
 
@@ -382,7 +382,7 @@ public class Transaction : IDisposable
     /// <param name="id">The document ID.</param>
     /// <returns>True if the document was found and deleted, false otherwise.</returns>
     /// <exception cref="WriteConflictException">Thrown if the document was modified by a concurrent transaction.</exception>
-    public bool Delete<T>(int id)
+    public bool DeleteById<T>(int id)
     {
         GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
 

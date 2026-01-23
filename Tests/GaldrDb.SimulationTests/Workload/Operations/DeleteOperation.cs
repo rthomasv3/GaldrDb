@@ -21,7 +21,7 @@ public class DeleteOperation : Operation
 
         try
         {
-            tx.Delete<TestDocument>(_docId);
+            tx.DeleteById<TestDocument>(_docId);
             result = OperationResult.Succeeded(_docId);
         }
         catch (Exception ex)

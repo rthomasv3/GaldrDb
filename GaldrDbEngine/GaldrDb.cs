@@ -879,11 +879,11 @@ public class GaldrDb : IDisposable
     /// <typeparam name="T">The document type.</typeparam>
     /// <param name="document">The document with updated values.</param>
     /// <returns>True if the document was found and updated, false otherwise.</returns>
-    public bool Update<T>(T document)
+    public bool Replace<T>(T document)
     {
         using (Transaction tx = BeginTransaction())
         {
-            bool result = tx.Update<T>(document);
+            bool result = tx.Replace<T>(document);
             tx.Commit();
             return result;
         }
@@ -908,11 +908,11 @@ public class GaldrDb : IDisposable
     /// <typeparam name="T">The document type.</typeparam>
     /// <param name="id">The document ID.</param>
     /// <returns>True if the document was found and deleted, false otherwise.</returns>
-    public bool Delete<T>(int id)
+    public bool DeleteById<T>(int id)
     {
         using (Transaction tx = BeginTransaction())
         {
-            bool result = tx.Delete<T>(id);
+            bool result = tx.DeleteById<T>(id);
             tx.Commit();
             return result;
         }

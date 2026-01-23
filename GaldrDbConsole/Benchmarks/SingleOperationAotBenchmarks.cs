@@ -311,7 +311,7 @@ public class SingleOperationAotBenchmarks
     [BenchmarkCategory("Delete")]
     public bool GaldrDb_Delete()
     {
-        return _galdrDb.Delete<BenchmarkPerson>(_deleteIdGaldr);
+        return _galdrDb.DeleteById<BenchmarkPerson>(_deleteIdGaldr);
     }
     
     [IterationSetup(Target = nameof(SqliteAdo_Delete))]

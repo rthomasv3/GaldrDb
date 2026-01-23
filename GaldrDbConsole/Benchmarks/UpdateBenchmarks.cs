@@ -55,7 +55,7 @@ public class UpdateBenchmarks
     {
         BenchmarkPerson person = _galdrDb.GetById<BenchmarkPerson>(_existingId);
         person.Age = 31;
-        return _galdrDb.Update(person);
+        return _galdrDb.Replace(person);
     }
 
     [Benchmark(Description = "UpdateById")]

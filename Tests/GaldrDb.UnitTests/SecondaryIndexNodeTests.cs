@@ -784,7 +784,7 @@ public class SecondaryIndexNodeTests
 
             for (int i = 1; i <= 400; i++)
             {
-                db.Delete<Person>(i);
+                db.DeleteById<Person>(i);
             }
 
             for (int i = 401; i <= 500; i++)

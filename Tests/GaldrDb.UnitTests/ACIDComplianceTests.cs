@@ -48,7 +48,7 @@ public class ACIDComplianceTests
                 tx.Insert(new Person { Name = "ShouldNotExist", Age = 25 });
 
                 Person updated = new Person { Id = id, Name = "ShouldNotUpdate", Age = 99 };
-                tx.Update(updated);
+                tx.Replace(updated);
 
                 tx.Rollback();
             }
@@ -129,13 +129,13 @@ public class ACIDComplianceTests
 
             using (Transaction tx2 = db.BeginTransaction())
             {
-                tx2.Update(new Person { Id = id, Name = "FromTx2", Age = 31 });
+                tx2.Replace(new Person { Id = id, Name = "FromTx2", Age = 31 });
                 tx2.Commit();
             }
 
             try
             {
-                tx1.Update(new Person { Id = id, Name = "FromTx1", Age = 32 });
+                tx1.Replace(new Person { Id = id, Name = "FromTx1", Age = 32 });
                 Assert.Fail("Expected WriteConflictException");
             }
             catch (WriteConflictException)
@@ -202,7 +202,7 @@ public class ACIDComplianceTests
                         {
                             using (Transaction writeTx = db.BeginTransaction())
                             {
-                                writeTx.Update(new Person { Id = id, Name = $"Update{updateIteration}", Age = updateIteration });
+                                writeTx.Replace(new Person { Id = id, Name = $"Update{updateIteration}", Age = updateIteration });
                                 writeTx.Commit();
                             }
                         }
@@ -235,7 +235,7 @@ public class ACIDComplianceTests
 
                 using (Transaction writeTx = db.BeginTransaction())
                 {
-                    writeTx.Update(new Person { Id = id, Name = "Alice Updated", Age = 31 });
+                    writeTx.Replace(new Person { Id = id, Name = "Alice Updated", Age = 31 });
                     writeTx.Commit();
                 }
 
@@ -324,8 +324,8 @@ public class ACIDComplianceTests
 
             using (Transaction tx = db.BeginTransaction())
             {
-                tx.Update(new Person { Id = id1, Name = "Updated", Age = 26 });
-                tx.Delete<Person>(id2);
+                tx.Replace(new Person { Id = id1, Name = "Updated", Age = 26 });
+                tx.DeleteById<Person>(id2);
                 tx.Commit();
             }
         }
@@ -384,7 +384,7 @@ public class ACIDComplianceTests
 
             using (Transaction writeTx = db.BeginTransaction())
             {
-                writeTx.Update(new Person { Id = id, Name = "Updated", Age = 26 });
+                writeTx.Replace(new Person { Id = id, Name = "Updated", Age = 26 });
                 writeTx.Commit();
             }
 
@@ -419,7 +419,7 @@ public class ACIDComplianceTests
                 {
                     using (Transaction tx = db.BeginTransaction())
                     {
-                        tx.Update(new Person { Id = ids[idx], Name = $"Updated{idx}", Age = 100 + idx });
+                        tx.Replace(new Person { Id = ids[idx], Name = $"Updated{idx}", Age = 100 + idx });
                         tx.Commit();
                         lock (lockObj) { successCount++; }
                     }
@@ -461,7 +461,7 @@ public class ACIDComplianceTests
                     {
                         using (Transaction tx = db.BeginTransaction())
                         {
-                            tx.Update(new Person { Id = id, Name = $"Writer{iteration}", Age = 100 + iteration });
+                            tx.Replace(new Person { Id = id, Name = $"Writer{iteration}", Age = 100 + iteration });
                             tx.Commit();
                             lock (lockObj) { successCount++; }
                         }

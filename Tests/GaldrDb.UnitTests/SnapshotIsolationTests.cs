@@ -70,7 +70,7 @@ public class SnapshotIsolationTests
             using (Transaction tx = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Bob Updated", Age = 26 };
-                tx.Update(updated);
+                tx.Replace(updated);
 
                 Person retrieved = tx.GetById<Person>(id);
 
@@ -93,7 +93,7 @@ public class SnapshotIsolationTests
 
             using (Transaction tx = db.BeginTransaction())
             {
-                tx.Delete<Person>(id);
+                tx.DeleteById<Person>(id);
 
                 Person retrieved = tx.GetById<Person>(id);
 
@@ -140,7 +140,7 @@ public class SnapshotIsolationTests
             using (Transaction tx2 = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Eve Updated", Age = 29 };
-                tx2.Update(updated);
+                tx2.Replace(updated);
                 tx2.Commit();
             }
 
@@ -166,7 +166,7 @@ public class SnapshotIsolationTests
 
             using (Transaction tx2 = db.BeginTransaction())
             {
-                tx2.Delete<Person>(id);
+                tx2.DeleteById<Person>(id);
                 tx2.Commit();
             }
 
@@ -233,7 +233,7 @@ public class SnapshotIsolationTests
             using (Transaction tx2 = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Kate Updated", Age = 26 };
-                tx2.Update(updated);
+                tx2.Replace(updated);
                 tx2.Commit();
             }
 
@@ -259,7 +259,7 @@ public class SnapshotIsolationTests
 
             using (Transaction tx2 = db.BeginTransaction())
             {
-                tx2.Delete<Person>(id);
+                tx2.DeleteById<Person>(id);
                 tx2.Commit();
             }
 
@@ -312,7 +312,7 @@ public class SnapshotIsolationTests
             using (Transaction writeTx = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Paul Updated", Age = 46 };
-                writeTx.Update(updated);
+                writeTx.Replace(updated);
                 writeTx.Commit();
             }
 
@@ -339,7 +339,7 @@ public class SnapshotIsolationTests
             using (Transaction tx2 = db.BeginTransaction())
             {
                 Person v2 = new Person { Id = id, Name = "Quinn v2", Age = 21 };
-                tx2.Update(v2);
+                tx2.Replace(v2);
                 tx2.Commit();
             }
 
@@ -348,7 +348,7 @@ public class SnapshotIsolationTests
             using (Transaction tx4 = db.BeginTransaction())
             {
                 Person v3 = new Person { Id = id, Name = "Quinn v3", Age = 22 };
-                tx4.Update(v3);
+                tx4.Replace(v3);
                 tx4.Commit();
             }
 
