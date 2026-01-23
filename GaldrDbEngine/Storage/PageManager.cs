@@ -127,7 +127,8 @@ internal class PageManager
         if (pageId == -1)
         {
             Expand();
-            pageId = _bitmap.FindFreePage(_header.NextFreePageHint);
+            // skip using hint so any old bitmap and fsm pages can get reused
+            pageId = _bitmap.FindFreePage(0);
 
             if (pageId == -1)
             {
@@ -424,13 +425,21 @@ internal class PageManager
 
             for (int i = 0; i < currentBitmapPages; i++)
             {
-                _bitmap.DeallocatePage(oldBitmapStart + i);
-                _fsm.SetFreeSpaceLevel(oldBitmapStart + i, FreeSpaceLevel.High);
+                int oldPage = oldBitmapStart + i;
+                if (oldPage >= PageConstants.FIRST_DATA_PAGE_ID)
+                {
+                    _bitmap.DeallocatePage(oldPage);
+                    _fsm.SetFreeSpaceLevel(oldPage, FreeSpaceLevel.High);
+                }
             }
             for (int i = 0; i < currentFsmPages; i++)
             {
-                _bitmap.DeallocatePage(oldFsmStart + i);
-                _fsm.SetFreeSpaceLevel(oldFsmStart + i, FreeSpaceLevel.High);
+                int oldPage = oldFsmStart + i;
+                if (oldPage >= PageConstants.FIRST_DATA_PAGE_ID)
+                {
+                    _bitmap.DeallocatePage(oldPage);
+                    _fsm.SetFreeSpaceLevel(oldPage, FreeSpaceLevel.High);
+                }
             }
 
             for (int i = 0; i < neededBitmapPages; i++)
