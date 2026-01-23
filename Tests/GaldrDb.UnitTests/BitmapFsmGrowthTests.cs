@@ -112,13 +112,20 @@ public class BitmapFsmGrowthTests
         PageManager pageManager = new PageManager(pageIO, PAGE_SIZE);
         pageManager.Initialize();
 
-        int oldBitmapStart = pageManager.Header.BitmapStartPage; // Page 1
-        int oldFsmStart = pageManager.Header.FsmStartPage;       // Page 2
+        // Allocate enough pages to trigger growth from initial bitmap and fsm page locations
+        // The initial pages are reserved and not reusable
+        int fsmCapacity = PAGE_SIZE * 4;
+        int[] allocatedPages = new int[fsmCapacity + 50];
+        for (int i = 0; i < fsmCapacity + 50; i++)
+        {
+            allocatedPages[i] = pageManager.AllocatePage();
+        }
+        
+        int oldBitmapStart = pageManager.Header.BitmapStartPage;
+        int oldFsmStart = pageManager.Header.FsmStartPage;
 
         // Allocate enough pages to trigger growth and then some more
         // to reuse the freed old bitmap/FSM pages
-        int fsmCapacity = PAGE_SIZE * 4;
-        int[] allocatedPages = new int[fsmCapacity + 50];
         for (int i = 0; i < fsmCapacity + 50; i++)
         {
             allocatedPages[i] = pageManager.AllocatePage();
