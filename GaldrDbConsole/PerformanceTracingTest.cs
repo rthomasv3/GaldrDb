@@ -2,14 +2,15 @@ using System;
 using System.IO;
 using GaldrDbConsole.Models;
 using GaldrDbEngine;
+using GaldrDbEngine.Transactions;
 using GaldrDbEngine.Utilities;
 
 namespace GaldrDbConsole;
 
 public static class PerformanceTracingTest
 {
-    private static readonly string LargeDbPath = "TEMP/perf_test.galdr";
-    private static readonly string BaselineDbPath = "TEMP/baseline_test.galdr";
+    private static readonly string LargeDbPath = "TEMP/perf_test.db";
+    private static readonly string BaselineDbPath = "TEMP/baseline_test.db";
     private static readonly string BaselineWALPath = "TEMP/baseline_test.wal";
 
     public static void Run()
@@ -83,7 +84,7 @@ public static class PerformanceTracingTest
 
         if (!File.Exists(LargeDbPath))
         {
-            Console.WriteLine($"ERROR: Large database not found at {LargeDbPath}");
+            BuildLargeDatabase();
             return;
         }
 
@@ -117,6 +118,34 @@ public static class PerformanceTracingTest
             PerfTracer.Enabled = false;
 
             Console.WriteLine($"Final document count: {db.Query<BenchmarkPerson>().Count():N0}");
+        }
+    }
+
+    private static void BuildLargeDatabase()
+    {
+        int batches = 500;
+        int batchSize = 1000;
+        
+        using (GaldrDb db = GaldrDb.Create(LargeDbPath, new GaldrDbOptions()))
+        {
+            for (int batch = 0; batch < batches; ++batch)
+            {
+                Transaction tx = db.BeginTransaction();
+
+                for (int entry = 0; entry < batchSize; ++entry)
+                {
+                    tx.Insert(new BenchmarkPerson
+                    {
+                        Name = $"Person {(batch * batchSize) + entry}",
+                        Age = 25,
+                        Email = "test@example.com",
+                        Address = "456 Oak Ave",
+                        Phone = "555-5678"
+                    });
+                }
+
+                tx.Commit();
+            }
         }
     }
 }

@@ -23,14 +23,17 @@ public class TypeInfoTests
     }
 
     [TestMethod]
-    public void IndexFieldWriter_WriteString_NullValue_DoesNotAddField()
+    public void IndexFieldWriter_WriteString_NullValue_AddsNullEntry()
     {
         IndexFieldWriter writer = new IndexFieldWriter();
 
         writer.WriteString("Name", null);
 
         IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
-        Assert.IsEmpty(fields);
+        Assert.HasCount(1, fields);
+        Assert.AreEqual("Name", fields[0].FieldName);
+        Assert.HasCount(1, fields[0].KeyBytes);
+        Assert.AreEqual(0x00, fields[0].KeyBytes[0]);
     }
 
     [TestMethod]
@@ -43,7 +46,7 @@ public class TypeInfoTests
         IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(1, fields);
         Assert.AreEqual("Age", fields[0].FieldName);
-        Assert.HasCount(4, fields[0].KeyBytes);
+        Assert.HasCount(5, fields[0].KeyBytes);
     }
 
     [TestMethod]
@@ -56,7 +59,7 @@ public class TypeInfoTests
         IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(1, fields);
         Assert.AreEqual("BigNumber", fields[0].FieldName);
-        Assert.HasCount(8, fields[0].KeyBytes);
+        Assert.HasCount(9, fields[0].KeyBytes);
     }
 
     [TestMethod]
@@ -69,7 +72,7 @@ public class TypeInfoTests
         IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(1, fields);
         Assert.AreEqual("Price", fields[0].FieldName);
-        Assert.HasCount(8, fields[0].KeyBytes);
+        Assert.HasCount(9, fields[0].KeyBytes);
     }
 
     [TestMethod]
@@ -82,7 +85,7 @@ public class TypeInfoTests
         IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(1, fields);
         Assert.AreEqual("Amount", fields[0].FieldName);
-        Assert.HasCount(16, fields[0].KeyBytes);
+        Assert.HasCount(17, fields[0].KeyBytes);
     }
 
     [TestMethod]
@@ -95,7 +98,7 @@ public class TypeInfoTests
         IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(1, fields);
         Assert.AreEqual("IsActive", fields[0].FieldName);
-        Assert.HasCount(1, fields[0].KeyBytes);
+        Assert.HasCount(2, fields[0].KeyBytes);
     }
 
     [TestMethod]
@@ -108,7 +111,7 @@ public class TypeInfoTests
         IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(1, fields);
         Assert.AreEqual("Created", fields[0].FieldName);
-        Assert.HasCount(8, fields[0].KeyBytes);
+        Assert.HasCount(9, fields[0].KeyBytes);
     }
 
     [TestMethod]
@@ -121,7 +124,7 @@ public class TypeInfoTests
         IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(1, fields);
         Assert.AreEqual("Timestamp", fields[0].FieldName);
-        Assert.HasCount(16, fields[0].KeyBytes);
+        Assert.HasCount(17, fields[0].KeyBytes);
     }
 
     [TestMethod]
@@ -134,7 +137,7 @@ public class TypeInfoTests
         IReadOnlyList<IndexFieldEntry> fields = writer.GetFields();
         Assert.HasCount(1, fields);
         Assert.AreEqual("UniqueId", fields[0].FieldName);
-        Assert.HasCount(16, fields[0].KeyBytes);
+        Assert.HasCount(17, fields[0].KeyBytes);
     }
 
     [TestMethod]

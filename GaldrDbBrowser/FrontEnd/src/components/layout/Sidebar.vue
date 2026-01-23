@@ -170,7 +170,7 @@ function isActiveCollection(name) {
 }
 
 .collection-count {
-    color: var(--text-muted);
+    color: var(--text-primary);
     font-size: 0.6875rem;
     font-weight: 500;
     flex-shrink: 0;

@@ -94,6 +94,27 @@ internal class SecondaryIndexBTree
         return results;
     }
 
+    public List<SecondaryIndexEntry> SearchByFieldValueWithDocIds(byte[] fieldValueKey)
+    {
+        List<SecondaryIndexEntry> results = new List<SecondaryIndexEntry>();
+        SearchByFieldValueNodeWithDocIds(_rootPageId, fieldValueKey, false, results);
+        return results;
+    }
+
+    public List<SecondaryIndexEntry> SearchByExactFieldValueWithDocIds(byte[] fieldValueKey)
+    {
+        List<SecondaryIndexEntry> results = new List<SecondaryIndexEntry>();
+        SearchByFieldValueNodeWithDocIds(_rootPageId, fieldValueKey, true, results);
+        return results;
+    }
+
+    public List<SecondaryIndexEntry> SearchRangeWithDocIds(byte[] startKey, byte[] endKey, bool includeStart, bool includeEnd)
+    {
+        List<SecondaryIndexEntry> results = new List<SecondaryIndexEntry>();
+        SearchRangeNodeWithDocIds(_rootPageId, startKey, endKey, includeStart, includeEnd, results);
+        return results;
+    }
+
     public bool Delete(byte[] key)
     {
         return DeleteFromNode(_rootPageId, key);
@@ -281,6 +302,164 @@ internal class SecondaryIndexBTree
             BufferPool.Return(buffer);
             SecondaryIndexNodePool.Return(node);
         }
+    }
+
+    private void SearchByFieldValueNodeWithDocIds(int pageId, byte[] fieldValueKey, bool exactMatch, List<SecondaryIndexEntry> results)
+    {
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
+        int expectedKeyLength = fieldValueKey.Length + 4;
+
+        try
+        {
+            _pageIO.ReadPage(pageId, buffer);
+            SecondaryIndexNode.DeserializeTo(buffer, node);
+
+            if (node.NodeType == BTreeNodeType.Leaf)
+            {
+                for (int i = 0; i < node.KeyCount; i++)
+                {
+                    KeyBuffer nodeKey = node.Keys[i];
+                    bool matches = nodeKey.StartsWith(fieldValueKey);
+
+                    if (exactMatch && matches)
+                    {
+                        matches = nodeKey.Length == expectedKeyLength;
+                    }
+
+                    if (matches)
+                    {
+                        int docId = ExtractDocIdFromKey(nodeKey);
+                        results.Add(new SecondaryIndexEntry(docId, node.LeafValues[i]));
+                    }
+                    else if (KeyBuffer.Compare(fieldValueKey.AsSpan(), nodeKey) < 0 && !nodeKey.StartsWith(fieldValueKey))
+                    {
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                int i = 0;
+                while (i < node.KeyCount && KeyBuffer.Compare(fieldValueKey.AsSpan(), node.Keys[i]) > 0)
+                {
+                    i++;
+                }
+
+                for (int j = i; j <= node.KeyCount && j < node.ChildPageIds.Count; j++)
+                {
+                    SearchByFieldValueNodeWithDocIds(node.ChildPageIds[j], fieldValueKey, exactMatch, results);
+
+                    if (j < node.KeyCount && !node.Keys[j].StartsWith(fieldValueKey) &&
+                        KeyBuffer.Compare(fieldValueKey.AsSpan(), node.Keys[j]) < 0)
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+        finally
+        {
+            BufferPool.Return(buffer);
+            SecondaryIndexNodePool.Return(node);
+        }
+    }
+
+    private void SearchRangeNodeWithDocIds(int pageId, byte[] startKey, byte[] endKey, bool includeStart, bool includeEnd, List<SecondaryIndexEntry> results)
+    {
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
+        try
+        {
+            _pageIO.ReadPage(pageId, buffer);
+            SecondaryIndexNode.DeserializeTo(buffer, node);
+
+            ReadOnlySpan<byte> startSpan = startKey == null ? ReadOnlySpan<byte>.Empty : startKey.AsSpan();
+            ReadOnlySpan<byte> endSpan = endKey == null ? ReadOnlySpan<byte>.Empty : endKey.AsSpan();
+
+            if (node.NodeType == BTreeNodeType.Leaf)
+            {
+                for (int i = 0; i < node.KeyCount; i++)
+                {
+                    KeyBuffer nodeKey = node.Keys[i];
+                    bool afterStart;
+                    bool beforeEnd;
+
+                    if (startKey == null)
+                    {
+                        afterStart = true;
+                    }
+                    else if (nodeKey.StartsWith(startKey))
+                    {
+                        afterStart = includeStart;
+                    }
+                    else
+                    {
+                        int startCmp = KeyBuffer.Compare(startSpan, nodeKey);
+                        afterStart = startCmp < 0;
+                    }
+
+                    if (endKey == null)
+                    {
+                        beforeEnd = true;
+                    }
+                    else if (nodeKey.StartsWith(endKey))
+                    {
+                        beforeEnd = includeEnd;
+                    }
+                    else
+                    {
+                        int endCmp = KeyBuffer.Compare(endSpan, nodeKey);
+                        beforeEnd = endCmp > 0;
+                    }
+
+                    if (afterStart && beforeEnd)
+                    {
+                        int docId = ExtractDocIdFromKey(nodeKey);
+                        results.Add(new SecondaryIndexEntry(docId, node.LeafValues[i]));
+                    }
+                }
+            }
+            else
+            {
+                for (int i = 0; i <= node.KeyCount && i < node.ChildPageIds.Count; i++)
+                {
+                    bool shouldDescend = true;
+
+                    if (i < node.KeyCount && startKey != null)
+                    {
+                        int cmp = KeyBuffer.Compare(startSpan, node.Keys[i]);
+                        if (cmp > 0)
+                        {
+                            shouldDescend = false;
+                        }
+                    }
+
+                    if (shouldDescend)
+                    {
+                        SearchRangeNodeWithDocIds(node.ChildPageIds[i], startKey, endKey, includeStart, includeEnd, results);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            BufferPool.Return(buffer);
+            SecondaryIndexNodePool.Return(node);
+        }
+    }
+
+    private static int ExtractDocIdFromKey(KeyBuffer key)
+    {
+        int length = key.Length;
+        ReadOnlySpan<byte> data = key.AsSpan();
+
+        int docId = (data[length - 4] << 24) |
+                    (data[length - 3] << 16) |
+                    (data[length - 2] << 8) |
+                    data[length - 1];
+
+        return docId;
     }
 
     private bool DeleteFromNode(int pageId, byte[] key)

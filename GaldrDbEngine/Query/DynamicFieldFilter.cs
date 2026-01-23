@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using GaldrDbEngine.Json;
 
 namespace GaldrDbEngine.Query;
@@ -196,5 +197,10 @@ internal sealed class DynamicFieldFilter : IFieldFilter
         }
 
         return result;
+    }
+
+    public IEnumerable<byte[]> GetAllIndexKeyBytes()
+    {
+        return null;
     }
 }

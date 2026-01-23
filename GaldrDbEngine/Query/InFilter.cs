@@ -92,10 +92,7 @@ public sealed class InFilter<TDocument, TField> : IFieldFilter
         return null;
     }
 
-    /// <summary>
-    /// Gets the encoded index key bytes for all values in the set.
-    /// </summary>
-    /// <returns>Encoded key bytes for each value.</returns>
+    /// <inheritdoc/>
     public IEnumerable<byte[]> GetAllIndexKeyBytes()
     {
         List<byte[]> keys = new List<byte[]>(_valuesArray.Length);

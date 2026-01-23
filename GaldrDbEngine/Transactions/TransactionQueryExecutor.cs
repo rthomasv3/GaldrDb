@@ -47,7 +47,9 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
         List<T> snapshotResults;
         HashSet<int> snapshotDocIds;
 
-        bool canUseOptimizedScan = plan.PlanType == QueryPlanType.PrimaryKeyScan && IsOrderByIdOnly(query.OrderByClauses);
+        bool isOrderByIdOnly = IsOrderByIdOnly(query.OrderByClauses);
+        bool canUseOptimizedScan = plan.PlanType == QueryPlanType.PrimaryKeyScan && isOrderByIdOnly;
+        bool canUseOptimizedRangeScan = plan.PlanType == QueryPlanType.PrimaryKeyRange && isOrderByIdOnly;
 
         if (canUseOptimizedScan)
         {
@@ -55,11 +57,20 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
             (snapshotResults, snapshotDocIds) = ExecutePrimaryKeyScan(collectionName, query.SkipValue, query.LimitValue, descending);
             result = ApplyWriteSetOverlay(snapshotResults, snapshotDocIds, query.Filters);
         }
+        else if (canUseOptimizedRangeScan)
+        {
+            (snapshotResults, snapshotDocIds) = ExecutePrimaryKeyRangeScan(collectionName, plan, query.Filters, query.SkipValue, query.LimitValue);
+            result = ApplyWriteSetOverlay(snapshotResults, snapshotDocIds, query.Filters);
+        }
         else
         {
             if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
             {
-                (snapshotResults, snapshotDocIds) = ExecutePrimaryKeyRangeScan(collectionName, plan, query.Filters);
+                (snapshotResults, snapshotDocIds) = ExecutePrimaryKeyRangeScan(collectionName, plan, query.Filters, null, null);
+            }
+            else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
+            {
+                (snapshotResults, snapshotDocIds) = ExecuteSecondaryIndexScan(collectionName, plan, query.Filters);
             }
             else
             {
@@ -76,7 +87,7 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
 
     private static bool IsOrderByIdOnly(IReadOnlyList<OrderByClause<T>> orderByClauses)
     {
-        return orderByClauses.Count == 0 || 
+        return orderByClauses.Count == 0 ||
                (orderByClauses.Count == 1 && orderByClauses[0].FieldName == "Id");
     }
 
@@ -98,6 +109,10 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
             if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
             {
                 (count, countedDocIds) = CountPrimaryKeyRangeScan(collectionName, plan, query.Filters);
+            }
+            else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
+            {
+                (count, countedDocIds) = CountSecondaryIndexScan(collectionName, plan, query.Filters);
             }
             else
             {
@@ -121,7 +136,9 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
         List<T> snapshotResults;
         HashSet<int> snapshotDocIds;
 
-        bool canUseOptimizedScan = plan.PlanType == QueryPlanType.PrimaryKeyScan && IsOrderByIdOnly(query.OrderByClauses);
+        bool isOrderByIdOnly = IsOrderByIdOnly(query.OrderByClauses);
+        bool canUseOptimizedScan = plan.PlanType == QueryPlanType.PrimaryKeyScan && isOrderByIdOnly;
+        bool canUseOptimizedRangeScan = plan.PlanType == QueryPlanType.PrimaryKeyRange && isOrderByIdOnly;
 
         if (canUseOptimizedScan)
         {
@@ -129,11 +146,20 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
             (snapshotResults, snapshotDocIds) = await ExecutePrimaryKeyScanAsync(collectionName, query.SkipValue, query.LimitValue, descending, cancellationToken).ConfigureAwait(false);
             result = ApplyWriteSetOverlay(snapshotResults, snapshotDocIds, query.Filters);
         }
+        else if (canUseOptimizedRangeScan)
+        {
+            (snapshotResults, snapshotDocIds) = await ExecutePrimaryKeyRangeScanAsync(collectionName, plan, query.Filters, query.SkipValue, query.LimitValue, cancellationToken).ConfigureAwait(false);
+            result = ApplyWriteSetOverlay(snapshotResults, snapshotDocIds, query.Filters);
+        }
         else
         {
             if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
             {
-                (snapshotResults, snapshotDocIds) = await ExecutePrimaryKeyRangeScanAsync(collectionName, plan, query.Filters, cancellationToken).ConfigureAwait(false);
+                (snapshotResults, snapshotDocIds) = await ExecutePrimaryKeyRangeScanAsync(collectionName, plan, query.Filters, null, null, cancellationToken).ConfigureAwait(false);
+            }
+            else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
+            {
+                (snapshotResults, snapshotDocIds) = await ExecuteSecondaryIndexScanAsync(collectionName, plan, query.Filters, cancellationToken).ConfigureAwait(false);
             }
             else
             {
@@ -166,6 +192,10 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
             if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
             {
                 (count, countedDocIds) = await CountPrimaryKeyRangeScanAsync(collectionName, plan, query.Filters, cancellationToken).ConfigureAwait(false);
+            }
+            else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
+            {
+                (count, countedDocIds) = await CountSecondaryIndexScanAsync(collectionName, plan, query.Filters, cancellationToken).ConfigureAwait(false);
             }
             else
             {
@@ -241,7 +271,7 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
         return plan;
     }
 
-    private (List<T> Results, HashSet<int> DocIds) ExecutePrimaryKeyRangeScan(string collectionName, QueryPlan plan, IReadOnlyList<IFieldFilter> filters)
+    private (List<T> Results, HashSet<int> DocIds) ExecutePrimaryKeyRangeScan(string collectionName, QueryPlan plan, IReadOnlyList<IFieldFilter> filters, int? skip, int? limit)
     {
         List<T> results = new List<T>();
         HashSet<int> docIds = new HashSet<int>();
@@ -251,6 +281,144 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
 
         List<int> rangeDocIds = _db.SearchDocIdRange(collectionName, startId, endId, plan.IncludeStart, plan.IncludeEnd);
         List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
+
+        IReadOnlyList<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+        bool hasRemainingFilters = remainingFilters.Count > 0;
+
+        int skipCount = skip ?? 0;
+        int limitCount = limit ?? int.MaxValue;
+        int skipped = 0;
+        int collected = 0;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (!hasRemainingFilters)
+            {
+                if (skipped < skipCount)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                if (collected >= limitCount)
+                {
+                    break;
+                }
+
+                byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+                T document = _jsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(jsonBytes), _jsonOptions);
+                results.Add(document);
+                docIds.Add(version.DocumentId);
+                _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
+                collected++;
+            }
+            else
+            {
+                byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+                T document = _jsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(jsonBytes), _jsonOptions);
+
+                if (PassesFilters(document, remainingFilters))
+                {
+                    if (skipped < skipCount)
+                    {
+                        skipped++;
+                    }
+                    else if (collected < limitCount)
+                    {
+                        results.Add(document);
+                        docIds.Add(version.DocumentId);
+                        _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
+                        collected++;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+
+        return (results, docIds);
+    }
+
+    private async Task<(List<T> Results, HashSet<int> DocIds)> ExecutePrimaryKeyRangeScanAsync(string collectionName, QueryPlan plan, IReadOnlyList<IFieldFilter> filters, int? skip, int? limit, CancellationToken cancellationToken)
+    {
+        List<T> results = new List<T>();
+        HashSet<int> docIds = new HashSet<int>();
+
+        int startId = plan.StartDocId ?? int.MinValue;
+        int endId = plan.EndDocId ?? int.MaxValue;
+
+        List<int> rangeDocIds = await _db.SearchDocIdRangeAsync(collectionName, startId, endId, plan.IncludeStart, plan.IncludeEnd, cancellationToken).ConfigureAwait(false);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
+
+        IReadOnlyList<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+        bool hasRemainingFilters = remainingFilters.Count > 0;
+
+        int skipCount = skip ?? 0;
+        int limitCount = limit ?? int.MaxValue;
+        int skipped = 0;
+        int collected = 0;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (!hasRemainingFilters)
+            {
+                if (skipped < skipCount)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                if (collected >= limitCount)
+                {
+                    break;
+                }
+
+                byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+                T document = _jsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(jsonBytes), _jsonOptions);
+                results.Add(document);
+                docIds.Add(version.DocumentId);
+                _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
+                collected++;
+            }
+            else
+            {
+                byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+                T document = _jsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(jsonBytes), _jsonOptions);
+
+                if (PassesFilters(document, remainingFilters))
+                {
+                    if (skipped < skipCount)
+                    {
+                        skipped++;
+                    }
+                    else if (collected < limitCount)
+                    {
+                        results.Add(document);
+                        docIds.Add(version.DocumentId);
+                        _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
+                        collected++;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+
+        return (results, docIds);
+    }
+
+    private (List<T> Results, HashSet<int> DocIds) ExecuteSecondaryIndexScan(string collectionName, QueryPlan plan, IReadOnlyList<IFieldFilter> filters)
+    {
+        List<T> results = new List<T>();
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<SecondaryIndexEntry> entries = GetSecondaryIndexEntries(plan);
+        List<int> indexDocIds = ExtractDocIdsFromEntries(entries);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, indexDocIds, _snapshotTxId);
 
         IReadOnlyList<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
 
@@ -270,16 +438,14 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
         return (results, docIds);
     }
 
-    private async Task<(List<T> Results, HashSet<int> DocIds)> ExecutePrimaryKeyRangeScanAsync(string collectionName, QueryPlan plan, IReadOnlyList<IFieldFilter> filters, CancellationToken cancellationToken)
+    private async Task<(List<T> Results, HashSet<int> DocIds)> ExecuteSecondaryIndexScanAsync(string collectionName, QueryPlan plan, IReadOnlyList<IFieldFilter> filters, CancellationToken cancellationToken)
     {
         List<T> results = new List<T>();
         HashSet<int> docIds = new HashSet<int>();
 
-        int startId = plan.StartDocId ?? int.MinValue;
-        int endId = plan.EndDocId ?? int.MaxValue;
-
-        List<int> rangeDocIds = await _db.SearchDocIdRangeAsync(collectionName, startId, endId, plan.IncludeStart, plan.IncludeEnd, cancellationToken).ConfigureAwait(false);
-        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
+        List<SecondaryIndexEntry> entries = GetSecondaryIndexEntries(plan);
+        List<int> indexDocIds = ExtractDocIdsFromEntries(entries);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, indexDocIds, _snapshotTxId);
 
         IReadOnlyList<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
 
@@ -297,6 +463,73 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
         }
 
         return (results, docIds);
+    }
+
+    private List<SecondaryIndexEntry> GetSecondaryIndexEntries(QueryPlan plan)
+    {
+        List<SecondaryIndexEntry> entries;
+        IFieldFilter filter = plan.IndexFilter;
+        byte[] keyBytes = filter.GetIndexKeyBytes();
+
+        if (filter.Operation == FieldOp.Equals)
+        {
+            entries = _db.SearchSecondaryIndexExact(plan.IndexDefinition, keyBytes);
+        }
+        else if (filter.Operation == FieldOp.StartsWith)
+        {
+            entries = _db.SearchSecondaryIndex(plan.IndexDefinition, keyBytes);
+        }
+        else if (filter.Operation == FieldOp.In)
+        {
+            entries = new List<SecondaryIndexEntry>();
+            foreach (byte[] valueKeyBytes in filter.GetAllIndexKeyBytes())
+            {
+                List<SecondaryIndexEntry> valueEntries = _db.SearchSecondaryIndexExact(plan.IndexDefinition, valueKeyBytes);
+                entries.AddRange(valueEntries);
+            }
+        }
+        else if (filter.Operation == FieldOp.Between)
+        {
+            byte[] endKeyBytes = filter.GetIndexKeyEndBytes();
+            entries = _db.SearchSecondaryIndexRange(plan.IndexDefinition, keyBytes, endKeyBytes, true, true);
+        }
+        else if (filter.Operation == FieldOp.GreaterThan)
+        {
+            entries = _db.SearchSecondaryIndexRange(plan.IndexDefinition, keyBytes, null, false, true);
+        }
+        else if (filter.Operation == FieldOp.GreaterThanOrEqual)
+        {
+            entries = _db.SearchSecondaryIndexRange(plan.IndexDefinition, keyBytes, null, true, true);
+        }
+        else if (filter.Operation == FieldOp.LessThan)
+        {
+            entries = _db.SearchSecondaryIndexRange(plan.IndexDefinition, IndexKeyEncoder.MinimumNonNullKey, keyBytes, true, false);
+        }
+        else if (filter.Operation == FieldOp.LessThanOrEqual)
+        {
+            entries = _db.SearchSecondaryIndexRange(plan.IndexDefinition, IndexKeyEncoder.MinimumNonNullKey, keyBytes, true, true);
+        }
+        else
+        {
+            entries = new List<SecondaryIndexEntry>();
+        }
+
+        return entries;
+    }
+
+    private static List<int> ExtractDocIdsFromEntries(List<SecondaryIndexEntry> entries)
+    {
+        List<int> docIds = new List<int>(entries.Count);
+
+        foreach (SecondaryIndexEntry entry in entries)
+        {
+            if (!docIds.Contains(entry.DocId))
+            {
+                docIds.Add(entry.DocId);
+            }
+        }
+
+        return docIds;
     }
 
     private (List<T> Results, HashSet<int> DocIds) ExecutePrimaryKeyScan(string collectionName, int? skip, int? limit, bool descending)
@@ -694,13 +927,22 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
         List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
 
         IReadOnlyList<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+        bool hasRemainingFilters = remainingFilters.Count > 0;
 
         foreach (DocumentVersion version in visibleVersions)
         {
-            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
-            T document = _jsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(jsonBytes), _jsonOptions);
+            if (hasRemainingFilters)
+            {
+                byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+                T document = _jsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(jsonBytes), _jsonOptions);
 
-            if (PassesFilters(document, remainingFilters))
+                if (PassesFilters(document, remainingFilters))
+                {
+                    count++;
+                    docIds.Add(version.DocumentId);
+                }
+            }
+            else
             {
                 count++;
                 docIds.Add(version.DocumentId);
@@ -722,13 +964,92 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
         List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
 
         IReadOnlyList<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+        bool hasRemainingFilters = remainingFilters.Count > 0;
 
         foreach (DocumentVersion version in visibleVersions)
         {
-            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
-            T document = _jsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(jsonBytes), _jsonOptions);
+            if (hasRemainingFilters)
+            {
+                byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+                T document = _jsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(jsonBytes), _jsonOptions);
 
-            if (PassesFilters(document, remainingFilters))
+                if (PassesFilters(document, remainingFilters))
+                {
+                    count++;
+                    docIds.Add(version.DocumentId);
+                }
+            }
+            else
+            {
+                count++;
+                docIds.Add(version.DocumentId);
+            }
+        }
+
+        return (count, docIds);
+    }
+
+    private (int Count, HashSet<int> DocIds) CountSecondaryIndexScan(string collectionName, QueryPlan plan, IReadOnlyList<IFieldFilter> filters)
+    {
+        int count = 0;
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<SecondaryIndexEntry> entries = GetSecondaryIndexEntries(plan);
+        List<int> indexDocIds = ExtractDocIdsFromEntries(entries);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, indexDocIds, _snapshotTxId);
+
+        IReadOnlyList<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+        bool hasRemainingFilters = remainingFilters.Count > 0;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (hasRemainingFilters)
+            {
+                byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+                T document = _jsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(jsonBytes), _jsonOptions);
+
+                if (PassesFilters(document, remainingFilters))
+                {
+                    count++;
+                    docIds.Add(version.DocumentId);
+                }
+            }
+            else
+            {
+                count++;
+                docIds.Add(version.DocumentId);
+            }
+        }
+
+        return (count, docIds);
+    }
+
+    private async Task<(int Count, HashSet<int> DocIds)> CountSecondaryIndexScanAsync(string collectionName, QueryPlan plan, IReadOnlyList<IFieldFilter> filters, CancellationToken cancellationToken)
+    {
+        int count = 0;
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<SecondaryIndexEntry> entries = GetSecondaryIndexEntries(plan);
+        List<int> indexDocIds = ExtractDocIdsFromEntries(entries);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, indexDocIds, _snapshotTxId);
+
+        IReadOnlyList<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+        bool hasRemainingFilters = remainingFilters.Count > 0;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (hasRemainingFilters)
+            {
+                byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+                T document = _jsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(jsonBytes), _jsonOptions);
+
+                if (PassesFilters(document, remainingFilters))
+                {
+                    count++;
+                    docIds.Add(version.DocumentId);
+                }
+            }
+            else
             {
                 count++;
                 docIds.Add(version.DocumentId);
@@ -880,6 +1201,10 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
             {
                 found = AnyPrimaryKeyRangeScan(collectionName, plan, filters, deletedDocIds);
             }
+            else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
+            {
+                found = AnySecondaryIndexScan(collectionName, plan, filters, deletedDocIds);
+            }
             else
             {
                 found = AnyFullScan(collectionName, filters, deletedDocIds);
@@ -934,6 +1259,10 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
             if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
             {
                 found = await AnyPrimaryKeyRangeScanAsync(collectionName, plan, filters, deletedDocIds, cancellationToken).ConfigureAwait(false);
+            }
+            else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
+            {
+                found = await AnySecondaryIndexScanAsync(collectionName, plan, filters, deletedDocIds, cancellationToken).ConfigureAwait(false);
             }
             else
             {
@@ -1032,6 +1361,64 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
 
         List<int> rangeDocIds = await _db.SearchDocIdRangeAsync(collectionName, startId, endId, plan.IncludeStart, plan.IncludeEnd, cancellationToken).ConfigureAwait(false);
         List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
+
+        IReadOnlyList<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+        bool found = false;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (deletedDocIds.Contains(version.DocumentId))
+            {
+                continue;
+            }
+
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+            T document = _jsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(jsonBytes), _jsonOptions);
+
+            if (PassesFilters(document, remainingFilters))
+            {
+                found = true;
+                break;
+            }
+        }
+
+        return found;
+    }
+
+    private bool AnySecondaryIndexScan(string collectionName, QueryPlan plan, IReadOnlyList<IFieldFilter> filters, HashSet<int> deletedDocIds)
+    {
+        List<SecondaryIndexEntry> entries = GetSecondaryIndexEntries(plan);
+        List<int> indexDocIds = ExtractDocIdsFromEntries(entries);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, indexDocIds, _snapshotTxId);
+
+        IReadOnlyList<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+        bool found = false;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (deletedDocIds.Contains(version.DocumentId))
+            {
+                continue;
+            }
+
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+            T document = _jsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(jsonBytes), _jsonOptions);
+
+            if (PassesFilters(document, remainingFilters))
+            {
+                found = true;
+                break;
+            }
+        }
+
+        return found;
+    }
+
+    private async Task<bool> AnySecondaryIndexScanAsync(string collectionName, QueryPlan plan, IReadOnlyList<IFieldFilter> filters, HashSet<int> deletedDocIds, CancellationToken cancellationToken)
+    {
+        List<SecondaryIndexEntry> entries = GetSecondaryIndexEntries(plan);
+        List<int> indexDocIds = ExtractDocIdsFromEntries(entries);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, indexDocIds, _snapshotTxId);
 
         IReadOnlyList<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
         bool found = false;

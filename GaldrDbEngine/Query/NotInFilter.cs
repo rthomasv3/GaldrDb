@@ -83,4 +83,10 @@ public sealed class NotInFilter<TDocument, TField> : IFieldFilter
     {
         return null;
     }
+
+    /// <inheritdoc/>
+    public IEnumerable<byte[]> GetAllIndexKeyBytes()
+    {
+        return null;
+    }
 }

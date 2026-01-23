@@ -59,7 +59,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode(42, GaldrFieldType.Int32);
 
-        Assert.HasCount(4, encoded);
+        Assert.HasCount(5, encoded);
     }
 
     [TestMethod]
@@ -98,7 +98,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode(42L, GaldrFieldType.Int64);
 
-        Assert.HasCount(8, encoded);
+        Assert.HasCount(9, encoded);
     }
 
     [TestMethod]
@@ -137,7 +137,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode(3.14159, GaldrFieldType.Double);
 
-        Assert.HasCount(8, encoded);
+        Assert.HasCount(9, encoded);
     }
 
     [TestMethod]
@@ -165,7 +165,8 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode("", GaldrFieldType.String);
 
-        Assert.IsEmpty(encoded);
+        Assert.HasCount(1, encoded);
+        Assert.AreEqual(0x01, encoded[0]);
     }
 
     [TestMethod]
@@ -191,7 +192,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode(true, GaldrFieldType.Boolean);
 
-        Assert.HasCount(1, encoded);
+        Assert.HasCount(2, encoded);
     }
 
     [TestMethod]
@@ -214,7 +215,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode(DateTime.Now, GaldrFieldType.DateTime);
 
-        Assert.HasCount(8, encoded);
+        Assert.HasCount(9, encoded);
     }
 
     [TestMethod]
@@ -237,7 +238,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode(DateTimeOffset.Now, GaldrFieldType.DateTimeOffset);
 
-        Assert.HasCount(16, encoded);
+        Assert.HasCount(17, encoded);
     }
 
     [TestMethod]
@@ -245,7 +246,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode(Guid.NewGuid(), GaldrFieldType.Guid);
 
-        Assert.HasCount(16, encoded);
+        Assert.HasCount(17, encoded);
     }
 
     [TestMethod]
@@ -285,7 +286,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode(123.456m, GaldrFieldType.Decimal);
 
-        Assert.HasCount(16, encoded);
+        Assert.HasCount(17, encoded);
     }
 
     [TestMethod]
@@ -355,7 +356,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode((byte)42, GaldrFieldType.Byte);
 
-        Assert.HasCount(1, encoded);
+        Assert.HasCount(2, encoded);
     }
 
     [TestMethod]
@@ -378,7 +379,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode((sbyte)42, GaldrFieldType.SByte);
 
-        Assert.HasCount(1, encoded);
+        Assert.HasCount(2, encoded);
     }
 
     [TestMethod]
@@ -401,7 +402,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode((short)42, GaldrFieldType.Int16);
 
-        Assert.HasCount(2, encoded);
+        Assert.HasCount(3, encoded);
     }
 
     [TestMethod]
@@ -420,7 +421,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode((ushort)42, GaldrFieldType.UInt16);
 
-        Assert.HasCount(2, encoded);
+        Assert.HasCount(3, encoded);
     }
 
     [TestMethod]
@@ -439,7 +440,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode(42U, GaldrFieldType.UInt32);
 
-        Assert.HasCount(4, encoded);
+        Assert.HasCount(5, encoded);
     }
 
     [TestMethod]
@@ -460,7 +461,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode(42UL, GaldrFieldType.UInt64);
 
-        Assert.HasCount(8, encoded);
+        Assert.HasCount(9, encoded);
     }
 
     [TestMethod]
@@ -499,7 +500,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode(3.14f, GaldrFieldType.Single);
 
-        Assert.HasCount(4, encoded);
+        Assert.HasCount(5, encoded);
     }
 
     [TestMethod]
@@ -520,7 +521,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode('X', GaldrFieldType.Char);
 
-        Assert.HasCount(2, encoded);
+        Assert.HasCount(3, encoded);
     }
 
     [TestMethod]
@@ -558,7 +559,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode(TimeSpan.FromHours(1), GaldrFieldType.TimeSpan);
 
-        Assert.HasCount(8, encoded);
+        Assert.HasCount(9, encoded);
     }
 
     [TestMethod]
@@ -581,7 +582,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode(DateOnly.FromDateTime(DateTime.Today), GaldrFieldType.DateOnly);
 
-        Assert.HasCount(4, encoded);
+        Assert.HasCount(5, encoded);
     }
 
     [TestMethod]
@@ -604,7 +605,7 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode(new TimeOnly(12, 0, 0), GaldrFieldType.TimeOnly);
 
-        Assert.HasCount(8, encoded);
+        Assert.HasCount(9, encoded);
     }
 
     private static int CompareBytes(byte[] a, byte[] b)

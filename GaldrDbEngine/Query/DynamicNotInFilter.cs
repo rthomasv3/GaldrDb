@@ -111,4 +111,9 @@ internal sealed class DynamicNotInFilter : IFieldFilter
     {
         return null;
     }
+
+    public IEnumerable<byte[]> GetAllIndexKeyBytes()
+    {
+        return null;
+    }
 }

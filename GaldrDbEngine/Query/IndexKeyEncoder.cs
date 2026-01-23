@@ -5,33 +5,57 @@ namespace GaldrDbEngine.Query;
 
 internal static class IndexKeyEncoder
 {
+    private const byte NULL_PREFIX = 0x00;
+    private const byte VALUE_PREFIX = 0x01;
+
+    /// <summary>
+    /// The minimum key that represents a non-null value. Used as start key in range queries
+    /// that should exclude null values (e.g., LessThan, LessThanOrEqual).
+    /// </summary>
+    public static readonly byte[] MinimumNonNullKey = new byte[] { VALUE_PREFIX };
+
     public static byte[] Encode(object value, GaldrFieldType fieldType)
     {
-        return fieldType switch
+        byte[] result;
+
+        if (value == null)
         {
-            GaldrFieldType.String => EncodeString((string)value),
-            GaldrFieldType.Int32 => EncodeInt32((int)value),
-            GaldrFieldType.Int64 => EncodeInt64((long)value),
-            GaldrFieldType.Double => EncodeDouble((double)value),
-            GaldrFieldType.Decimal => EncodeDecimal((decimal)value),
-            GaldrFieldType.Boolean => EncodeBoolean((bool)value),
-            GaldrFieldType.DateTime => EncodeDateTime((DateTime)value),
-            GaldrFieldType.DateTimeOffset => EncodeDateTimeOffset((DateTimeOffset)value),
-            GaldrFieldType.Guid => EncodeGuid((Guid)value),
-            GaldrFieldType.Byte => EncodeByte((byte)value),
-            GaldrFieldType.SByte => EncodeSByte((sbyte)value),
-            GaldrFieldType.Int16 => EncodeInt16((short)value),
-            GaldrFieldType.UInt16 => EncodeUInt16((ushort)value),
-            GaldrFieldType.UInt32 => EncodeUInt32((uint)value),
-            GaldrFieldType.UInt64 => EncodeUInt64((ulong)value),
-            GaldrFieldType.Single => EncodeSingle((float)value),
-            GaldrFieldType.Char => EncodeChar((char)value),
-            GaldrFieldType.TimeSpan => EncodeTimeSpan((TimeSpan)value),
-            GaldrFieldType.DateOnly => EncodeDateOnly((DateOnly)value),
-            GaldrFieldType.TimeOnly => EncodeTimeOnly((TimeOnly)value),
-            GaldrFieldType.Complex => throw new NotSupportedException("Complex types cannot be encoded as index keys"),
-            _ => throw new NotSupportedException($"Field type {fieldType} is not supported for index encoding")
-        };
+            result = new byte[] { NULL_PREFIX };
+        }
+        else
+        {
+            byte[] valueBytes = fieldType switch
+            {
+                GaldrFieldType.String => EncodeString((string)value),
+                GaldrFieldType.Int32 => EncodeInt32((int)value),
+                GaldrFieldType.Int64 => EncodeInt64((long)value),
+                GaldrFieldType.Double => EncodeDouble((double)value),
+                GaldrFieldType.Decimal => EncodeDecimal((decimal)value),
+                GaldrFieldType.Boolean => EncodeBoolean((bool)value),
+                GaldrFieldType.DateTime => EncodeDateTime((DateTime)value),
+                GaldrFieldType.DateTimeOffset => EncodeDateTimeOffset((DateTimeOffset)value),
+                GaldrFieldType.Guid => EncodeGuid((Guid)value),
+                GaldrFieldType.Byte => EncodeByte((byte)value),
+                GaldrFieldType.SByte => EncodeSByte((sbyte)value),
+                GaldrFieldType.Int16 => EncodeInt16((short)value),
+                GaldrFieldType.UInt16 => EncodeUInt16((ushort)value),
+                GaldrFieldType.UInt32 => EncodeUInt32((uint)value),
+                GaldrFieldType.UInt64 => EncodeUInt64((ulong)value),
+                GaldrFieldType.Single => EncodeSingle((float)value),
+                GaldrFieldType.Char => EncodeChar((char)value),
+                GaldrFieldType.TimeSpan => EncodeTimeSpan((TimeSpan)value),
+                GaldrFieldType.DateOnly => EncodeDateOnly((DateOnly)value),
+                GaldrFieldType.TimeOnly => EncodeTimeOnly((TimeOnly)value),
+                GaldrFieldType.Complex => throw new NotSupportedException("Complex types cannot be encoded as index keys"),
+                _ => throw new NotSupportedException($"Field type {fieldType} is not supported for index encoding")
+            };
+
+            result = new byte[valueBytes.Length + 1];
+            result[0] = VALUE_PREFIX;
+            Array.Copy(valueBytes, 0, result, 1, valueBytes.Length);
+        }
+
+        return result;
     }
 
     private static byte[] EncodeString(string value)
@@ -284,7 +308,10 @@ internal static class IndexKeyEncoder
             if (endBytes[i] < 0xFF)
             {
                 endBytes[i]++;
-                result = endBytes;
+                byte[] withPrefix = new byte[endBytes.Length + 1];
+                withPrefix[0] = VALUE_PREFIX;
+                Array.Copy(endBytes, 0, withPrefix, 1, endBytes.Length);
+                result = withPrefix;
             }
         }
 

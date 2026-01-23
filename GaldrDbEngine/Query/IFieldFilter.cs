@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace GaldrDbEngine.Query;
 
@@ -40,4 +41,10 @@ public interface IFieldFilter
     /// </summary>
     /// <returns>The encoded end key bytes, or null for non-range filters.</returns>
     byte[] GetIndexKeyEndBytes();
+
+    /// <summary>
+    /// Gets the encoded index key bytes for all values in an In filter.
+    /// </summary>
+    /// <returns>Encoded key bytes for each value, or null for non-In filters.</returns>
+    IEnumerable<byte[]> GetAllIndexKeyBytes();
 }

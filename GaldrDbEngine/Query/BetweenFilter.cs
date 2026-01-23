@@ -96,4 +96,10 @@ public sealed class BetweenFilter<TDocument, TField> : IFieldFilter where TField
         // Returns the max value for range scan end
         return IndexKeyEncoder.Encode(_maxValue, _field.FieldType);
     }
+
+    /// <inheritdoc/>
+    public IEnumerable<byte[]> GetAllIndexKeyBytes()
+    {
+        return null;
+    }
 }

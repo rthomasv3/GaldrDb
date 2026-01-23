@@ -51,9 +51,18 @@ internal static class IndexFieldExtractor
             // Move to the value
             reader.Read();
 
-            if (matchedIndex != null && reader.TokenType != JsonTokenType.Null)
+            if (matchedIndex != null)
             {
-                byte[] keyBytes = ExtractAndEncode(ref reader, matchedIndex.FieldType);
+                byte[] keyBytes;
+                if (reader.TokenType == JsonTokenType.Null)
+                {
+                    keyBytes = IndexKeyEncoder.Encode(null, matchedIndex.FieldType);
+                }
+                else
+                {
+                    keyBytes = ExtractAndEncode(ref reader, matchedIndex.FieldType);
+                }
+
                 if (keyBytes != null)
                 {
                     fields.Add(new IndexFieldEntry(matchedIndex.FieldName, keyBytes));

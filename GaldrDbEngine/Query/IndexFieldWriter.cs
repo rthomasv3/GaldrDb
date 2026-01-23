@@ -16,10 +16,7 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteString(string fieldName, string value)
     {
-        if (value != null)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value, GaldrFieldType.String)));
-        }
+        _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value, GaldrFieldType.String)));
     }
 
     /// <summary>Writes an int field value.</summary>
@@ -35,10 +32,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteInt32(string fieldName, int? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Int32)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Int32)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.Int32);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Writes a long field value.</summary>
@@ -54,10 +51,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteInt64(string fieldName, long? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Int64)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Int64)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.Int64);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Writes a double field value.</summary>
@@ -73,10 +70,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteDouble(string fieldName, double? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Double)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Double)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.Double);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Writes a decimal field value.</summary>
@@ -92,10 +89,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteDecimal(string fieldName, decimal? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Decimal)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Decimal)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.Decimal);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Writes a bool field value.</summary>
@@ -111,10 +108,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteBoolean(string fieldName, bool? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Boolean)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Boolean)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.Boolean);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Writes a DateTime field value.</summary>
@@ -130,10 +127,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteDateTime(string fieldName, DateTime? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.DateTime)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.DateTime)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.DateTime);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Writes a DateTimeOffset field value.</summary>
@@ -149,10 +146,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteDateTimeOffset(string fieldName, DateTimeOffset? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.DateTimeOffset)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.DateTimeOffset)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.DateTimeOffset);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Writes a Guid field value.</summary>
@@ -168,10 +165,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteGuid(string fieldName, Guid? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Guid)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Guid)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.Guid);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Writes a byte field value.</summary>
@@ -187,10 +184,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteByte(string fieldName, byte? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Byte)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Byte)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.Byte);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Writes an sbyte field value.</summary>
@@ -206,10 +203,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteSByte(string fieldName, sbyte? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.SByte)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.SByte)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.SByte);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Writes a short field value.</summary>
@@ -225,10 +222,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteInt16(string fieldName, short? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Int16)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Int16)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.Int16);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Writes a ushort field value.</summary>
@@ -244,10 +241,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteUInt16(string fieldName, ushort? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.UInt16)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.UInt16)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.UInt16);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Writes a uint field value.</summary>
@@ -263,10 +260,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteUInt32(string fieldName, uint? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.UInt32)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.UInt32)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.UInt32);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Writes a ulong field value.</summary>
@@ -282,10 +279,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteUInt64(string fieldName, ulong? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.UInt64)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.UInt64)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.UInt64);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Writes a float field value.</summary>
@@ -301,10 +298,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteSingle(string fieldName, float? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Single)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Single)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.Single);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Writes a char field value.</summary>
@@ -320,10 +317,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteChar(string fieldName, char? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Char)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.Char)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.Char);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Writes a TimeSpan field value.</summary>
@@ -339,10 +336,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteTimeSpan(string fieldName, TimeSpan? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.TimeSpan)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.TimeSpan)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.TimeSpan);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Writes a DateOnly field value.</summary>
@@ -358,10 +355,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteDateOnly(string fieldName, DateOnly? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.DateOnly)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.DateOnly)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.DateOnly);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Writes a TimeOnly field value.</summary>
@@ -377,10 +374,10 @@ public sealed class IndexFieldWriter
     /// <param name="value">The value.</param>
     public void WriteTimeOnly(string fieldName, TimeOnly? value)
     {
-        if (value.HasValue)
-        {
-            _fields.Add(new IndexFieldEntry(fieldName, IndexKeyEncoder.Encode(value.Value, GaldrFieldType.TimeOnly)));
-        }
+        byte[] encoded = value.HasValue
+            ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.TimeOnly)
+            : IndexKeyEncoder.Encode(null, GaldrFieldType.TimeOnly);
+        _fields.Add(new IndexFieldEntry(fieldName, encoded));
     }
 
     /// <summary>Gets all written field entries.</summary>

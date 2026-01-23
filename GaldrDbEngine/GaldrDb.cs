@@ -2025,6 +2025,27 @@ public class GaldrDb : IDisposable
         return result;
     }
 
+    internal List<SecondaryIndexEntry> SearchSecondaryIndex(IndexDefinition indexDef, byte[] keyBytes)
+    {
+        int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
+        SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, maxKeys);
+        return indexTree.SearchByFieldValueWithDocIds(keyBytes);
+    }
+
+    internal List<SecondaryIndexEntry> SearchSecondaryIndexExact(IndexDefinition indexDef, byte[] keyBytes)
+    {
+        int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
+        SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, maxKeys);
+        return indexTree.SearchByExactFieldValueWithDocIds(keyBytes);
+    }
+
+    internal List<SecondaryIndexEntry> SearchSecondaryIndexRange(IndexDefinition indexDef, byte[] startKeyBytes, byte[] endKeyBytes, bool includeStart, bool includeEnd)
+    {
+        int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
+        SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, maxKeys);
+        return indexTree.SearchRangeWithDocIds(startKeyBytes, endKeyBytes, includeStart, includeEnd);
+    }
+
     internal void CommitDelete(string collectionName, int docId, IReadOnlyList<IndexFieldEntry> oldIndexFields)
     {
         CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);

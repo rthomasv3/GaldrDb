@@ -179,4 +179,10 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
 
         return result;
     }
+
+    /// <inheritdoc/>
+    public IEnumerable<byte[]> GetAllIndexKeyBytes()
+    {
+        return null;
+    }
 }

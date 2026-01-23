@@ -51,14 +51,21 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         CollectionEntry collection = _db.GetCollection(collectionName);
         QueryPlan plan = CreateQueryPlan(collection, sourceFilters);
 
-        bool canUseOptimizedScan = plan.PlanType == QueryPlanType.PrimaryKeyScan &&
-                                   projectionFilters.Count == 0 &&
-                                   IsOrderByIdOnly(query.OrderByClauses);
+        bool isOrderByIdOnly = IsOrderByIdOnly(query.OrderByClauses);
+        bool noProjectionFilters = projectionFilters.Count == 0;
+        bool canUseOptimizedScan = plan.PlanType == QueryPlanType.PrimaryKeyScan && noProjectionFilters && isOrderByIdOnly;
+        bool canUseOptimizedRangeScan = plan.PlanType == QueryPlanType.PrimaryKeyRange && noProjectionFilters && isOrderByIdOnly;
 
         if (canUseOptimizedScan)
         {
             bool descending = query.OrderByClauses.Count > 0 && query.OrderByClauses[0].Descending;
             (List<object> sourceDocuments, HashSet<int> snapshotDocIds) = ExecutePrimaryKeyScan(collectionName, query.SkipValue, query.LimitValue, descending);
+            List<object> merged = ApplyWriteSetOverlay(sourceDocuments, snapshotDocIds, sourceFilters);
+            result = ConvertToProjections(merged);
+        }
+        else if (canUseOptimizedRangeScan)
+        {
+            (List<object> sourceDocuments, HashSet<int> snapshotDocIds) = ExecutePrimaryKeyRangeScan(collectionName, plan, sourceFilters, query.SkipValue, query.LimitValue);
             List<object> merged = ApplyWriteSetOverlay(sourceDocuments, snapshotDocIds, sourceFilters);
             result = ConvertToProjections(merged);
         }
@@ -69,7 +76,11 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
 
             if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
             {
-                (sourceDocuments, snapshotDocIds) = ExecutePrimaryKeyRangeScan(collectionName, plan, sourceFilters);
+                (sourceDocuments, snapshotDocIds) = ExecutePrimaryKeyRangeScan(collectionName, plan, sourceFilters, null, null);
+            }
+            else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
+            {
+                (sourceDocuments, snapshotDocIds) = ExecuteSecondaryIndexScan(collectionName, plan, sourceFilters);
             }
             else
             {
@@ -112,6 +123,10 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
             {
                 (count, countedDocIds) = CountPrimaryKeyRangeScan(collectionName, plan, sourceFilters);
             }
+            else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
+            {
+                (count, countedDocIds) = CountSecondaryIndexScan(collectionName, plan, sourceFilters);
+            }
             else
             {
                 (count, countedDocIds) = CountFullScan(collectionName, sourceFilters);
@@ -128,7 +143,11 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
 
             if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
             {
-                (sourceDocuments, snapshotDocIds) = ExecutePrimaryKeyRangeScan(collectionName, plan, sourceFilters);
+                (sourceDocuments, snapshotDocIds) = ExecutePrimaryKeyRangeScan(collectionName, plan, sourceFilters, null, null);
+            }
+            else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
+            {
+                (sourceDocuments, snapshotDocIds) = ExecuteSecondaryIndexScan(collectionName, plan, sourceFilters);
             }
             else
             {
@@ -153,14 +172,21 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         CollectionEntry collection = _db.GetCollection(collectionName);
         QueryPlan plan = CreateQueryPlan(collection, sourceFilters);
 
-        bool canUseOptimizedScan = plan.PlanType == QueryPlanType.PrimaryKeyScan &&
-                                   projectionFilters.Count == 0 &&
-                                   IsOrderByIdOnly(query.OrderByClauses);
+        bool isOrderByIdOnly = IsOrderByIdOnly(query.OrderByClauses);
+        bool noProjectionFilters = projectionFilters.Count == 0;
+        bool canUseOptimizedScan = plan.PlanType == QueryPlanType.PrimaryKeyScan && noProjectionFilters && isOrderByIdOnly;
+        bool canUseOptimizedRangeScan = plan.PlanType == QueryPlanType.PrimaryKeyRange && noProjectionFilters && isOrderByIdOnly;
 
         if (canUseOptimizedScan)
         {
             bool descending = query.OrderByClauses.Count > 0 && query.OrderByClauses[0].Descending;
             (List<object> sourceDocuments, HashSet<int> snapshotDocIds) = await ExecutePrimaryKeyScanAsync(collectionName, query.SkipValue, query.LimitValue, descending, cancellationToken).ConfigureAwait(false);
+            List<object> merged = ApplyWriteSetOverlay(sourceDocuments, snapshotDocIds, sourceFilters);
+            result = ConvertToProjections(merged);
+        }
+        else if (canUseOptimizedRangeScan)
+        {
+            (List<object> sourceDocuments, HashSet<int> snapshotDocIds) = await ExecutePrimaryKeyRangeScanAsync(collectionName, plan, sourceFilters, query.SkipValue, query.LimitValue, cancellationToken).ConfigureAwait(false);
             List<object> merged = ApplyWriteSetOverlay(sourceDocuments, snapshotDocIds, sourceFilters);
             result = ConvertToProjections(merged);
         }
@@ -171,7 +197,11 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
 
             if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
             {
-                (sourceDocuments, snapshotDocIds) = await ExecutePrimaryKeyRangeScanAsync(collectionName, plan, sourceFilters, cancellationToken).ConfigureAwait(false);
+                (sourceDocuments, snapshotDocIds) = await ExecutePrimaryKeyRangeScanAsync(collectionName, plan, sourceFilters, null, null, cancellationToken).ConfigureAwait(false);
+            }
+            else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
+            {
+                (sourceDocuments, snapshotDocIds) = await ExecuteSecondaryIndexScanAsync(collectionName, plan, sourceFilters, cancellationToken).ConfigureAwait(false);
             }
             else
             {
@@ -208,6 +238,10 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
             {
                 (count, countedDocIds) = await CountPrimaryKeyRangeScanAsync(collectionName, plan, sourceFilters, cancellationToken).ConfigureAwait(false);
             }
+            else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
+            {
+                (count, countedDocIds) = await CountSecondaryIndexScanAsync(collectionName, plan, sourceFilters, cancellationToken).ConfigureAwait(false);
+            }
             else
             {
                 (count, countedDocIds) = await CountFullScanAsync(collectionName, sourceFilters, cancellationToken).ConfigureAwait(false);
@@ -224,7 +258,11 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
 
             if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
             {
-                (sourceDocuments, snapshotDocIds) = await ExecutePrimaryKeyRangeScanAsync(collectionName, plan, sourceFilters, cancellationToken).ConfigureAwait(false);
+                (sourceDocuments, snapshotDocIds) = await ExecutePrimaryKeyRangeScanAsync(collectionName, plan, sourceFilters, null, null, cancellationToken).ConfigureAwait(false);
+            }
+            else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
+            {
+                (sourceDocuments, snapshotDocIds) = await ExecuteSecondaryIndexScanAsync(collectionName, plan, sourceFilters, cancellationToken).ConfigureAwait(false);
             }
             else
             {
@@ -314,7 +352,7 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         return plan;
     }
 
-    private (List<object> Results, HashSet<int> DocIds) ExecutePrimaryKeyRangeScan(string collectionName, QueryPlan plan, List<IFieldFilter> filters)
+    private (List<object> Results, HashSet<int> DocIds) ExecutePrimaryKeyRangeScan(string collectionName, QueryPlan plan, List<IFieldFilter> filters, int? skip, int? limit)
     {
         List<object> results = new List<object>();
         HashSet<int> docIds = new HashSet<int>();
@@ -326,25 +364,67 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
 
         List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+        bool hasRemainingFilters = remainingFilters.Count > 0;
+
+        int skipCount = skip ?? 0;
+        int limitCount = limit ?? int.MaxValue;
+        int skipped = 0;
+        int collected = 0;
 
         foreach (DocumentVersion version in visibleVersions)
         {
-            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
-            string json = Encoding.UTF8.GetString(jsonBytes);
-            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
-
-            if (PassesFilters(sourceDoc, remainingFilters))
+            if (!hasRemainingFilters)
             {
+                if (skipped < skipCount)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                if (collected >= limitCount)
+                {
+                    break;
+                }
+
+                byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+                string json = Encoding.UTF8.GetString(jsonBytes);
+                object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
                 results.Add(sourceDoc);
                 docIds.Add(version.DocumentId);
                 _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
+                collected++;
+            }
+            else
+            {
+                byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+                string json = Encoding.UTF8.GetString(jsonBytes);
+                object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+                if (PassesFilters(sourceDoc, remainingFilters))
+                {
+                    if (skipped < skipCount)
+                    {
+                        skipped++;
+                    }
+                    else if (collected < limitCount)
+                    {
+                        results.Add(sourceDoc);
+                        docIds.Add(version.DocumentId);
+                        _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
+                        collected++;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
             }
         }
 
         return (results, docIds);
     }
 
-    private async Task<(List<object> Results, HashSet<int> DocIds)> ExecutePrimaryKeyRangeScanAsync(string collectionName, QueryPlan plan, List<IFieldFilter> filters, CancellationToken cancellationToken)
+    private async Task<(List<object> Results, HashSet<int> DocIds)> ExecutePrimaryKeyRangeScanAsync(string collectionName, QueryPlan plan, List<IFieldFilter> filters, int? skip, int? limit, CancellationToken cancellationToken)
     {
         List<object> results = new List<object>();
         HashSet<int> docIds = new HashSet<int>();
@@ -356,18 +436,60 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
 
         List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+        bool hasRemainingFilters = remainingFilters.Count > 0;
+
+        int skipCount = skip ?? 0;
+        int limitCount = limit ?? int.MaxValue;
+        int skipped = 0;
+        int collected = 0;
 
         foreach (DocumentVersion version in visibleVersions)
         {
-            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
-            string json = Encoding.UTF8.GetString(jsonBytes);
-            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
-
-            if (PassesFilters(sourceDoc, remainingFilters))
+            if (!hasRemainingFilters)
             {
+                if (skipped < skipCount)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                if (collected >= limitCount)
+                {
+                    break;
+                }
+
+                byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+                string json = Encoding.UTF8.GetString(jsonBytes);
+                object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
                 results.Add(sourceDoc);
                 docIds.Add(version.DocumentId);
                 _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
+                collected++;
+            }
+            else
+            {
+                byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+                string json = Encoding.UTF8.GetString(jsonBytes);
+                object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+                if (PassesFilters(sourceDoc, remainingFilters))
+                {
+                    if (skipped < skipCount)
+                    {
+                        skipped++;
+                    }
+                    else if (collected < limitCount)
+                    {
+                        results.Add(sourceDoc);
+                        docIds.Add(version.DocumentId);
+                        _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
+                        collected++;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
             }
         }
 
@@ -464,6 +586,62 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         return (results, docIds);
     }
 
+    private (List<object> Results, HashSet<int> DocIds) ExecuteSecondaryIndexScan(string collectionName, QueryPlan plan, List<IFieldFilter> filters)
+    {
+        List<object> results = new List<object>();
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<SecondaryIndexEntry> entries = GetSecondaryIndexEntries(plan);
+        List<int> indexDocIds = ExtractDocIdsFromEntries(entries);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, indexDocIds, _snapshotTxId);
+
+        List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, remainingFilters))
+            {
+                results.Add(sourceDoc);
+                docIds.Add(version.DocumentId);
+                _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
+            }
+        }
+
+        return (results, docIds);
+    }
+
+    private async Task<(List<object> Results, HashSet<int> DocIds)> ExecuteSecondaryIndexScanAsync(string collectionName, QueryPlan plan, List<IFieldFilter> filters, CancellationToken cancellationToken)
+    {
+        List<object> results = new List<object>();
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<SecondaryIndexEntry> entries = GetSecondaryIndexEntries(plan);
+        List<int> indexDocIds = ExtractDocIdsFromEntries(entries);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, indexDocIds, _snapshotTxId);
+
+        List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, remainingFilters))
+            {
+                results.Add(sourceDoc);
+                docIds.Add(version.DocumentId);
+                _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
+            }
+        }
+
+        return (results, docIds);
+    }
+
     private (List<object> Results, HashSet<int> DocIds) ExecuteFullScan(string collectionName, List<IFieldFilter> filters)
     {
         List<object> results = new List<object>();
@@ -537,6 +715,73 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         }
 
         return result;
+    }
+
+    private List<SecondaryIndexEntry> GetSecondaryIndexEntries(QueryPlan plan)
+    {
+        List<SecondaryIndexEntry> entries;
+        IFieldFilter filter = plan.IndexFilter;
+        byte[] keyBytes = filter.GetIndexKeyBytes();
+
+        if (filter.Operation == FieldOp.Equals)
+        {
+            entries = _db.SearchSecondaryIndexExact(plan.IndexDefinition, keyBytes);
+        }
+        else if (filter.Operation == FieldOp.StartsWith)
+        {
+            entries = _db.SearchSecondaryIndex(plan.IndexDefinition, keyBytes);
+        }
+        else if (filter.Operation == FieldOp.In)
+        {
+            entries = new List<SecondaryIndexEntry>();
+            foreach (byte[] valueKeyBytes in filter.GetAllIndexKeyBytes())
+            {
+                List<SecondaryIndexEntry> valueEntries = _db.SearchSecondaryIndexExact(plan.IndexDefinition, valueKeyBytes);
+                entries.AddRange(valueEntries);
+            }
+        }
+        else if (filter.Operation == FieldOp.Between)
+        {
+            byte[] endKeyBytes = filter.GetIndexKeyEndBytes();
+            entries = _db.SearchSecondaryIndexRange(plan.IndexDefinition, keyBytes, endKeyBytes, true, true);
+        }
+        else if (filter.Operation == FieldOp.GreaterThan)
+        {
+            entries = _db.SearchSecondaryIndexRange(plan.IndexDefinition, keyBytes, null, false, true);
+        }
+        else if (filter.Operation == FieldOp.GreaterThanOrEqual)
+        {
+            entries = _db.SearchSecondaryIndexRange(plan.IndexDefinition, keyBytes, null, true, true);
+        }
+        else if (filter.Operation == FieldOp.LessThan)
+        {
+            entries = _db.SearchSecondaryIndexRange(plan.IndexDefinition, IndexKeyEncoder.MinimumNonNullKey, keyBytes, true, false);
+        }
+        else if (filter.Operation == FieldOp.LessThanOrEqual)
+        {
+            entries = _db.SearchSecondaryIndexRange(plan.IndexDefinition, IndexKeyEncoder.MinimumNonNullKey, keyBytes, true, true);
+        }
+        else
+        {
+            entries = new List<SecondaryIndexEntry>();
+        }
+
+        return entries;
+    }
+
+    private static List<int> ExtractDocIdsFromEntries(List<SecondaryIndexEntry> entries)
+    {
+        List<int> docIds = new List<int>(entries.Count);
+
+        foreach (SecondaryIndexEntry entry in entries)
+        {
+            if (!docIds.Contains(entry.DocId))
+            {
+                docIds.Add(entry.DocId);
+            }
+        }
+
+        return docIds;
     }
 
     private List<object> ApplyWriteSetOverlay(List<object> snapshotResults, HashSet<int> snapshotDocIds, List<IFieldFilter> filters)
@@ -845,14 +1090,23 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
 
         List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+        bool hasRemainingFilters = remainingFilters.Count > 0;
 
         foreach (DocumentVersion version in visibleVersions)
         {
-            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
-            string json = Encoding.UTF8.GetString(jsonBytes);
-            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+            if (hasRemainingFilters)
+            {
+                byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+                string json = Encoding.UTF8.GetString(jsonBytes);
+                object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
 
-            if (PassesFilters(sourceDoc, remainingFilters))
+                if (PassesFilters(sourceDoc, remainingFilters))
+                {
+                    count++;
+                    docIds.Add(version.DocumentId);
+                }
+            }
+            else
             {
                 count++;
                 docIds.Add(version.DocumentId);
@@ -874,14 +1128,95 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
 
         List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+        bool hasRemainingFilters = remainingFilters.Count > 0;
 
         foreach (DocumentVersion version in visibleVersions)
         {
-            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
-            string json = Encoding.UTF8.GetString(jsonBytes);
-            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+            if (hasRemainingFilters)
+            {
+                byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+                string json = Encoding.UTF8.GetString(jsonBytes);
+                object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
 
-            if (PassesFilters(sourceDoc, remainingFilters))
+                if (PassesFilters(sourceDoc, remainingFilters))
+                {
+                    count++;
+                    docIds.Add(version.DocumentId);
+                }
+            }
+            else
+            {
+                count++;
+                docIds.Add(version.DocumentId);
+            }
+        }
+
+        return (count, docIds);
+    }
+
+    private (int Count, HashSet<int> DocIds) CountSecondaryIndexScan(string collectionName, QueryPlan plan, List<IFieldFilter> filters)
+    {
+        int count = 0;
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<SecondaryIndexEntry> entries = GetSecondaryIndexEntries(plan);
+        List<int> indexDocIds = ExtractDocIdsFromEntries(entries);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, indexDocIds, _snapshotTxId);
+
+        List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+        bool hasRemainingFilters = remainingFilters.Count > 0;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (hasRemainingFilters)
+            {
+                byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+                string json = Encoding.UTF8.GetString(jsonBytes);
+                object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+                if (PassesFilters(sourceDoc, remainingFilters))
+                {
+                    count++;
+                    docIds.Add(version.DocumentId);
+                }
+            }
+            else
+            {
+                count++;
+                docIds.Add(version.DocumentId);
+            }
+        }
+
+        return (count, docIds);
+    }
+
+    private async Task<(int Count, HashSet<int> DocIds)> CountSecondaryIndexScanAsync(string collectionName, QueryPlan plan, List<IFieldFilter> filters, CancellationToken cancellationToken)
+    {
+        int count = 0;
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<SecondaryIndexEntry> entries = GetSecondaryIndexEntries(plan);
+        List<int> indexDocIds = ExtractDocIdsFromEntries(entries);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, indexDocIds, _snapshotTxId);
+
+        List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+        bool hasRemainingFilters = remainingFilters.Count > 0;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (hasRemainingFilters)
+            {
+                byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+                string json = Encoding.UTF8.GetString(jsonBytes);
+                object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+                if (PassesFilters(sourceDoc, remainingFilters))
+                {
+                    count++;
+                    docIds.Add(version.DocumentId);
+                }
+            }
+            else
             {
                 count++;
                 docIds.Add(version.DocumentId);
@@ -1033,6 +1368,10 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
             {
                 found = AnyPrimaryKeyRangeScan(collectionName, plan, filters, deletedDocIds);
             }
+            else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
+            {
+                found = AnySecondaryIndexScan(collectionName, plan, filters, deletedDocIds);
+            }
             else
             {
                 found = AnyFullScan(collectionName, filters, deletedDocIds);
@@ -1087,6 +1426,10 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
             if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
             {
                 found = await AnyPrimaryKeyRangeScanAsync(collectionName, plan, filters, deletedDocIds, cancellationToken).ConfigureAwait(false);
+            }
+            else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
+            {
+                found = await AnySecondaryIndexScanAsync(collectionName, plan, filters, deletedDocIds, cancellationToken).ConfigureAwait(false);
             }
             else
             {
@@ -1151,6 +1494,10 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
             {
                 found = AnyPrimaryKeyRangeScanWithProjection(collectionName, plan, sourceFilters, projectionFilters, deletedDocIds);
             }
+            else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
+            {
+                found = AnySecondaryIndexScanWithProjection(collectionName, plan, sourceFilters, projectionFilters, deletedDocIds);
+            }
             else
             {
                 found = AnyFullScanWithProjection(collectionName, sourceFilters, projectionFilters, deletedDocIds);
@@ -1213,6 +1560,10 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
             if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
             {
                 found = await AnyPrimaryKeyRangeScanWithProjectionAsync(collectionName, plan, sourceFilters, projectionFilters, deletedDocIds, cancellationToken).ConfigureAwait(false);
+            }
+            else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
+            {
+                found = await AnySecondaryIndexScanWithProjectionAsync(collectionName, plan, sourceFilters, projectionFilters, deletedDocIds, cancellationToken).ConfigureAwait(false);
             }
             else
             {
@@ -1314,6 +1665,66 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
 
         List<int> rangeDocIds = await _db.SearchDocIdRangeAsync(collectionName, startId, endId, plan.IncludeStart, plan.IncludeEnd, cancellationToken).ConfigureAwait(false);
         List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
+
+        List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+        bool found = false;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (deletedDocIds.Contains(version.DocumentId))
+            {
+                continue;
+            }
+
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, remainingFilters))
+            {
+                found = true;
+                break;
+            }
+        }
+
+        return found;
+    }
+
+    private bool AnySecondaryIndexScan(string collectionName, QueryPlan plan, List<IFieldFilter> filters, HashSet<int> deletedDocIds)
+    {
+        List<SecondaryIndexEntry> entries = GetSecondaryIndexEntries(plan);
+        List<int> indexDocIds = ExtractDocIdsFromEntries(entries);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, indexDocIds, _snapshotTxId);
+
+        List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+        bool found = false;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (deletedDocIds.Contains(version.DocumentId))
+            {
+                continue;
+            }
+
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, remainingFilters))
+            {
+                found = true;
+                break;
+            }
+        }
+
+        return found;
+    }
+
+    private async Task<bool> AnySecondaryIndexScanAsync(string collectionName, QueryPlan plan, List<IFieldFilter> filters, HashSet<int> deletedDocIds, CancellationToken cancellationToken)
+    {
+        List<SecondaryIndexEntry> entries = GetSecondaryIndexEntries(plan);
+        List<int> indexDocIds = ExtractDocIdsFromEntries(entries);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, indexDocIds, _snapshotTxId);
 
         List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
         bool found = false;
@@ -1442,6 +1853,74 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
 
         List<int> rangeDocIds = await _db.SearchDocIdRangeAsync(collectionName, startId, endId, plan.IncludeStart, plan.IncludeEnd, cancellationToken).ConfigureAwait(false);
         List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
+
+        List<IFieldFilter> remainingFilters = GetRemainingFilters(sourceFilters, plan.UsedFilterIndex);
+        bool found = false;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (deletedDocIds.Contains(version.DocumentId))
+            {
+                continue;
+            }
+
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, remainingFilters))
+            {
+                T projection = (T)_projTypeInfo.ConvertToProjection(sourceDoc);
+                if (PassesProjectionFilters(projection, projectionFilters))
+                {
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        return found;
+    }
+
+    private bool AnySecondaryIndexScanWithProjection(string collectionName, QueryPlan plan, List<IFieldFilter> sourceFilters, List<IFieldFilter> projectionFilters, HashSet<int> deletedDocIds)
+    {
+        List<SecondaryIndexEntry> entries = GetSecondaryIndexEntries(plan);
+        List<int> indexDocIds = ExtractDocIdsFromEntries(entries);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, indexDocIds, _snapshotTxId);
+
+        List<IFieldFilter> remainingFilters = GetRemainingFilters(sourceFilters, plan.UsedFilterIndex);
+        bool found = false;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (deletedDocIds.Contains(version.DocumentId))
+            {
+                continue;
+            }
+
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, remainingFilters))
+            {
+                T projection = (T)_projTypeInfo.ConvertToProjection(sourceDoc);
+                if (PassesProjectionFilters(projection, projectionFilters))
+                {
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        return found;
+    }
+
+    private async Task<bool> AnySecondaryIndexScanWithProjectionAsync(string collectionName, QueryPlan plan, List<IFieldFilter> sourceFilters, List<IFieldFilter> projectionFilters, HashSet<int> deletedDocIds, CancellationToken cancellationToken)
+    {
+        List<SecondaryIndexEntry> entries = GetSecondaryIndexEntries(plan);
+        List<int> indexDocIds = ExtractDocIdsFromEntries(entries);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, indexDocIds, _snapshotTxId);
 
         List<IFieldFilter> remainingFilters = GetRemainingFilters(sourceFilters, plan.UsedFilterIndex);
         bool found = false;

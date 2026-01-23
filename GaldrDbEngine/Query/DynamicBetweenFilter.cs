@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using GaldrDbEngine.Json;
 
 namespace GaldrDbEngine.Query;
@@ -126,5 +127,10 @@ internal sealed class DynamicBetweenFilter : IFieldFilter
     public byte[] GetIndexKeyEndBytes()
     {
         return IndexKeyEncoder.Encode(_maxValue, _fieldType);
+    }
+
+    public IEnumerable<byte[]> GetAllIndexKeyBytes()
+    {
+        return null;
     }
 }
