@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -187,6 +188,136 @@ internal class BTree
         List<BTreeEntry> entries = new List<BTreeEntry>();
         CollectAllEntries(_rootPageId, entries);
         return entries;
+    }
+
+    public void IterateAll(Func<BTreeEntry, bool> visitor)
+    {
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+        try
+        {
+            int leafPageId = FindLeftmostLeaf(_rootPageId, buffer, node);
+            int currentPageId = leafPageId;
+            bool continueScanning = currentPageId != 0;
+
+            while (continueScanning)
+            {
+                _pageIO.ReadPage(currentPageId, buffer);
+                BTreeNode.DeserializeTo(buffer, node, _order);
+
+                for (int i = 0; i < node.KeyCount; i++)
+                {
+                    BTreeEntry entry = new BTreeEntry(node.Keys[i], node.LeafValues[i]);
+                    if (!visitor(entry))
+                    {
+                        continueScanning = false;
+                        break;
+                    }
+                }
+
+                if (continueScanning)
+                {
+                    if (node.NextLeaf == 0)
+                    {
+                        continueScanning = false;
+                    }
+                    else
+                    {
+                        currentPageId = node.NextLeaf;
+                    }
+                }
+            }
+        }
+        finally
+        {
+            BufferPool.Return(buffer);
+            BTreeNodePool.Return(node);
+        }
+    }
+
+    public async Task IterateAllAsync(Func<BTreeEntry, bool> visitor, CancellationToken cancellationToken = default)
+    {
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+        try
+        {
+            int leafPageId = await FindLeftmostLeafAsync(_rootPageId, buffer, node, cancellationToken).ConfigureAwait(false);
+            int currentPageId = leafPageId;
+            bool continueScanning = currentPageId != 0;
+
+            while (continueScanning)
+            {
+                await _pageIO.ReadPageAsync(currentPageId, buffer, cancellationToken).ConfigureAwait(false);
+                BTreeNode.DeserializeTo(buffer, node, _order);
+
+                for (int i = 0; i < node.KeyCount; i++)
+                {
+                    BTreeEntry entry = new BTreeEntry(node.Keys[i], node.LeafValues[i]);
+                    if (!visitor(entry))
+                    {
+                        continueScanning = false;
+                        break;
+                    }
+                }
+
+                if (continueScanning)
+                {
+                    if (node.NextLeaf == 0)
+                    {
+                        continueScanning = false;
+                    }
+                    else
+                    {
+                        currentPageId = node.NextLeaf;
+                    }
+                }
+            }
+        }
+        finally
+        {
+            BufferPool.Return(buffer);
+            BTreeNodePool.Return(node);
+        }
+    }
+
+    private int FindLeftmostLeaf(int pageId, byte[] buffer, BTreeNode node)
+    {
+        int currentPageId = pageId;
+
+        while (currentPageId != 0)
+        {
+            _pageIO.ReadPage(currentPageId, buffer);
+            BTreeNode.DeserializeTo(buffer, node, _order);
+
+            if (node.NodeType == BTreeNodeType.Leaf)
+            {
+                break;
+            }
+
+            currentPageId = node.ChildPageIds[0];
+        }
+
+        return currentPageId;
+    }
+
+    private async Task<int> FindLeftmostLeafAsync(int pageId, byte[] buffer, BTreeNode node, CancellationToken cancellationToken)
+    {
+        int currentPageId = pageId;
+
+        while (currentPageId != 0)
+        {
+            await _pageIO.ReadPageAsync(currentPageId, buffer, cancellationToken).ConfigureAwait(false);
+            BTreeNode.DeserializeTo(buffer, node, _order);
+
+            if (node.NodeType == BTreeNodeType.Leaf)
+            {
+                break;
+            }
+
+            currentPageId = node.ChildPageIds[0];
+        }
+
+        return currentPageId;
     }
 
     public List<int> CollectAllPageIds()

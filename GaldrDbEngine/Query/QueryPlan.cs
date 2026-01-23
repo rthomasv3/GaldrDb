@@ -49,6 +49,11 @@ internal sealed class QueryPlan
         return new QueryPlan(QueryPlanType.FullScan);
     }
 
+    public static QueryPlan PrimaryKeyScan()
+    {
+        return new QueryPlan(QueryPlanType.PrimaryKeyScan);
+    }
+
     public static QueryPlan PrimaryKeyRange(int? startDocId, int? endDocId, bool includeStart, bool includeEnd, int filterIndex)
     {
         return new QueryPlan(

@@ -17,18 +17,27 @@ internal sealed class QueryPlanner
 
     public QueryPlan CreatePlan(IReadOnlyList<IFieldFilter> filters)
     {
-        QueryPlan result = FindIdBasedPlan(filters);
+        QueryPlan result;
 
-        if (result == null)
+        if (filters.Count == 0)
         {
-            IndexedFilterResult indexResult = FindBestIndexedFilter(filters);
-            if (indexResult != null)
+            result = QueryPlan.PrimaryKeyScan();
+        }
+        else
+        {
+            result = FindIdBasedPlan(filters);
+
+            if (result == null)
             {
-                result = QueryPlan.SecondaryIndex(indexResult.IndexDefinition, indexResult.Filter, indexResult.FilterIndex);
-            }
-            else
-            {
-                result = QueryPlan.FullScan();
+                IndexedFilterResult indexResult = FindBestIndexedFilter(filters);
+                if (indexResult != null)
+                {
+                    result = QueryPlan.SecondaryIndex(indexResult.IndexDefinition, indexResult.Filter, indexResult.FilterIndex);
+                }
+                else
+                {
+                    result = QueryPlan.FullScan();
+                }
             }
         }
 

@@ -36,23 +36,42 @@ internal sealed class DynamicQueryExecutor : IDynamicQueryExecutor
 
     public List<JsonDocument> ExecuteQuery(DynamicQueryBuilder query)
     {
+        List<JsonDocument> result;
         QueryPlan plan = CreateQueryPlan(query.Filters);
         List<JsonDocument> snapshotResults;
         HashSet<int> snapshotDocIds;
 
-        if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+        bool canUseOptimizedScan = plan.PlanType == QueryPlanType.PrimaryKeyScan && IsOrderByIdOnly(query.OrderByClauses);
+
+        if (canUseOptimizedScan)
         {
-            (snapshotResults, snapshotDocIds) = ExecutePrimaryKeyRangeScan(plan, query.Filters);
+            bool descending = query.OrderByClauses.Count > 0 && query.OrderByClauses[0].Descending;
+            (snapshotResults, snapshotDocIds) = ExecutePrimaryKeyScan(query.SkipValue, query.LimitValue, descending);
+            result = ApplyWriteSetOverlay(snapshotResults, snapshotDocIds, query.Filters);
         }
         else
         {
-            (snapshotResults, snapshotDocIds) = ExecuteFullScan(query.Filters);
+            if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+            {
+                (snapshotResults, snapshotDocIds) = ExecutePrimaryKeyRangeScan(plan, query.Filters);
+            }
+            else
+            {
+                (snapshotResults, snapshotDocIds) = ExecuteFullScan(query.Filters);
+            }
+
+            List<JsonDocument> merged = ApplyWriteSetOverlay(snapshotResults, snapshotDocIds, query.Filters);
+            List<JsonDocument> sorted = ApplyOrdering(merged, query.OrderByClauses);
+            result = ApplySkipAndLimit(sorted, query.SkipValue, query.LimitValue);
         }
 
-        List<JsonDocument> merged = ApplyWriteSetOverlay(snapshotResults, snapshotDocIds, query.Filters);
-        List<JsonDocument> sorted = ApplyOrdering(merged, query.OrderByClauses);
+        return result;
+    }
 
-        return ApplySkipAndLimit(sorted, query.SkipValue, query.LimitValue);
+    private static bool IsOrderByIdOnly(IReadOnlyList<DynamicOrderByClause> orderByClauses)
+    {
+        return orderByClauses.Count == 0 || 
+               (orderByClauses.Count == 1 && orderByClauses[0].FieldName == "Id");
     }
 
     public int ExecuteCount(DynamicQueryBuilder query)
@@ -86,23 +105,36 @@ internal sealed class DynamicQueryExecutor : IDynamicQueryExecutor
 
     public async Task<List<JsonDocument>> ExecuteQueryAsync(DynamicQueryBuilder query, CancellationToken cancellationToken)
     {
+        List<JsonDocument> result;
         QueryPlan plan = CreateQueryPlan(query.Filters);
         List<JsonDocument> snapshotResults;
         HashSet<int> snapshotDocIds;
 
-        if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+        bool canUseOptimizedScan = plan.PlanType == QueryPlanType.PrimaryKeyScan && IsOrderByIdOnly(query.OrderByClauses);
+
+        if (canUseOptimizedScan)
         {
-            (snapshotResults, snapshotDocIds) = await ExecutePrimaryKeyRangeScanAsync(plan, query.Filters, cancellationToken).ConfigureAwait(false);
+            bool descending = query.OrderByClauses.Count > 0 && query.OrderByClauses[0].Descending;
+            (snapshotResults, snapshotDocIds) = await ExecutePrimaryKeyScanAsync(query.SkipValue, query.LimitValue, descending, cancellationToken).ConfigureAwait(false);
+            result = ApplyWriteSetOverlay(snapshotResults, snapshotDocIds, query.Filters);
         }
         else
         {
-            (snapshotResults, snapshotDocIds) = await ExecuteFullScanAsync(query.Filters, cancellationToken).ConfigureAwait(false);
+            if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+            {
+                (snapshotResults, snapshotDocIds) = await ExecutePrimaryKeyRangeScanAsync(plan, query.Filters, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                (snapshotResults, snapshotDocIds) = await ExecuteFullScanAsync(query.Filters, cancellationToken).ConfigureAwait(false);
+            }
+
+            List<JsonDocument> merged = ApplyWriteSetOverlay(snapshotResults, snapshotDocIds, query.Filters);
+            List<JsonDocument> sorted = ApplyOrdering(merged, query.OrderByClauses);
+            result = ApplySkipAndLimit(sorted, query.SkipValue, query.LimitValue);
         }
 
-        List<JsonDocument> merged = ApplyWriteSetOverlay(snapshotResults, snapshotDocIds, query.Filters);
-        List<JsonDocument> sorted = ApplyOrdering(merged, query.OrderByClauses);
-
-        return ApplySkipAndLimit(sorted, query.SkipValue, query.LimitValue);
+        return result;
     }
 
     public async Task<int> ExecuteCountAsync(DynamicQueryBuilder query, CancellationToken cancellationToken)
@@ -241,6 +273,94 @@ internal sealed class DynamicQueryExecutor : IDynamicQueryExecutor
                 results.Add(document);
                 docIds.Add(version.DocumentId);
                 _transaction.RecordRead(_collectionName, version.DocumentId, version.CreatedBy);
+            }
+        }
+
+        return (results, docIds);
+    }
+
+    private (List<JsonDocument> Results, HashSet<int> DocIds) ExecutePrimaryKeyScan(int? skip, int? limit, bool descending)
+    {
+        List<JsonDocument> results = new List<JsonDocument>();
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<int> documentIds = _versionIndex.GetDocumentIds(_collectionName);
+        if (descending)
+        {
+            documentIds.Reverse();
+        }
+
+        int skipCount = skip ?? 0;
+        int limitCount = limit ?? int.MaxValue;
+        int skipped = 0;
+        int collected = 0;
+
+        foreach (int docId in documentIds)
+        {
+            DocumentVersion version = _versionIndex.GetVisibleVersion(_collectionName, docId, _snapshotTxId);
+            if (version != null)
+            {
+                if (skipped < skipCount)
+                {
+                    skipped++;
+                }
+                else if (collected < limitCount)
+                {
+                    byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+                    JsonDocument document = JsonDocument.Parse(jsonBytes);
+                    results.Add(document);
+                    docIds.Add(version.DocumentId);
+                    _transaction.RecordRead(_collectionName, version.DocumentId, version.CreatedBy);
+                    collected++;
+                }
+                else
+                {
+                    break;
+                }
+            }
+        }
+
+        return (results, docIds);
+    }
+
+    private async Task<(List<JsonDocument> Results, HashSet<int> DocIds)> ExecutePrimaryKeyScanAsync(int? skip, int? limit, bool descending, CancellationToken cancellationToken)
+    {
+        List<JsonDocument> results = new List<JsonDocument>();
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<int> documentIds = _versionIndex.GetDocumentIds(_collectionName);
+        if (descending)
+        {
+            documentIds.Reverse();
+        }
+
+        int skipCount = skip ?? 0;
+        int limitCount = limit ?? int.MaxValue;
+        int skipped = 0;
+        int collected = 0;
+
+        foreach (int docId in documentIds)
+        {
+            DocumentVersion version = _versionIndex.GetVisibleVersion(_collectionName, docId, _snapshotTxId);
+            if (version != null)
+            {
+                if (skipped < skipCount)
+                {
+                    skipped++;
+                }
+                else if (collected < limitCount)
+                {
+                    byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+                    JsonDocument document = JsonDocument.Parse(jsonBytes);
+                    results.Add(document);
+                    docIds.Add(version.DocumentId);
+                    _transaction.RecordRead(_collectionName, version.DocumentId, version.CreatedBy);
+                    collected++;
+                }
+                else
+                {
+                    break;
+                }
             }
         }
 

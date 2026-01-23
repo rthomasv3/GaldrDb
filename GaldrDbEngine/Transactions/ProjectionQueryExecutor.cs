@@ -44,33 +44,52 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
 
     public List<T> ExecuteQuery(QueryBuilder<T> query)
     {
+        List<T> result;
         string collectionName = _projTypeInfo.CollectionName;
         (List<IFieldFilter> sourceFilters, List<IFieldFilter> projectionFilters) = SeparateFilters(query.Filters);
 
         CollectionEntry collection = _db.GetCollection(collectionName);
         QueryPlan plan = CreateQueryPlan(collection, sourceFilters);
 
-        List<object> sourceDocuments;
-        HashSet<int> snapshotDocIds;
+        bool canUseOptimizedScan = plan.PlanType == QueryPlanType.PrimaryKeyScan &&
+                                   projectionFilters.Count == 0 &&
+                                   IsOrderByIdOnly(query.OrderByClauses);
 
-        if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+        if (canUseOptimizedScan)
         {
-            (sourceDocuments, snapshotDocIds) = ExecutePrimaryKeyRangeScan(collectionName, plan, sourceFilters);
+            bool descending = query.OrderByClauses.Count > 0 && query.OrderByClauses[0].Descending;
+            (List<object> sourceDocuments, HashSet<int> snapshotDocIds) = ExecutePrimaryKeyScan(collectionName, query.SkipValue, query.LimitValue, descending);
+            List<object> merged = ApplyWriteSetOverlay(sourceDocuments, snapshotDocIds, sourceFilters);
+            result = ConvertToProjections(merged);
         }
         else
         {
-            (sourceDocuments, snapshotDocIds) = ExecuteFullScan(collectionName, sourceFilters);
+            List<object> sourceDocuments;
+            HashSet<int> snapshotDocIds;
+
+            if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+            {
+                (sourceDocuments, snapshotDocIds) = ExecutePrimaryKeyRangeScan(collectionName, plan, sourceFilters);
+            }
+            else
+            {
+                (sourceDocuments, snapshotDocIds) = ExecuteFullScan(collectionName, sourceFilters);
+            }
+
+            List<object> merged = ApplyWriteSetOverlay(sourceDocuments, snapshotDocIds, sourceFilters);
+            List<T> projections = ConvertToProjections(merged);
+            List<T> filteredProjections = ApplyProjectionFilters(projections, projectionFilters);
+            List<T> sorted = ApplyOrdering(filteredProjections, query.OrderByClauses);
+            result = ApplySkipAndLimit(sorted, query.SkipValue, query.LimitValue);
         }
 
-        List<object> merged = ApplyWriteSetOverlay(sourceDocuments, snapshotDocIds, sourceFilters);
+        return result;
+    }
 
-        List<T> projections = ConvertToProjections(merged);
-
-        List<T> filteredProjections = ApplyProjectionFilters(projections, projectionFilters);
-
-        List<T> sorted = ApplyOrdering(filteredProjections, query.OrderByClauses);
-
-        return ApplySkipAndLimit(sorted, query.SkipValue, query.LimitValue);
+    private static bool IsOrderByIdOnly(IReadOnlyList<OrderByClause<T>> orderByClauses)
+    {
+        return orderByClauses.Count == 0 ||
+               (orderByClauses.Count == 1 && orderByClauses[0].FieldName == "Id");
     }
 
     public int ExecuteCount(QueryBuilder<T> query)
@@ -127,33 +146,46 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
 
     public async Task<List<T>> ExecuteQueryAsync(QueryBuilder<T> query, CancellationToken cancellationToken = default)
     {
+        List<T> result;
         string collectionName = _projTypeInfo.CollectionName;
         (List<IFieldFilter> sourceFilters, List<IFieldFilter> projectionFilters) = SeparateFilters(query.Filters);
 
         CollectionEntry collection = _db.GetCollection(collectionName);
         QueryPlan plan = CreateQueryPlan(collection, sourceFilters);
 
-        List<object> sourceDocuments;
-        HashSet<int> snapshotDocIds;
+        bool canUseOptimizedScan = plan.PlanType == QueryPlanType.PrimaryKeyScan &&
+                                   projectionFilters.Count == 0 &&
+                                   IsOrderByIdOnly(query.OrderByClauses);
 
-        if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+        if (canUseOptimizedScan)
         {
-            (sourceDocuments, snapshotDocIds) = await ExecutePrimaryKeyRangeScanAsync(collectionName, plan, sourceFilters, cancellationToken).ConfigureAwait(false);
+            bool descending = query.OrderByClauses.Count > 0 && query.OrderByClauses[0].Descending;
+            (List<object> sourceDocuments, HashSet<int> snapshotDocIds) = await ExecutePrimaryKeyScanAsync(collectionName, query.SkipValue, query.LimitValue, descending, cancellationToken).ConfigureAwait(false);
+            List<object> merged = ApplyWriteSetOverlay(sourceDocuments, snapshotDocIds, sourceFilters);
+            result = ConvertToProjections(merged);
         }
         else
         {
-            (sourceDocuments, snapshotDocIds) = await ExecuteFullScanAsync(collectionName, sourceFilters, cancellationToken).ConfigureAwait(false);
+            List<object> sourceDocuments;
+            HashSet<int> snapshotDocIds;
+
+            if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+            {
+                (sourceDocuments, snapshotDocIds) = await ExecutePrimaryKeyRangeScanAsync(collectionName, plan, sourceFilters, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                (sourceDocuments, snapshotDocIds) = await ExecuteFullScanAsync(collectionName, sourceFilters, cancellationToken).ConfigureAwait(false);
+            }
+
+            List<object> merged = ApplyWriteSetOverlay(sourceDocuments, snapshotDocIds, sourceFilters);
+            List<T> projections = ConvertToProjections(merged);
+            List<T> filteredProjections = ApplyProjectionFilters(projections, projectionFilters);
+            List<T> sorted = ApplyOrdering(filteredProjections, query.OrderByClauses);
+            result = ApplySkipAndLimit(sorted, query.SkipValue, query.LimitValue);
         }
 
-        List<object> merged = ApplyWriteSetOverlay(sourceDocuments, snapshotDocIds, sourceFilters);
-
-        List<T> projections = ConvertToProjections(merged);
-
-        List<T> filteredProjections = ApplyProjectionFilters(projections, projectionFilters);
-
-        List<T> sorted = ApplyOrdering(filteredProjections, query.OrderByClauses);
-
-        return ApplySkipAndLimit(sorted, query.SkipValue, query.LimitValue);
+        return result;
     }
 
     public async Task<int> ExecuteCountAsync(QueryBuilder<T> query, CancellationToken cancellationToken = default)
@@ -336,6 +368,96 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
                 results.Add(sourceDoc);
                 docIds.Add(version.DocumentId);
                 _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
+            }
+        }
+
+        return (results, docIds);
+    }
+
+    private (List<object> Results, HashSet<int> DocIds) ExecutePrimaryKeyScan(string collectionName, int? skip, int? limit, bool descending)
+    {
+        List<object> results = new List<object>();
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<int> documentIds = _versionIndex.GetDocumentIds(collectionName);
+        if (descending)
+        {
+            documentIds.Reverse();
+        }
+
+        int skipCount = skip ?? 0;
+        int limitCount = limit ?? int.MaxValue;
+        int skipped = 0;
+        int collected = 0;
+
+        foreach (int docId in documentIds)
+        {
+            DocumentVersion version = _versionIndex.GetVisibleVersion(collectionName, docId, _snapshotTxId);
+            if (version != null)
+            {
+                if (skipped < skipCount)
+                {
+                    skipped++;
+                }
+                else if (collected < limitCount)
+                {
+                    byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+                    string json = Encoding.UTF8.GetString(jsonBytes);
+                    object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+                    results.Add(sourceDoc);
+                    docIds.Add(version.DocumentId);
+                    _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
+                    collected++;
+                }
+                else
+                {
+                    break;
+                }
+            }
+        }
+
+        return (results, docIds);
+    }
+
+    private async Task<(List<object> Results, HashSet<int> DocIds)> ExecutePrimaryKeyScanAsync(string collectionName, int? skip, int? limit, bool descending, CancellationToken cancellationToken)
+    {
+        List<object> results = new List<object>();
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<int> documentIds = _versionIndex.GetDocumentIds(collectionName);
+        if (descending)
+        {
+            documentIds.Reverse();
+        }
+
+        int skipCount = skip ?? 0;
+        int limitCount = limit ?? int.MaxValue;
+        int skipped = 0;
+        int collected = 0;
+
+        foreach (int docId in documentIds)
+        {
+            DocumentVersion version = _versionIndex.GetVisibleVersion(collectionName, docId, _snapshotTxId);
+            if (version != null)
+            {
+                if (skipped < skipCount)
+                {
+                    skipped++;
+                }
+                else if (collected < limitCount)
+                {
+                    byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+                    string json = Encoding.UTF8.GetString(jsonBytes);
+                    object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+                    results.Add(sourceDoc);
+                    docIds.Add(version.DocumentId);
+                    _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
+                    collected++;
+                }
+                else
+                {
+                    break;
+                }
             }
         }
 

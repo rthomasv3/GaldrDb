@@ -6,14 +6,14 @@ namespace GaldrDbEngine.MVCC;
 
 internal sealed class VersionIndex
 {
-    private readonly Dictionary<string, Dictionary<int, DocumentVersion>> _index;
+    private readonly Dictionary<string, SortedDictionary<int, DocumentVersion>> _index;
     private readonly HashSet<DocumentKey> _gcCandidates;
     private readonly object _lock = new object();
     private int _multiVersionDocumentCount;
 
     public VersionIndex()
     {
-        _index = new Dictionary<string, Dictionary<int, DocumentVersion>>();
+        _index = new Dictionary<string, SortedDictionary<int, DocumentVersion>>();
         _gcCandidates = new HashSet<DocumentKey>();
         _multiVersionDocumentCount = 0;
     }
@@ -35,7 +35,7 @@ internal sealed class VersionIndex
 
         lock (_lock)
         {
-            if (_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
+            if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
                 if (collection.TryGetValue(documentId, out DocumentVersion version))
                 {
@@ -53,7 +53,7 @@ internal sealed class VersionIndex
 
         lock (_lock)
         {
-            if (_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
+            if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
                 if (collection.TryGetValue(documentId, out DocumentVersion currentVersion))
                 {
@@ -75,13 +75,32 @@ internal sealed class VersionIndex
         return result;
     }
 
+    public List<int> GetDocumentIds(string collectionName)
+    {
+        List<int> result;
+
+        lock (_lock)
+        {
+            if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
+            {
+                result = new List<int>(collection.Keys);
+            }
+            else
+            {
+                result = new List<int>();
+            }
+        }
+
+        return result;
+    }
+
     public void AddVersion(string collectionName, int documentId, TxId createdBy, DocumentLocation location)
     {
         lock (_lock)
         {
-            if (!_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
+            if (!_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
-                collection = new Dictionary<int, DocumentVersion>();
+                collection = new SortedDictionary<int, DocumentVersion>();
                 _index[collectionName] = collection;
             }
 
@@ -113,7 +132,7 @@ internal sealed class VersionIndex
             // Phase 1: Validate all operations - if any conflict, throw before modifying anything
             foreach (VersionOperation op in operations)
             {
-                if (_index.TryGetValue(op.CollectionName, out Dictionary<int, DocumentVersion> collection))
+                if (_index.TryGetValue(op.CollectionName, out SortedDictionary<int, DocumentVersion> collection))
                 {
                     if (collection.TryGetValue(op.DocumentId, out DocumentVersion existing))
                     {
@@ -160,9 +179,9 @@ internal sealed class VersionIndex
 
     private void AddVersionInternal(string collectionName, int documentId, TxId createdBy, DocumentLocation location)
     {
-        if (!_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
+        if (!_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
         {
-            collection = new Dictionary<int, DocumentVersion>();
+            collection = new SortedDictionary<int, DocumentVersion>();
             _index[collectionName] = collection;
         }
 
@@ -186,7 +205,7 @@ internal sealed class VersionIndex
 
     private void MarkDeletedInternal(string collectionName, int documentId, TxId deletedBy)
     {
-        if (_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
+        if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
         {
             if (collection.TryGetValue(documentId, out DocumentVersion version))
             {
@@ -200,7 +219,7 @@ internal sealed class VersionIndex
     {
         lock (_lock)
         {
-            if (_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
+            if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
                 if (collection.TryGetValue(documentId, out DocumentVersion version))
                 {
@@ -217,7 +236,7 @@ internal sealed class VersionIndex
 
         lock (_lock)
         {
-            if (_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
+            if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
                 result = collection.ContainsKey(documentId);
             }
@@ -232,7 +251,7 @@ internal sealed class VersionIndex
 
         lock (_lock)
         {
-            if (_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
+            if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
                 if (collection.TryGetValue(documentId, out DocumentVersion currentVersion))
                 {
@@ -254,7 +273,7 @@ internal sealed class VersionIndex
         {
             if (!_index.ContainsKey(collectionName))
             {
-                _index[collectionName] = new Dictionary<int, DocumentVersion>();
+                _index[collectionName] = new SortedDictionary<int, DocumentVersion>();
             }
         }
     }
@@ -265,7 +284,7 @@ internal sealed class VersionIndex
 
         lock (_lock)
         {
-            if (_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
+            if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
                 foreach (KeyValuePair<int, DocumentVersion> kvp in collection)
                 {
@@ -294,7 +313,7 @@ internal sealed class VersionIndex
 
         lock (_lock)
         {
-            if (_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
+            if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
                 foreach (int docId in docIds)
                 {
@@ -322,7 +341,7 @@ internal sealed class VersionIndex
     {
         lock (_lock)
         {
-            if (_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
+            if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
                 DocumentKey docKey = new DocumentKey(collectionName, documentId);
 
@@ -386,23 +405,11 @@ internal sealed class VersionIndex
     {
         lock (_lock)
         {
-            if (_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
+            if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
                 return collection.Count;
             }
             return 0;
-        }
-    }
-
-    internal List<int> GetDocumentIds(string collectionName)
-    {
-        lock (_lock)
-        {
-            if (_index.TryGetValue(collectionName, out Dictionary<int, DocumentVersion> collection))
-            {
-                return new List<int>(collection.Keys);
-            }
-            return new List<int>();
         }
     }
 
@@ -412,7 +419,7 @@ internal sealed class VersionIndex
         {
             foreach (DocumentKey docKey in _gcCandidates)
             {
-                if (!_index.TryGetValue(docKey.CollectionName, out Dictionary<int, DocumentVersion> collection))
+                if (!_index.TryGetValue(docKey.CollectionName, out SortedDictionary<int, DocumentVersion> collection))
                 {
                     continue;
                 }

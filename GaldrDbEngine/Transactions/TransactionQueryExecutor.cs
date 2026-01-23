@@ -39,6 +39,7 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
 
     public List<T> ExecuteQuery(QueryBuilder<T> query)
     {
+        List<T> result;
         string collectionName = _typeInfo.CollectionName;
         CollectionEntry collection = _db.GetCollection(collectionName);
 
@@ -46,19 +47,37 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
         List<T> snapshotResults;
         HashSet<int> snapshotDocIds;
 
-        if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+        bool canUseOptimizedScan = plan.PlanType == QueryPlanType.PrimaryKeyScan && IsOrderByIdOnly(query.OrderByClauses);
+
+        if (canUseOptimizedScan)
         {
-            (snapshotResults, snapshotDocIds) = ExecutePrimaryKeyRangeScan(collectionName, plan, query.Filters);
+            bool descending = query.OrderByClauses.Count > 0 && query.OrderByClauses[0].Descending;
+            (snapshotResults, snapshotDocIds) = ExecutePrimaryKeyScan(collectionName, query.SkipValue, query.LimitValue, descending);
+            result = ApplyWriteSetOverlay(snapshotResults, snapshotDocIds, query.Filters);
         }
         else
         {
-            (snapshotResults, snapshotDocIds) = ExecuteFullScan(collectionName, query.Filters);
+            if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+            {
+                (snapshotResults, snapshotDocIds) = ExecutePrimaryKeyRangeScan(collectionName, plan, query.Filters);
+            }
+            else
+            {
+                (snapshotResults, snapshotDocIds) = ExecuteFullScan(collectionName, query.Filters);
+            }
+
+            List<T> merged = ApplyWriteSetOverlay(snapshotResults, snapshotDocIds, query.Filters);
+            List<T> sorted = ApplyOrdering(merged, query.OrderByClauses);
+            result = ApplySkipAndLimit(sorted, query.SkipValue, query.LimitValue);
         }
 
-        List<T> merged = ApplyWriteSetOverlay(snapshotResults, snapshotDocIds, query.Filters);
-        List<T> sorted = ApplyOrdering(merged, query.OrderByClauses);
+        return result;
+    }
 
-        return ApplySkipAndLimit(sorted, query.SkipValue, query.LimitValue);
+    private static bool IsOrderByIdOnly(IReadOnlyList<OrderByClause<T>> orderByClauses)
+    {
+        return orderByClauses.Count == 0 || 
+               (orderByClauses.Count == 1 && orderByClauses[0].FieldName == "Id");
     }
 
     public int ExecuteCount(QueryBuilder<T> query)
@@ -94,6 +113,7 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
 
     public async Task<List<T>> ExecuteQueryAsync(QueryBuilder<T> query, CancellationToken cancellationToken = default)
     {
+        List<T> result;
         string collectionName = _typeInfo.CollectionName;
         CollectionEntry collection = _db.GetCollection(collectionName);
 
@@ -101,19 +121,31 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
         List<T> snapshotResults;
         HashSet<int> snapshotDocIds;
 
-        if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+        bool canUseOptimizedScan = plan.PlanType == QueryPlanType.PrimaryKeyScan && IsOrderByIdOnly(query.OrderByClauses);
+
+        if (canUseOptimizedScan)
         {
-            (snapshotResults, snapshotDocIds) = await ExecutePrimaryKeyRangeScanAsync(collectionName, plan, query.Filters, cancellationToken).ConfigureAwait(false);
+            bool descending = query.OrderByClauses.Count > 0 && query.OrderByClauses[0].Descending;
+            (snapshotResults, snapshotDocIds) = await ExecutePrimaryKeyScanAsync(collectionName, query.SkipValue, query.LimitValue, descending, cancellationToken).ConfigureAwait(false);
+            result = ApplyWriteSetOverlay(snapshotResults, snapshotDocIds, query.Filters);
         }
         else
         {
-            (snapshotResults, snapshotDocIds) = await ExecuteFullScanAsync(collectionName, query.Filters, cancellationToken).ConfigureAwait(false);
+            if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+            {
+                (snapshotResults, snapshotDocIds) = await ExecutePrimaryKeyRangeScanAsync(collectionName, plan, query.Filters, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                (snapshotResults, snapshotDocIds) = await ExecuteFullScanAsync(collectionName, query.Filters, cancellationToken).ConfigureAwait(false);
+            }
+
+            List<T> merged = ApplyWriteSetOverlay(snapshotResults, snapshotDocIds, query.Filters);
+            List<T> sorted = ApplyOrdering(merged, query.OrderByClauses);
+            result = ApplySkipAndLimit(sorted, query.SkipValue, query.LimitValue);
         }
 
-        List<T> merged = ApplyWriteSetOverlay(snapshotResults, snapshotDocIds, query.Filters);
-        List<T> sorted = ApplyOrdering(merged, query.OrderByClauses);
-
-        return ApplySkipAndLimit(sorted, query.SkipValue, query.LimitValue);
+        return result;
     }
 
     public async Task<int> ExecuteCountAsync(QueryBuilder<T> query, CancellationToken cancellationToken = default)
@@ -261,6 +293,94 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
                 results.Add(document);
                 docIds.Add(version.DocumentId);
                 _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
+            }
+        }
+
+        return (results, docIds);
+    }
+
+    private (List<T> Results, HashSet<int> DocIds) ExecutePrimaryKeyScan(string collectionName, int? skip, int? limit, bool descending)
+    {
+        List<T> results = new List<T>();
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<int> documentIds = _versionIndex.GetDocumentIds(collectionName);
+        if (descending)
+        {
+            documentIds.Reverse();
+        }
+
+        int skipCount = skip ?? 0;
+        int limitCount = limit ?? int.MaxValue;
+        int skipped = 0;
+        int collected = 0;
+
+        foreach (int docId in documentIds)
+        {
+            DocumentVersion version = _versionIndex.GetVisibleVersion(collectionName, docId, _snapshotTxId);
+            if (version != null)
+            {
+                if (skipped < skipCount)
+                {
+                    skipped++;
+                }
+                else if (collected < limitCount)
+                {
+                    byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+                    T document = _jsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(jsonBytes), _jsonOptions);
+                    results.Add(document);
+                    docIds.Add(version.DocumentId);
+                    _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
+                    collected++;
+                }
+                else
+                {
+                    break;
+                }
+            }
+        }
+
+        return (results, docIds);
+    }
+
+    private async Task<(List<T> Results, HashSet<int> DocIds)> ExecutePrimaryKeyScanAsync(string collectionName, int? skip, int? limit, bool descending, CancellationToken cancellationToken)
+    {
+        List<T> results = new List<T>();
+        HashSet<int> docIds = new HashSet<int>();
+
+        List<int> documentIds = _versionIndex.GetDocumentIds(collectionName);
+        if (descending)
+        {
+            documentIds.Reverse();
+        }
+
+        int skipCount = skip ?? 0;
+        int limitCount = limit ?? int.MaxValue;
+        int skipped = 0;
+        int collected = 0;
+
+        foreach (int docId in documentIds)
+        {
+            DocumentVersion version = _versionIndex.GetVisibleVersion(collectionName, docId, _snapshotTxId);
+            if (version != null)
+            {
+                if (skipped < skipCount)
+                {
+                    skipped++;
+                }
+                else if (collected < limitCount)
+                {
+                    byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+                    T document = _jsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(jsonBytes), _jsonOptions);
+                    results.Add(document);
+                    docIds.Add(version.DocumentId);
+                    _transaction.RecordRead(collectionName, version.DocumentId, version.CreatedBy);
+                    collected++;
+                }
+                else
+                {
+                    break;
+                }
             }
         }
 
