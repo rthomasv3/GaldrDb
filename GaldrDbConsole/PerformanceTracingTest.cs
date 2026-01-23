@@ -136,7 +136,7 @@ public static class PerformanceTracingTest
                 {
                     tx.Insert(new BenchmarkPerson
                     {
-                        Name = $"Person {(batch * batchSize) + entry}",
+                        Name = $"Person {(batch * batchSize) + entry + 1}",
                         Age = 25,
                         Email = "test@example.com",
                         Address = "456 Oak Ave",
