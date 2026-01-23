@@ -14,5 +14,7 @@ internal interface IDynamicQueryExecutor
     int ExecuteCount(DynamicQueryBuilder query);
     Task<List<JsonDocument>> ExecuteQueryAsync(DynamicQueryBuilder query, CancellationToken cancellationToken);
     Task<int> ExecuteCountAsync(DynamicQueryBuilder query, CancellationToken cancellationToken);
+    bool ExecuteAny(DynamicQueryBuilder query);
+    Task<bool> ExecuteAnyAsync(DynamicQueryBuilder query, CancellationToken cancellationToken);
     QueryExplanation GetQueryExplanation(IReadOnlyList<IFieldFilter> filters);
 }

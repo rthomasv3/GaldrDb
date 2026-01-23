@@ -41,6 +41,21 @@ public interface IQueryExecutor<T>
     Task<int> ExecuteCountAsync(QueryBuilder<T> query, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Executes a query and returns true if any document matches.
+    /// </summary>
+    /// <param name="query">The query to execute.</param>
+    /// <returns>True if at least one document matches the query.</returns>
+    bool ExecuteAny(QueryBuilder<T> query);
+
+    /// <summary>
+    /// Executes a query asynchronously and returns true if any document matches.
+    /// </summary>
+    /// <param name="query">The query to execute.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if at least one document matches the query.</returns>
+    Task<bool> ExecuteAnyAsync(QueryBuilder<T> query, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Gets the query execution plan without executing the query.
     /// </summary>
     /// <param name="filters">The filters to analyze.</param>

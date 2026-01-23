@@ -417,4 +417,106 @@ public class QueryBuilderTests
     }
 
     #endregion
+
+    #region Any Tests
+
+    [TestMethod]
+    public void QueryBuilder_Any_WithMatches_ReturnsTrue()
+    {
+        // Arrange
+        QueryBuilder<Person> query = new QueryBuilder<Person>(_executor)
+            .Where(PersonMeta.Age, FieldOp.GreaterThan, 30);
+
+        // Act
+        bool result = query.Any();
+
+        // Assert
+        Assert.IsTrue(result);
+    }
+
+    [TestMethod]
+    public void QueryBuilder_Any_WithNoMatches_ReturnsFalse()
+    {
+        // Arrange
+        QueryBuilder<Person> query = new QueryBuilder<Person>(_executor)
+            .Where(PersonMeta.Age, FieldOp.GreaterThan, 100);
+
+        // Act
+        bool result = query.Any();
+
+        // Assert
+        Assert.IsFalse(result);
+    }
+
+    [TestMethod]
+    public void QueryBuilder_Any_WithNoFilters_ReturnsTrueWhenDataExists()
+    {
+        // Arrange
+        QueryBuilder<Person> query = new QueryBuilder<Person>(_executor);
+
+        // Act
+        bool result = query.Any();
+
+        // Assert
+        Assert.IsTrue(result);
+    }
+
+    [TestMethod]
+    public void QueryBuilder_Any_EmptyDataSet_ReturnsFalse()
+    {
+        // Arrange
+        InMemoryQueryExecutor<Person> emptyExecutor = new InMemoryQueryExecutor<Person>(new List<Person>());
+        QueryBuilder<Person> query = new QueryBuilder<Person>(emptyExecutor);
+
+        // Act
+        bool result = query.Any();
+
+        // Assert
+        Assert.IsFalse(result);
+    }
+
+    [TestMethod]
+    public void QueryBuilder_Any_MultipleFilters_WorksCorrectly()
+    {
+        // Arrange
+        QueryBuilder<Person> query = new QueryBuilder<Person>(_executor)
+            .Where(PersonMeta.Age, FieldOp.GreaterThanOrEqual, 30)
+            .Where(PersonMeta.Email, FieldOp.EndsWith, "@test.com");
+
+        // Act
+        bool result = query.Any();
+
+        // Assert
+        Assert.IsTrue(result); // Eve (32, @test.com)
+    }
+
+    [TestMethod]
+    public async System.Threading.Tasks.Task QueryBuilder_AnyAsync_WithMatches_ReturnsTrue()
+    {
+        // Arrange
+        QueryBuilder<Person> query = new QueryBuilder<Person>(_executor)
+            .Where(PersonMeta.Name, FieldOp.StartsWith, "A");
+
+        // Act
+        bool result = await query.AnyAsync();
+
+        // Assert
+        Assert.IsTrue(result);
+    }
+
+    [TestMethod]
+    public async System.Threading.Tasks.Task QueryBuilder_AnyAsync_WithNoMatches_ReturnsFalse()
+    {
+        // Arrange
+        QueryBuilder<Person> query = new QueryBuilder<Person>(_executor)
+            .Where(PersonMeta.Name, FieldOp.Equals, "NonExistent");
+
+        // Act
+        bool result = await query.AnyAsync();
+
+        // Assert
+        Assert.IsFalse(result);
+    }
+
+    #endregion
 }

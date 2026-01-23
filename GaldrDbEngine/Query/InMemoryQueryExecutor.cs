@@ -99,6 +99,39 @@ public sealed class InMemoryQueryExecutor<T> : IQueryExecutor<T>
     }
 
     /// <inheritdoc/>
+    public bool ExecuteAny(QueryBuilder<T> query)
+    {
+        bool found = false;
+
+        foreach (T document in _documents)
+        {
+            bool passesAllFilters = true;
+            foreach (IFieldFilter filter in query.Filters)
+            {
+                if (!filter.Evaluate(document))
+                {
+                    passesAllFilters = false;
+                    break;
+                }
+            }
+
+            if (passesAllFilters)
+            {
+                found = true;
+                break;
+            }
+        }
+
+        return found;
+    }
+
+    /// <inheritdoc/>
+    public Task<bool> ExecuteAnyAsync(QueryBuilder<T> query, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult(ExecuteAny(query));
+    }
+
+    /// <inheritdoc/>
     public QueryExplanation GetQueryExplanation(IReadOnlyList<IFieldFilter> filters)
     {
         QueryPlan plan = QueryPlan.FullScan();

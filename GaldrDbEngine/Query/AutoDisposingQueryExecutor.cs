@@ -64,6 +64,30 @@ internal sealed class AutoDisposingQueryExecutor<T> : IQueryExecutor<T>
         }
     }
 
+    public bool ExecuteAny(QueryBuilder<T> query)
+    {
+        try
+        {
+            return _innerExecutor.ExecuteAny(query);
+        }
+        finally
+        {
+            _resource.Dispose();
+        }
+    }
+
+    public async Task<bool> ExecuteAnyAsync(QueryBuilder<T> query, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await _innerExecutor.ExecuteAnyAsync(query, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _resource.Dispose();
+        }
+    }
+
     public QueryExplanation GetQueryExplanation(IReadOnlyList<IFieldFilter> filters)
     {
         return _innerExecutor.GetQueryExplanation(filters);

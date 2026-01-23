@@ -208,6 +208,52 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         return count;
     }
 
+    public bool ExecuteAny(QueryBuilder<T> query)
+    {
+        string collectionName = _projTypeInfo.CollectionName;
+        (List<IFieldFilter> sourceFilters, List<IFieldFilter> projectionFilters) = SeparateFilters(query.Filters);
+        CollectionEntry collection = _db.GetCollection(collectionName);
+        bool found;
+
+        if (query.Filters.Count == 0)
+        {
+            found = HasAnyUnfiltered(collectionName, collection);
+        }
+        else if (projectionFilters.Count == 0)
+        {
+            found = HasAnyFiltered(collectionName, collection, sourceFilters);
+        }
+        else
+        {
+            found = HasAnyWithProjectionFilters(collectionName, collection, sourceFilters, projectionFilters);
+        }
+
+        return found;
+    }
+
+    public async Task<bool> ExecuteAnyAsync(QueryBuilder<T> query, CancellationToken cancellationToken = default)
+    {
+        string collectionName = _projTypeInfo.CollectionName;
+        (List<IFieldFilter> sourceFilters, List<IFieldFilter> projectionFilters) = SeparateFilters(query.Filters);
+        CollectionEntry collection = _db.GetCollection(collectionName);
+        bool found;
+
+        if (query.Filters.Count == 0)
+        {
+            found = HasAnyUnfiltered(collectionName, collection);
+        }
+        else if (projectionFilters.Count == 0)
+        {
+            found = await HasAnyFilteredAsync(collectionName, collection, sourceFilters, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            found = await HasAnyWithProjectionFiltersAsync(collectionName, collection, sourceFilters, projectionFilters, cancellationToken).ConfigureAwait(false);
+        }
+
+        return found;
+    }
+
     public QueryExplanation GetQueryExplanation(IReadOnlyList<IFieldFilter> filters)
     {
         string collectionName = _projTypeInfo.CollectionName;
@@ -774,5 +820,548 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         }
 
         return adjustment;
+    }
+
+    private bool HasAnyUnfiltered(string collectionName, CollectionEntry collection)
+    {
+        int snapshotCount = collection?.DocumentCount ?? 0;
+        IReadOnlyDictionary<DocumentKey, WriteSetEntry> writeSet = _transaction.GetWriteSet();
+        bool hasAny;
+
+        if (snapshotCount > 0)
+        {
+            bool allDeleted = true;
+            List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
+
+            foreach (DocumentVersion version in visibleVersions)
+            {
+                DocumentKey key = new DocumentKey(collectionName, version.DocumentId);
+                if (!writeSet.TryGetValue(key, out WriteSetEntry entry) || entry.Operation != WriteOperation.Delete)
+                {
+                    allDeleted = false;
+                    break;
+                }
+            }
+
+            hasAny = !allDeleted;
+        }
+        else
+        {
+            hasAny = false;
+        }
+
+        if (!hasAny)
+        {
+            foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in writeSet)
+            {
+                if (kvp.Key.CollectionName == collectionName && kvp.Value.Operation == WriteOperation.Insert)
+                {
+                    hasAny = true;
+                    break;
+                }
+            }
+        }
+
+        return hasAny;
+    }
+
+    private bool HasAnyFiltered(string collectionName, CollectionEntry collection, List<IFieldFilter> filters)
+    {
+        IReadOnlyDictionary<DocumentKey, WriteSetEntry> writeSet = _transaction.GetWriteSet();
+        HashSet<int> deletedDocIds = new HashSet<int>();
+        bool found = false;
+
+        foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in writeSet)
+        {
+            if (kvp.Key.CollectionName != collectionName)
+            {
+                continue;
+            }
+
+            WriteSetEntry entry = kvp.Value;
+
+            if (entry.Operation == WriteOperation.Delete)
+            {
+                deletedDocIds.Add(kvp.Key.DocId);
+            }
+            else if (entry.Operation == WriteOperation.Update)
+            {
+                deletedDocIds.Add(kvp.Key.DocId);
+                object sourceDoc = DeserializeSourceDocument(entry.SerializedData);
+                if (PassesFilters(sourceDoc, filters))
+                {
+                    found = true;
+                }
+            }
+            else if (entry.Operation == WriteOperation.Insert)
+            {
+                object sourceDoc = DeserializeSourceDocument(entry.SerializedData);
+                if (PassesFilters(sourceDoc, filters))
+                {
+                    found = true;
+                }
+            }
+        }
+
+        if (!found)
+        {
+            QueryPlan plan = CreateQueryPlan(collection, filters);
+
+            if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+            {
+                found = AnyPrimaryKeyRangeScan(collectionName, plan, filters, deletedDocIds);
+            }
+            else
+            {
+                found = AnyFullScan(collectionName, filters, deletedDocIds);
+            }
+        }
+
+        return found;
+    }
+
+    private async Task<bool> HasAnyFilteredAsync(string collectionName, CollectionEntry collection, List<IFieldFilter> filters, CancellationToken cancellationToken)
+    {
+        IReadOnlyDictionary<DocumentKey, WriteSetEntry> writeSet = _transaction.GetWriteSet();
+        HashSet<int> deletedDocIds = new HashSet<int>();
+        bool found = false;
+
+        foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in writeSet)
+        {
+            if (kvp.Key.CollectionName != collectionName)
+            {
+                continue;
+            }
+
+            WriteSetEntry entry = kvp.Value;
+
+            if (entry.Operation == WriteOperation.Delete)
+            {
+                deletedDocIds.Add(kvp.Key.DocId);
+            }
+            else if (entry.Operation == WriteOperation.Update)
+            {
+                deletedDocIds.Add(kvp.Key.DocId);
+                object sourceDoc = DeserializeSourceDocument(entry.SerializedData);
+                if (PassesFilters(sourceDoc, filters))
+                {
+                    found = true;
+                }
+            }
+            else if (entry.Operation == WriteOperation.Insert)
+            {
+                object sourceDoc = DeserializeSourceDocument(entry.SerializedData);
+                if (PassesFilters(sourceDoc, filters))
+                {
+                    found = true;
+                }
+            }
+        }
+
+        if (!found)
+        {
+            QueryPlan plan = CreateQueryPlan(collection, filters);
+
+            if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+            {
+                found = await AnyPrimaryKeyRangeScanAsync(collectionName, plan, filters, deletedDocIds, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                found = await AnyFullScanAsync(collectionName, filters, deletedDocIds, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return found;
+    }
+
+    private bool HasAnyWithProjectionFilters(string collectionName, CollectionEntry collection, List<IFieldFilter> sourceFilters, List<IFieldFilter> projectionFilters)
+    {
+        IReadOnlyDictionary<DocumentKey, WriteSetEntry> writeSet = _transaction.GetWriteSet();
+        HashSet<int> deletedDocIds = new HashSet<int>();
+        bool found = false;
+
+        foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in writeSet)
+        {
+            if (kvp.Key.CollectionName != collectionName)
+            {
+                continue;
+            }
+
+            WriteSetEntry entry = kvp.Value;
+
+            if (entry.Operation == WriteOperation.Delete)
+            {
+                deletedDocIds.Add(kvp.Key.DocId);
+            }
+            else if (entry.Operation == WriteOperation.Update)
+            {
+                deletedDocIds.Add(kvp.Key.DocId);
+                object sourceDoc = DeserializeSourceDocument(entry.SerializedData);
+                if (PassesFilters(sourceDoc, sourceFilters))
+                {
+                    T projection = (T)_projTypeInfo.ConvertToProjection(sourceDoc);
+                    if (PassesProjectionFilters(projection, projectionFilters))
+                    {
+                        found = true;
+                    }
+                }
+            }
+            else if (entry.Operation == WriteOperation.Insert)
+            {
+                object sourceDoc = DeserializeSourceDocument(entry.SerializedData);
+                if (PassesFilters(sourceDoc, sourceFilters))
+                {
+                    T projection = (T)_projTypeInfo.ConvertToProjection(sourceDoc);
+                    if (PassesProjectionFilters(projection, projectionFilters))
+                    {
+                        found = true;
+                    }
+                }
+            }
+        }
+
+        if (!found)
+        {
+            QueryPlan plan = CreateQueryPlan(collection, sourceFilters);
+
+            if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+            {
+                found = AnyPrimaryKeyRangeScanWithProjection(collectionName, plan, sourceFilters, projectionFilters, deletedDocIds);
+            }
+            else
+            {
+                found = AnyFullScanWithProjection(collectionName, sourceFilters, projectionFilters, deletedDocIds);
+            }
+        }
+
+        return found;
+    }
+
+    private async Task<bool> HasAnyWithProjectionFiltersAsync(string collectionName, CollectionEntry collection, List<IFieldFilter> sourceFilters, List<IFieldFilter> projectionFilters, CancellationToken cancellationToken)
+    {
+        IReadOnlyDictionary<DocumentKey, WriteSetEntry> writeSet = _transaction.GetWriteSet();
+        HashSet<int> deletedDocIds = new HashSet<int>();
+        bool found = false;
+
+        foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in writeSet)
+        {
+            if (kvp.Key.CollectionName != collectionName)
+            {
+                continue;
+            }
+
+            WriteSetEntry entry = kvp.Value;
+
+            if (entry.Operation == WriteOperation.Delete)
+            {
+                deletedDocIds.Add(kvp.Key.DocId);
+            }
+            else if (entry.Operation == WriteOperation.Update)
+            {
+                deletedDocIds.Add(kvp.Key.DocId);
+                object sourceDoc = DeserializeSourceDocument(entry.SerializedData);
+                if (PassesFilters(sourceDoc, sourceFilters))
+                {
+                    T projection = (T)_projTypeInfo.ConvertToProjection(sourceDoc);
+                    if (PassesProjectionFilters(projection, projectionFilters))
+                    {
+                        found = true;
+                    }
+                }
+            }
+            else if (entry.Operation == WriteOperation.Insert)
+            {
+                object sourceDoc = DeserializeSourceDocument(entry.SerializedData);
+                if (PassesFilters(sourceDoc, sourceFilters))
+                {
+                    T projection = (T)_projTypeInfo.ConvertToProjection(sourceDoc);
+                    if (PassesProjectionFilters(projection, projectionFilters))
+                    {
+                        found = true;
+                    }
+                }
+            }
+        }
+
+        if (!found)
+        {
+            QueryPlan plan = CreateQueryPlan(collection, sourceFilters);
+
+            if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
+            {
+                found = await AnyPrimaryKeyRangeScanWithProjectionAsync(collectionName, plan, sourceFilters, projectionFilters, deletedDocIds, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                found = await AnyFullScanWithProjectionAsync(collectionName, sourceFilters, projectionFilters, deletedDocIds, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return found;
+    }
+
+    private bool AnyFullScan(string collectionName, List<IFieldFilter> filters, HashSet<int> deletedDocIds)
+    {
+        List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
+        bool found = false;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (deletedDocIds.Contains(version.DocumentId))
+            {
+                continue;
+            }
+
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, filters))
+            {
+                found = true;
+                break;
+            }
+        }
+
+        return found;
+    }
+
+    private async Task<bool> AnyFullScanAsync(string collectionName, List<IFieldFilter> filters, HashSet<int> deletedDocIds, CancellationToken cancellationToken)
+    {
+        List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
+        bool found = false;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (deletedDocIds.Contains(version.DocumentId))
+            {
+                continue;
+            }
+
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, filters))
+            {
+                found = true;
+                break;
+            }
+        }
+
+        return found;
+    }
+
+    private bool AnyPrimaryKeyRangeScan(string collectionName, QueryPlan plan, List<IFieldFilter> filters, HashSet<int> deletedDocIds)
+    {
+        int startId = plan.StartDocId ?? int.MinValue;
+        int endId = plan.EndDocId ?? int.MaxValue;
+
+        List<int> rangeDocIds = _db.SearchDocIdRange(collectionName, startId, endId, plan.IncludeStart, plan.IncludeEnd);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
+
+        List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+        bool found = false;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (deletedDocIds.Contains(version.DocumentId))
+            {
+                continue;
+            }
+
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, remainingFilters))
+            {
+                found = true;
+                break;
+            }
+        }
+
+        return found;
+    }
+
+    private async Task<bool> AnyPrimaryKeyRangeScanAsync(string collectionName, QueryPlan plan, List<IFieldFilter> filters, HashSet<int> deletedDocIds, CancellationToken cancellationToken)
+    {
+        int startId = plan.StartDocId ?? int.MinValue;
+        int endId = plan.EndDocId ?? int.MaxValue;
+
+        List<int> rangeDocIds = await _db.SearchDocIdRangeAsync(collectionName, startId, endId, plan.IncludeStart, plan.IncludeEnd, cancellationToken).ConfigureAwait(false);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
+
+        List<IFieldFilter> remainingFilters = GetRemainingFilters(filters, plan.UsedFilterIndex);
+        bool found = false;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (deletedDocIds.Contains(version.DocumentId))
+            {
+                continue;
+            }
+
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, remainingFilters))
+            {
+                found = true;
+                break;
+            }
+        }
+
+        return found;
+    }
+
+    private bool AnyFullScanWithProjection(string collectionName, List<IFieldFilter> sourceFilters, List<IFieldFilter> projectionFilters, HashSet<int> deletedDocIds)
+    {
+        List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
+        bool found = false;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (deletedDocIds.Contains(version.DocumentId))
+            {
+                continue;
+            }
+
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, sourceFilters))
+            {
+                T projection = (T)_projTypeInfo.ConvertToProjection(sourceDoc);
+                if (PassesProjectionFilters(projection, projectionFilters))
+                {
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        return found;
+    }
+
+    private async Task<bool> AnyFullScanWithProjectionAsync(string collectionName, List<IFieldFilter> sourceFilters, List<IFieldFilter> projectionFilters, HashSet<int> deletedDocIds, CancellationToken cancellationToken)
+    {
+        List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
+        bool found = false;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (deletedDocIds.Contains(version.DocumentId))
+            {
+                continue;
+            }
+
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, sourceFilters))
+            {
+                T projection = (T)_projTypeInfo.ConvertToProjection(sourceDoc);
+                if (PassesProjectionFilters(projection, projectionFilters))
+                {
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        return found;
+    }
+
+    private bool AnyPrimaryKeyRangeScanWithProjection(string collectionName, QueryPlan plan, List<IFieldFilter> sourceFilters, List<IFieldFilter> projectionFilters, HashSet<int> deletedDocIds)
+    {
+        int startId = plan.StartDocId ?? int.MinValue;
+        int endId = plan.EndDocId ?? int.MaxValue;
+
+        List<int> rangeDocIds = _db.SearchDocIdRange(collectionName, startId, endId, plan.IncludeStart, plan.IncludeEnd);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
+
+        List<IFieldFilter> remainingFilters = GetRemainingFilters(sourceFilters, plan.UsedFilterIndex);
+        bool found = false;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (deletedDocIds.Contains(version.DocumentId))
+            {
+                continue;
+            }
+
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, remainingFilters))
+            {
+                T projection = (T)_projTypeInfo.ConvertToProjection(sourceDoc);
+                if (PassesProjectionFilters(projection, projectionFilters))
+                {
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        return found;
+    }
+
+    private async Task<bool> AnyPrimaryKeyRangeScanWithProjectionAsync(string collectionName, QueryPlan plan, List<IFieldFilter> sourceFilters, List<IFieldFilter> projectionFilters, HashSet<int> deletedDocIds, CancellationToken cancellationToken)
+    {
+        int startId = plan.StartDocId ?? int.MinValue;
+        int endId = plan.EndDocId ?? int.MaxValue;
+
+        List<int> rangeDocIds = await _db.SearchDocIdRangeAsync(collectionName, startId, endId, plan.IncludeStart, plan.IncludeEnd, cancellationToken).ConfigureAwait(false);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, rangeDocIds, _snapshotTxId);
+
+        List<IFieldFilter> remainingFilters = GetRemainingFilters(sourceFilters, plan.UsedFilterIndex);
+        bool found = false;
+
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            if (deletedDocIds.Contains(version.DocumentId))
+            {
+                continue;
+            }
+
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+            string json = Encoding.UTF8.GetString(jsonBytes);
+            object sourceDoc = _projTypeInfo.DeserializeSource(json, _jsonSerializer, _jsonOptions);
+
+            if (PassesFilters(sourceDoc, remainingFilters))
+            {
+                T projection = (T)_projTypeInfo.ConvertToProjection(sourceDoc);
+                if (PassesProjectionFilters(projection, projectionFilters))
+                {
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        return found;
+    }
+
+    private bool PassesProjectionFilters(T projection, List<IFieldFilter> filters)
+    {
+        bool passes = true;
+
+        foreach (IFieldFilter filter in filters)
+        {
+            if (!filter.Evaluate(projection))
+            {
+                passes = false;
+                break;
+            }
+        }
+
+        return passes;
     }
 }

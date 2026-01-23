@@ -221,6 +221,15 @@ public sealed class QueryBuilder<T>
     }
 
     /// <summary>
+    /// Executes the query and returns true if any document matches.
+    /// </summary>
+    /// <returns>True if at least one document matches the query.</returns>
+    public bool Any()
+    {
+        return _executor.ExecuteAny(this);
+    }
+
+    /// <summary>
     /// Gets the query execution plan without executing the query.
     /// </summary>
     /// <returns>Explanation of how the query would be executed.</returns>
@@ -269,6 +278,16 @@ public sealed class QueryBuilder<T>
     public Task<int> CountAsync(CancellationToken cancellationToken = default)
     {
         return _executor.ExecuteCountAsync(this, cancellationToken);
+    }
+
+    /// <summary>
+    /// Executes the query asynchronously and returns true if any document matches.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if at least one document matches the query.</returns>
+    public Task<bool> AnyAsync(CancellationToken cancellationToken = default)
+    {
+        return _executor.ExecuteAnyAsync(this, cancellationToken);
     }
 
     /// <summary>The list of filters applied to this query.</summary>

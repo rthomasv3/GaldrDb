@@ -65,6 +65,30 @@ internal sealed class AutoDisposingDynamicQueryExecutor : IDynamicQueryExecutor
         }
     }
 
+    public bool ExecuteAny(DynamicQueryBuilder query)
+    {
+        try
+        {
+            return _innerExecutor.ExecuteAny(query);
+        }
+        finally
+        {
+            _resource.Dispose();
+        }
+    }
+
+    public async Task<bool> ExecuteAnyAsync(DynamicQueryBuilder query, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _innerExecutor.ExecuteAnyAsync(query, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _resource.Dispose();
+        }
+    }
+
     public QueryExplanation GetQueryExplanation(IReadOnlyList<IFieldFilter> filters)
     {
         return _innerExecutor.GetQueryExplanation(filters);

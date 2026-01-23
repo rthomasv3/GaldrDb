@@ -1473,8 +1473,215 @@ public class DynamicQueryTests
             Assert.AreEqual(30, doc.GetInt32("Age"));
             Assert.AreEqual(99.5, doc.GetDouble("Score"));
             Assert.AreEqual(1000.50m, doc.GetDecimal("Balance"));
-            Assert.AreEqual(true, doc.GetBoolean("IsActive"));
+            Assert.IsTrue(doc.GetBoolean("IsActive"));
             Assert.AreEqual(guid, doc.GetGuid("UniqueId"));
+        }
+    }
+
+    #endregion
+
+    #region QueryDynamic Tests - Any
+
+    [TestMethod]
+    public void QueryDynamic_Any_WithMatches_ReturnsTrue()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
+            db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@test.com" });
+
+            bool result = db.QueryDynamic("Person")
+                .Where("Age", FieldOp.GreaterThan, 28)
+                .Any();
+
+            Assert.IsTrue(result);
+        }
+    }
+
+    [TestMethod]
+    public void QueryDynamic_Any_WithNoMatches_ReturnsFalse()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
+
+            bool result = db.QueryDynamic("Person")
+                .Where("Age", FieldOp.GreaterThan, 100)
+                .Any();
+
+            Assert.IsFalse(result);
+        }
+    }
+
+    [TestMethod]
+    public void QueryDynamic_Any_EmptyCollection_ReturnsFalse()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Test", Age = 25, Email = "test@example.com" });
+            db.DeleteById<Person>(1);
+
+            bool result = db.QueryDynamic("Person").Any();
+
+            Assert.IsFalse(result);
+        }
+    }
+
+    [TestMethod]
+    public void QueryDynamic_Any_WithNoFilters_ReturnsTrueWhenDataExists()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+
+            bool result = db.QueryDynamic("Person").Any();
+
+            Assert.IsTrue(result);
+        }
+    }
+
+    [TestMethod]
+    public void QueryDynamic_Any_MultipleFilters_WorksCorrectly()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+            db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@test.com" });
+            db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
+
+            bool result = db.QueryDynamic("Person")
+                .Where("Age", FieldOp.GreaterThanOrEqual, 30)
+                .Where("Email", FieldOp.EndsWith, "@test.com")
+                .Any();
+
+            Assert.IsTrue(result); // Bob matches
+        }
+    }
+
+    [TestMethod]
+    public async Task QueryDynamic_AnyAsync_WithMatches_ReturnsTrue()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+
+            bool result = await db.QueryDynamic("Person")
+                .Where("Name", FieldOp.Equals, "Alice")
+                .AnyAsync();
+
+            Assert.IsTrue(result);
+        }
+    }
+
+    [TestMethod]
+    public async Task QueryDynamic_AnyAsync_WithNoMatches_ReturnsFalse()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+
+            bool result = await db.QueryDynamic("Person")
+                .Where("Name", FieldOp.Equals, "NonExistent")
+                .AnyAsync();
+
+            Assert.IsFalse(result);
+        }
+    }
+
+    [TestMethod]
+    public void Transaction_QueryDynamic_Any_IncludesWriteSetInserts()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+
+            using (Transaction tx = db.BeginTransaction())
+            {
+                tx.InsertDynamic("Person", "{\"Name\":\"Bob\",\"Age\":50,\"Email\":\"bob@example.com\"}");
+
+                bool result = tx.QueryDynamic("Person")
+                    .Where("Age", FieldOp.GreaterThan, 40)
+                    .Any();
+
+                Assert.IsTrue(result); // Uncommitted insert should be visible
+            }
+        }
+    }
+
+    [TestMethod]
+    public void Transaction_QueryDynamic_Any_ExcludesDeletedDocuments()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+
+            using (Transaction tx = db.BeginTransaction())
+            {
+                tx.DeleteById<Person>(1);
+
+                bool result = tx.QueryDynamic("Person").Any();
+
+                Assert.IsFalse(result); // Deleted document should not be counted
+            }
+        }
+    }
+
+    [TestMethod]
+    public void Transaction_QueryDynamic_Any_ReflectsUpdatedDocuments()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
+
+            using (Transaction tx = db.BeginTransaction())
+            {
+                tx.UpdateByIdDynamic("Person", 1)
+                    .Set("Age", 50)
+                    .Execute();
+
+                bool beforeUpdate = tx.QueryDynamic("Person")
+                    .Where("Age", FieldOp.Equals, 25)
+                    .Any();
+
+                bool afterUpdate = tx.QueryDynamic("Person")
+                    .Where("Age", FieldOp.Equals, 50)
+                    .Any();
+
+                Assert.IsFalse(beforeUpdate); // Old value should not match
+                Assert.IsTrue(afterUpdate);    // New value should match
+            }
         }
     }
 
