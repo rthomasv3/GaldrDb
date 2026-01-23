@@ -77,9 +77,11 @@ public class SingleOperationAotBenchmarks
         _iterationCount++;
 
         if (ENABLE_PERF_TRACING)
+#pragma warning disable CS0162 // Unreachable code detected
         {
             PerfTracer.Reset();
         }
+#pragma warning restore CS0162 // Unreachable code detected
     }
 
     [IterationCleanup]

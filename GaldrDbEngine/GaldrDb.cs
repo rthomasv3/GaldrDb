@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using GaldrDbEngine.IO;
+using GaldrDbEngine.Json;
 using GaldrDbEngine.MVCC;
 using GaldrDbEngine.Pages;
 using GaldrDbEngine.Query;
@@ -618,6 +619,56 @@ public class GaldrDb : IDisposable
     }
 
     /// <summary>
+    /// Gets detailed information about all indexes on a collection.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <returns>A list of index information.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if the collection does not exist.</exception>
+    public IReadOnlyList<IndexInfo> GetIndexes(string collectionName)
+    {
+        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist.");
+        }
+
+        List<IndexInfo> indexes = new List<IndexInfo>(collection.Indexes.Count);
+
+        for (int i = 0; i < collection.Indexes.Count; i++)
+        {
+            IndexDefinition def = collection.Indexes[i];
+            indexes.Add(new IndexInfo(def.FieldName, def.FieldType, def.IsUnique));
+        }
+
+        return indexes;
+    }
+
+    /// <summary>
+    /// Gets detailed information about a collection.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <returns>Collection information including document count and indexes.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if the collection does not exist.</exception>
+    public CollectionInfo GetCollectionInfo(string collectionName)
+    {
+        CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist.");
+        }
+
+        List<IndexInfo> indexes = new List<IndexInfo>(collection.Indexes.Count);
+
+        for (int i = 0; i < collection.Indexes.Count; i++)
+        {
+            IndexDefinition def = collection.Indexes[i];
+            indexes.Add(new IndexInfo(def.FieldName, def.FieldType, def.IsUnique));
+        }
+
+        return new CollectionInfo(collection.Name, collection.DocumentCount, indexes);
+    }
+
+    /// <summary>
     /// Drops an index from a collection.
     /// </summary>
     /// <param name="collectionName">The collection name.</param>
@@ -903,6 +954,18 @@ public class GaldrDb : IDisposable
     }
 
     /// <summary>
+    /// Returns a builder for performing a partial update on a document by ID using runtime field names.
+    /// The update is executed in an auto-committed transaction when Execute() is called.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="id">The document ID.</param>
+    /// <returns>A DynamicUpdateBuilder for chaining Set calls.</returns>
+    public DynamicUpdateBuilder UpdateByIdDynamic(string collectionName, int id)
+    {
+        return new DynamicUpdateBuilder(this, collectionName, id);
+    }
+
+    /// <summary>
     /// Deletes a document by its ID.
     /// </summary>
     /// <typeparam name="T">The document type.</typeparam>
@@ -986,11 +1049,11 @@ public class GaldrDb : IDisposable
     /// <param name="document">The document with updated values.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>True if the document was found and updated, false otherwise.</returns>
-    public async Task<bool> UpdateAsync<T>(T document, CancellationToken cancellationToken = default)
+    public async Task<bool> ReplaceAsync<T>(T document, CancellationToken cancellationToken = default)
     {
         using (Transaction tx = BeginTransaction())
         {
-            bool result = await tx.UpdateAsync<T>(document, cancellationToken).ConfigureAwait(false);
+            bool result = await tx.ReplaceAsync<T>(document, cancellationToken).ConfigureAwait(false);
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
             return result;
         }
@@ -1007,7 +1070,163 @@ public class GaldrDb : IDisposable
     {
         using (Transaction tx = BeginTransaction())
         {
-            bool result = await tx.DeleteAsync<T>(id, cancellationToken).ConfigureAwait(false);
+            bool result = await tx.DeleteByIdAsync<T>(id, cancellationToken).ConfigureAwait(false);
+            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+    }
+
+    #endregion
+
+    #region Dynamic CRUD Operations
+
+    /// <summary>
+    /// Gets a document by ID as a JsonDocument.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="id">The document ID.</param>
+    /// <returns>The JsonDocument, or null if not found.</returns>
+    public JsonDocument GetByIdDynamic(string collectionName, int id)
+    {
+        using (Transaction tx = BeginReadOnlyTransaction())
+        {
+            JsonDocument result = tx.GetByIdDynamic(collectionName, id);
+            tx.Commit();
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously gets a document by ID as a JsonDocument.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="id">The document ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The JsonDocument, or null if not found.</returns>
+    public async Task<JsonDocument> GetByIdDynamicAsync(string collectionName, int id, CancellationToken cancellationToken = default)
+    {
+        using (Transaction tx = BeginReadOnlyTransaction())
+        {
+            JsonDocument result = await tx.GetByIdDynamicAsync(collectionName, id, cancellationToken).ConfigureAwait(false);
+            tx.Commit();
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// Creates a dynamic query builder for the specified collection.
+    /// </summary>
+    /// <param name="collectionName">The collection name to query.</param>
+    /// <returns>A dynamic query builder for constructing and executing queries.</returns>
+    public DynamicQueryBuilder QueryDynamic(string collectionName)
+    {
+        Transaction tx = BeginReadOnlyTransaction();
+        DynamicQueryBuilder innerQuery = tx.QueryDynamic(collectionName);
+
+        AutoDisposingDynamicQueryExecutor autoDisposingExecutor = new AutoDisposingDynamicQueryExecutor(
+            innerQuery.GetExecutor(),
+            tx);
+
+        CollectionEntry collection = GetCollection(collectionName);
+        return new DynamicQueryBuilder(collectionName, collection, autoDisposingExecutor);
+    }
+
+    /// <summary>
+    /// Inserts a JSON document and returns its assigned ID.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="json">The JSON document to insert.</param>
+    /// <returns>The assigned document ID.</returns>
+    public int InsertDynamic(string collectionName, string json)
+    {
+        using (Transaction tx = BeginTransaction())
+        {
+            int id = tx.InsertDynamic(collectionName, json);
+            tx.Commit();
+            return id;
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously inserts a JSON document and returns its assigned ID.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="json">The JSON document to insert.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The assigned document ID.</returns>
+    public async Task<int> InsertDynamicAsync(string collectionName, string json, CancellationToken cancellationToken = default)
+    {
+        using (Transaction tx = BeginTransaction())
+        {
+            int id = await tx.InsertDynamicAsync(collectionName, json, cancellationToken).ConfigureAwait(false);
+            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return id;
+        }
+    }
+
+    /// <summary>
+    /// Replaces an existing JSON document.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="id">The document ID.</param>
+    /// <param name="json">The JSON document with updated values.</param>
+    /// <returns>True if the document was found and replaced, false otherwise.</returns>
+    public bool ReplaceDynamic(string collectionName, int id, string json)
+    {
+        using (Transaction tx = BeginTransaction())
+        {
+            bool result = tx.ReplaceDynamic(collectionName, id, json);
+            tx.Commit();
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously replaces an existing JSON document.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="id">The document ID.</param>
+    /// <param name="json">The JSON document with updated values.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if the document was found and replaced, false otherwise.</returns>
+    public async Task<bool> ReplaceDynamicAsync(string collectionName, int id, string json, CancellationToken cancellationToken = default)
+    {
+        using (Transaction tx = BeginTransaction())
+        {
+            bool result = await tx.ReplaceDynamicAsync(collectionName, id, json, cancellationToken).ConfigureAwait(false);
+            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// Deletes a document by its ID.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="id">The document ID.</param>
+    /// <returns>True if the document was found and deleted, false otherwise.</returns>
+    public bool DeleteByIdDynamic(string collectionName, int id)
+    {
+        using (Transaction tx = BeginTransaction())
+        {
+            bool result = tx.DeleteByIdDynamic(collectionName, id);
+            tx.Commit();
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously deletes a document by its ID.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="id">The document ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if the document was found and deleted, false otherwise.</returns>
+    public async Task<bool> DeleteByIdDynamicAsync(string collectionName, int id, CancellationToken cancellationToken = default)
+    {
+        using (Transaction tx = BeginTransaction())
+        {
+            bool result = await tx.DeleteByIdDynamicAsync(collectionName, id, cancellationToken).ConfigureAwait(false);
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
             return result;
         }
@@ -1016,7 +1235,7 @@ public class GaldrDb : IDisposable
     #endregion
 
     #region Index Operations
-    
+
     private void EnsureIndexes(CollectionEntry collection, IGaldrTypeInfo typeInfo)
     {
         IReadOnlyList<string> indexedFieldNames = typeInfo.IndexedFieldNames;

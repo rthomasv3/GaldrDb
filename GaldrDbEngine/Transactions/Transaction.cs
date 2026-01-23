@@ -127,6 +127,27 @@ public class Transaction : IDisposable
     }
 
     /// <summary>
+    /// Creates a dynamic query builder for the specified collection within this transaction.
+    /// </summary>
+    /// <param name="collectionName">The collection name to query.</param>
+    /// <returns>A dynamic query builder for constructing and executing queries.</returns>
+    public DynamicQueryBuilder QueryDynamic(string collectionName)
+    {
+        EnsureActive();
+
+        CollectionEntry collection = _db.GetCollection(collectionName);
+        DynamicQueryExecutor executor = new DynamicQueryExecutor(
+            this,
+            _db,
+            _versionIndex,
+            SnapshotTxId,
+            collectionName,
+            collection);
+
+        return new DynamicQueryBuilder(collectionName, collection, executor);
+    }
+
+    /// <summary>
     /// Gets a document by its ID within this transaction's snapshot.
     /// </summary>
     /// <typeparam name="T">The document type.</typeparam>
@@ -376,6 +397,20 @@ public class Transaction : IDisposable
     }
 
     /// <summary>
+    /// Returns a builder for performing a partial update on a document by ID using runtime field names.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="id">The document ID.</param>
+    /// <returns>A DynamicUpdateBuilder for chaining Set calls.</returns>
+    public DynamicUpdateBuilder UpdateByIdDynamic(string collectionName, int id)
+    {
+        EnsureActive();
+        EnsureWritable();
+
+        return new DynamicUpdateBuilder(this, collectionName, id);
+    }
+
+    /// <summary>
     /// Deletes a document by its ID.
     /// </summary>
     /// <typeparam name="T">The document type.</typeparam>
@@ -607,6 +642,541 @@ public class Transaction : IDisposable
     }
 
     /// <summary>
+    /// Gets a document by ID as a JsonDocument within this transaction's snapshot.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="id">The document ID.</param>
+    /// <returns>The JsonDocument, or null if not found.</returns>
+    public JsonDocument GetByIdDynamic(string collectionName, int id)
+    {
+        EnsureActive();
+
+        JsonDocument result = null;
+        DocumentKey key = new DocumentKey(collectionName, id);
+
+        if (_writeSet.TryGetValue(key, out WriteSetEntry entry))
+        {
+            if (entry.Operation != WriteOperation.Delete)
+            {
+                result = JsonDocument.Parse(entry.SerializedData);
+            }
+        }
+        else
+        {
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+
+            if (visibleVersion != null)
+            {
+                byte[] jsonBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
+                result = JsonDocument.Parse(jsonBytes);
+
+                if (!_readSet.ContainsKey(key))
+                {
+                    _readSet[key] = visibleVersion.CreatedBy;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Asynchronously gets a document by ID as a JsonDocument within this transaction's snapshot.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="id">The document ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The JsonDocument, or null if not found.</returns>
+    public async Task<JsonDocument> GetByIdDynamicAsync(string collectionName, int id, CancellationToken cancellationToken = default)
+    {
+        EnsureActive();
+
+        JsonDocument result = null;
+        DocumentKey key = new DocumentKey(collectionName, id);
+
+        if (_writeSet.TryGetValue(key, out WriteSetEntry entry))
+        {
+            if (entry.Operation != WriteOperation.Delete)
+            {
+                result = JsonDocument.Parse(entry.SerializedData);
+            }
+        }
+        else
+        {
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+
+            if (visibleVersion != null)
+            {
+                byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
+                result = JsonDocument.Parse(jsonBytes);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Inserts a JSON document and returns its assigned ID.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="json">The JSON document to insert.</param>
+    /// <returns>The assigned document ID.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if the collection does not exist.</exception>
+    /// <exception cref="WriteConflictException">Thrown if a document with the same ID already exists.</exception>
+    public int InsertDynamic(string collectionName, string json)
+    {
+        EnsureActive();
+        EnsureWritable();
+
+        CollectionEntry collection = _db.GetCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist.");
+        }
+
+        JsonDocument doc = JsonDocument.Parse(json);
+        int currentId = doc.HasField("Id") ? doc.GetInt32("Id") : 0;
+        int assignedId;
+
+        if (currentId == 0)
+        {
+            assignedId = GetNextIdForCollection(collectionName, collection.NextId);
+            doc.SetInt32("Id", assignedId);
+        }
+        else
+        {
+            assignedId = currentId;
+
+            DocumentVersion existingVersion = _versionIndex.GetLatestVersion(collectionName, assignedId);
+            if (existingVersion != null && !existingVersion.IsDeleted)
+            {
+                throw new WriteConflictException(
+                    $"Document {collectionName}/{assignedId} already exists",
+                    collectionName,
+                    assignedId,
+                    existingVersion.CreatedBy);
+            }
+        }
+
+        byte[] jsonBytes = doc.ToUtf8Bytes();
+        IReadOnlyList<IndexFieldEntry> indexFields = IndexFieldExtractor.ExtractFromBytes(jsonBytes, collection.Indexes);
+
+        WriteSetEntry entry = new WriteSetEntry
+        {
+            Operation = WriteOperation.Insert,
+            CollectionName = collectionName,
+            DocumentId = assignedId,
+            SerializedData = jsonBytes,
+            PreviousLocation = null,
+            NewLocation = null,
+            IndexFields = indexFields,
+            OldIndexFields = null
+        };
+
+        _writeSet[new DocumentKey(collectionName, assignedId)] = entry;
+
+        return assignedId;
+    }
+
+    /// <summary>
+    /// Replaces an existing JSON document.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="id">The document ID.</param>
+    /// <param name="json">The JSON document with updated values.</param>
+    /// <returns>True if the document was found and replaced, false otherwise.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if the collection does not exist.</exception>
+    /// <exception cref="WriteConflictException">Thrown if the document was modified by a concurrent transaction.</exception>
+    public bool ReplaceDynamic(string collectionName, int id, string json)
+    {
+        EnsureActive();
+        EnsureWritable();
+
+        if (id == 0)
+        {
+            throw new InvalidOperationException("Cannot replace a document with Id = 0. The document must have a valid Id.");
+        }
+
+        CollectionEntry collection = _db.GetCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist.");
+        }
+
+        DocumentVersion latestVersion = _versionIndex.GetLatestVersion(collectionName, id);
+
+        if (latestVersion != null && latestVersion.CreatedBy > SnapshotTxId)
+        {
+            throw new WriteConflictException(
+                $"Document {collectionName}/{id} was modified by a concurrent transaction",
+                collectionName,
+                id,
+                latestVersion.CreatedBy);
+        }
+
+        bool exists = false;
+        DocumentLocation? previousLocation = null;
+        IReadOnlyList<IndexFieldEntry> oldIndexFields = null;
+        TxId? readVersionTxId = null;
+        DocumentKey key = new DocumentKey(collectionName, id);
+
+        if (_writeSet.TryGetValue(key, out WriteSetEntry existingEntry))
+        {
+            if (existingEntry.Operation != WriteOperation.Delete)
+            {
+                exists = true;
+                previousLocation = existingEntry.PreviousLocation;
+                oldIndexFields = existingEntry.IndexFields;
+                readVersionTxId = existingEntry.ReadVersionTxId;
+            }
+        }
+        else
+        {
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+
+            if (visibleVersion != null)
+            {
+                exists = true;
+
+                if (_readSet.TryGetValue(key, out TxId trackedReadVersion))
+                {
+                    readVersionTxId = trackedReadVersion;
+                }
+                else
+                {
+                    readVersionTxId = visibleVersion.CreatedBy;
+                }
+
+                if (collection.Indexes.Count > 0)
+                {
+                    byte[] docBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
+                    oldIndexFields = IndexFieldExtractor.ExtractFromBytes(docBytes, collection.Indexes);
+                }
+            }
+        }
+
+        if (exists)
+        {
+            JsonDocument doc = JsonDocument.Parse(json);
+            doc.SetInt32("Id", id);
+            byte[] jsonBytes = doc.ToUtf8Bytes();
+
+            IReadOnlyList<IndexFieldEntry> newIndexFields = IndexFieldExtractor.ExtractFromBytes(jsonBytes, collection.Indexes);
+
+            WriteSetEntry entry = new WriteSetEntry
+            {
+                Operation = WriteOperation.Update,
+                CollectionName = collectionName,
+                DocumentId = id,
+                SerializedData = jsonBytes,
+                PreviousLocation = previousLocation,
+                NewLocation = null,
+                IndexFields = newIndexFields,
+                OldIndexFields = oldIndexFields,
+                ReadVersionTxId = readVersionTxId
+            };
+
+            _writeSet[key] = entry;
+        }
+
+        return exists;
+    }
+
+    /// <summary>
+    /// Deletes a document by its ID.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="id">The document ID.</param>
+    /// <returns>True if the document was found and deleted, false otherwise.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if the collection does not exist.</exception>
+    /// <exception cref="WriteConflictException">Thrown if the document was modified by a concurrent transaction.</exception>
+    public bool DeleteByIdDynamic(string collectionName, int id)
+    {
+        EnsureActive();
+        EnsureWritable();
+
+        CollectionEntry collection = _db.GetCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist.");
+        }
+
+        DocumentVersion latestVersion = _versionIndex.GetLatestVersion(collectionName, id);
+
+        if (latestVersion != null && latestVersion.CreatedBy > SnapshotTxId)
+        {
+            throw new WriteConflictException(
+                $"Document {collectionName}/{id} was modified by a concurrent transaction",
+                collectionName,
+                id,
+                latestVersion.CreatedBy);
+        }
+
+        bool exists = false;
+        IReadOnlyList<IndexFieldEntry> oldIndexFields = null;
+        TxId? readVersionTxId = null;
+        DocumentKey key = new DocumentKey(collectionName, id);
+
+        if (_writeSet.TryGetValue(key, out WriteSetEntry existingEntry))
+        {
+            if (existingEntry.Operation != WriteOperation.Delete)
+            {
+                exists = true;
+                oldIndexFields = existingEntry.IndexFields;
+                readVersionTxId = existingEntry.ReadVersionTxId;
+            }
+        }
+        else
+        {
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+
+            if (visibleVersion != null)
+            {
+                exists = true;
+
+                if (_readSet.TryGetValue(key, out TxId trackedReadVersion))
+                {
+                    readVersionTxId = trackedReadVersion;
+                }
+                else
+                {
+                    readVersionTxId = visibleVersion.CreatedBy;
+                }
+
+                if (collection.Indexes.Count > 0)
+                {
+                    byte[] docBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
+                    oldIndexFields = IndexFieldExtractor.ExtractFromBytes(docBytes, collection.Indexes);
+                }
+            }
+        }
+
+        if (exists)
+        {
+            WriteSetEntry entry = new WriteSetEntry
+            {
+                Operation = WriteOperation.Delete,
+                CollectionName = collectionName,
+                DocumentId = id,
+                SerializedData = null,
+                PreviousLocation = null,
+                NewLocation = null,
+                IndexFields = null,
+                OldIndexFields = oldIndexFields,
+                ReadVersionTxId = readVersionTxId
+            };
+
+            _writeSet[key] = entry;
+        }
+
+        return exists;
+    }
+
+    /// <summary>
+    /// Asynchronously inserts a JSON document and returns its assigned ID.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="json">The JSON document to insert.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The assigned document ID.</returns>
+    public Task<int> InsertDynamicAsync(string collectionName, string json, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult(InsertDynamic(collectionName, json));
+    }
+
+    /// <summary>
+    /// Asynchronously replaces an existing JSON document.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="id">The document ID.</param>
+    /// <param name="json">The JSON document with updated values.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if the document was found and replaced, false otherwise.</returns>
+    public async Task<bool> ReplaceDynamicAsync(string collectionName, int id, string json, CancellationToken cancellationToken = default)
+    {
+        EnsureActive();
+        EnsureWritable();
+
+        if (id == 0)
+        {
+            throw new InvalidOperationException("Cannot replace a document with Id = 0. The document must have a valid Id.");
+        }
+
+        CollectionEntry collection = _db.GetCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist.");
+        }
+
+        DocumentVersion latestVersion = _versionIndex.GetLatestVersion(collectionName, id);
+
+        if (latestVersion != null && latestVersion.CreatedBy > SnapshotTxId)
+        {
+            throw new WriteConflictException(
+                $"Document {collectionName}/{id} was modified by a concurrent transaction",
+                collectionName,
+                id,
+                latestVersion.CreatedBy);
+        }
+
+        bool exists = false;
+        DocumentLocation? previousLocation = null;
+        IReadOnlyList<IndexFieldEntry> oldIndexFields = null;
+        TxId? readVersionTxId = null;
+        DocumentKey key = new DocumentKey(collectionName, id);
+
+        if (_writeSet.TryGetValue(key, out WriteSetEntry existingEntry))
+        {
+            if (existingEntry.Operation != WriteOperation.Delete)
+            {
+                exists = true;
+                previousLocation = existingEntry.PreviousLocation;
+                oldIndexFields = existingEntry.IndexFields;
+                readVersionTxId = existingEntry.ReadVersionTxId;
+            }
+        }
+        else
+        {
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+
+            if (visibleVersion != null)
+            {
+                exists = true;
+
+                if (_readSet.TryGetValue(key, out TxId trackedReadVersion))
+                {
+                    readVersionTxId = trackedReadVersion;
+                }
+                else
+                {
+                    readVersionTxId = visibleVersion.CreatedBy;
+                }
+
+                if (collection.Indexes.Count > 0)
+                {
+                    byte[] docBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
+                    oldIndexFields = IndexFieldExtractor.ExtractFromBytes(docBytes, collection.Indexes);
+                }
+            }
+        }
+
+        if (exists)
+        {
+            JsonDocument doc = JsonDocument.Parse(json);
+            doc.SetInt32("Id", id);
+            byte[] jsonBytes = doc.ToUtf8Bytes();
+
+            IReadOnlyList<IndexFieldEntry> newIndexFields = IndexFieldExtractor.ExtractFromBytes(jsonBytes, collection.Indexes);
+
+            WriteSetEntry entry = new WriteSetEntry
+            {
+                Operation = WriteOperation.Update,
+                CollectionName = collectionName,
+                DocumentId = id,
+                SerializedData = jsonBytes,
+                PreviousLocation = previousLocation,
+                NewLocation = null,
+                IndexFields = newIndexFields,
+                OldIndexFields = oldIndexFields,
+                ReadVersionTxId = readVersionTxId
+            };
+
+            _writeSet[key] = entry;
+        }
+
+        return exists;
+    }
+
+    /// <summary>
+    /// Asynchronously deletes a document by its ID.
+    /// </summary>
+    /// <param name="collectionName">The collection name.</param>
+    /// <param name="id">The document ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if the document was found and deleted, false otherwise.</returns>
+    public async Task<bool> DeleteByIdDynamicAsync(string collectionName, int id, CancellationToken cancellationToken = default)
+    {
+        EnsureActive();
+        EnsureWritable();
+
+        CollectionEntry collection = _db.GetCollection(collectionName);
+        if (collection == null)
+        {
+            throw new InvalidOperationException($"Collection '{collectionName}' does not exist.");
+        }
+
+        DocumentVersion latestVersion = _versionIndex.GetLatestVersion(collectionName, id);
+
+        if (latestVersion != null && latestVersion.CreatedBy > SnapshotTxId)
+        {
+            throw new WriteConflictException(
+                $"Document {collectionName}/{id} was modified by a concurrent transaction",
+                collectionName,
+                id,
+                latestVersion.CreatedBy);
+        }
+
+        bool exists = false;
+        IReadOnlyList<IndexFieldEntry> oldIndexFields = null;
+        TxId? readVersionTxId = null;
+        DocumentKey key = new DocumentKey(collectionName, id);
+
+        if (_writeSet.TryGetValue(key, out WriteSetEntry existingEntry))
+        {
+            if (existingEntry.Operation != WriteOperation.Delete)
+            {
+                exists = true;
+                oldIndexFields = existingEntry.IndexFields;
+                readVersionTxId = existingEntry.ReadVersionTxId;
+            }
+        }
+        else
+        {
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+
+            if (visibleVersion != null)
+            {
+                exists = true;
+
+                if (_readSet.TryGetValue(key, out TxId trackedReadVersion))
+                {
+                    readVersionTxId = trackedReadVersion;
+                }
+                else
+                {
+                    readVersionTxId = visibleVersion.CreatedBy;
+                }
+
+                if (collection.Indexes.Count > 0)
+                {
+                    byte[] docBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
+                    oldIndexFields = IndexFieldExtractor.ExtractFromBytes(docBytes, collection.Indexes);
+                }
+            }
+        }
+
+        if (exists)
+        {
+            WriteSetEntry entry = new WriteSetEntry
+            {
+                Operation = WriteOperation.Delete,
+                CollectionName = collectionName,
+                DocumentId = id,
+                SerializedData = null,
+                PreviousLocation = null,
+                NewLocation = null,
+                IndexFields = null,
+                OldIndexFields = oldIndexFields,
+                ReadVersionTxId = readVersionTxId
+            };
+
+            _writeSet[key] = entry;
+        }
+
+        return exists;
+    }
+
+    /// <summary>
     /// Asynchronously inserts a document and returns its assigned ID.
     /// </summary>
     /// <typeparam name="T">The document type.</typeparam>
@@ -684,7 +1254,7 @@ public class Transaction : IDisposable
     /// <param name="document">The document with updated values.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>True if the document was found and updated, false otherwise.</returns>
-    public async Task<bool> UpdateAsync<T>(T document, CancellationToken cancellationToken = default)
+    public async Task<bool> ReplaceAsync<T>(T document, CancellationToken cancellationToken = default)
     {
         GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
 
@@ -800,7 +1370,7 @@ public class Transaction : IDisposable
     /// <param name="id">The document ID.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>True if the document was found and deleted, false otherwise.</returns>
-    public async Task<bool> DeleteAsync<T>(int id, CancellationToken cancellationToken = default)
+    public async Task<bool> DeleteByIdAsync<T>(int id, CancellationToken cancellationToken = default)
     {
         GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
 
@@ -1310,5 +1880,212 @@ public class Transaction : IDisposable
                 }
             }
         }
+    }
+
+    internal bool ExecutePartialUpdateDynamic(
+        string collectionName,
+        int documentId,
+        List<FieldModification> modifications)
+    {
+        DocumentKey key = new DocumentKey(collectionName, documentId);
+
+        bool exists = false;
+        byte[] existingBytes = null;
+        IReadOnlyList<IndexFieldEntry> oldIndexFields = null;
+        TxId? readVersionTxId = null;
+
+        if (_writeSet.TryGetValue(key, out WriteSetEntry existingEntry))
+        {
+            if (existingEntry.Operation != WriteOperation.Delete)
+            {
+                exists = true;
+                existingBytes = existingEntry.SerializedData;
+                oldIndexFields = existingEntry.IndexFields;
+                readVersionTxId = existingEntry.ReadVersionTxId;
+            }
+        }
+        else
+        {
+            DocumentVersion latestVersion = _versionIndex.GetLatestVersion(collectionName, documentId);
+
+            if (latestVersion != null && latestVersion.CreatedBy > SnapshotTxId)
+            {
+                throw new WriteConflictException(
+                    $"Document {collectionName}/{documentId} was modified by a concurrent transaction",
+                    collectionName,
+                    documentId,
+                    latestVersion.CreatedBy);
+            }
+
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, documentId, SnapshotTxId);
+
+            if (visibleVersion != null)
+            {
+                exists = true;
+                existingBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
+
+                if (_readSet.TryGetValue(key, out TxId trackedReadVersion))
+                {
+                    readVersionTxId = trackedReadVersion;
+                }
+                else
+                {
+                    readVersionTxId = visibleVersion.CreatedBy;
+                }
+            }
+        }
+
+        if (exists)
+        {
+            CollectionEntry collection = _db.GetCollection(collectionName);
+            List<string> indexedFieldNames = GetIndexedFieldNames(collection);
+
+            bool hasIndexedFieldModifications = HasIndexedFieldModifications(modifications, indexedFieldNames);
+
+            if (hasIndexedFieldModifications && oldIndexFields == null && indexedFieldNames.Count > 0)
+            {
+                oldIndexFields = IndexFieldExtractor.ExtractFromBytes(existingBytes, collection.Indexes);
+            }
+
+            JsonDocument doc = JsonDocument.Parse(existingBytes);
+            ApplyModifications(doc, modifications);
+            byte[] newBytes = doc.ToUtf8Bytes();
+
+            IReadOnlyList<IndexFieldEntry> newIndexFields;
+            if (hasIndexedFieldModifications)
+            {
+                newIndexFields = IndexFieldExtractor.ExtractFromBytes(newBytes, collection.Indexes);
+            }
+            else
+            {
+                newIndexFields = oldIndexFields;
+            }
+
+            WriteSetEntry entry = new WriteSetEntry
+            {
+                Operation = WriteOperation.Update,
+                CollectionName = collectionName,
+                DocumentId = documentId,
+                SerializedData = newBytes,
+                PreviousLocation = null,
+                NewLocation = null,
+                IndexFields = newIndexFields,
+                OldIndexFields = oldIndexFields,
+                ReadVersionTxId = readVersionTxId
+            };
+
+            _writeSet[key] = entry;
+        }
+
+        return exists;
+    }
+
+    internal async Task<bool> ExecutePartialUpdateDynamicAsync(
+        string collectionName,
+        int documentId,
+        List<FieldModification> modifications,
+        CancellationToken cancellationToken)
+    {
+        DocumentKey key = new DocumentKey(collectionName, documentId);
+
+        bool exists = false;
+        byte[] existingBytes = null;
+        IReadOnlyList<IndexFieldEntry> oldIndexFields = null;
+        TxId? readVersionTxId = null;
+
+        if (_writeSet.TryGetValue(key, out WriteSetEntry existingEntry))
+        {
+            if (existingEntry.Operation != WriteOperation.Delete)
+            {
+                exists = true;
+                existingBytes = existingEntry.SerializedData;
+                oldIndexFields = existingEntry.IndexFields;
+                readVersionTxId = existingEntry.ReadVersionTxId;
+            }
+        }
+        else
+        {
+            DocumentVersion latestVersion = _versionIndex.GetLatestVersion(collectionName, documentId);
+
+            if (latestVersion != null && latestVersion.CreatedBy > SnapshotTxId)
+            {
+                throw new WriteConflictException(
+                    $"Document {collectionName}/{documentId} was modified by a concurrent transaction",
+                    collectionName,
+                    documentId,
+                    latestVersion.CreatedBy);
+            }
+
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, documentId, SnapshotTxId);
+
+            if (visibleVersion != null)
+            {
+                exists = true;
+                existingBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
+
+                if (_readSet.TryGetValue(key, out TxId trackedReadVersion))
+                {
+                    readVersionTxId = trackedReadVersion;
+                }
+                else
+                {
+                    readVersionTxId = visibleVersion.CreatedBy;
+                }
+            }
+        }
+
+        if (exists)
+        {
+            CollectionEntry collection = _db.GetCollection(collectionName);
+            List<string> indexedFieldNames = GetIndexedFieldNames(collection);
+
+            bool hasIndexedFieldModifications = HasIndexedFieldModifications(modifications, indexedFieldNames);
+
+            if (hasIndexedFieldModifications && oldIndexFields == null && indexedFieldNames.Count > 0)
+            {
+                oldIndexFields = IndexFieldExtractor.ExtractFromBytes(existingBytes, collection.Indexes);
+            }
+
+            JsonDocument doc = JsonDocument.Parse(existingBytes);
+            ApplyModifications(doc, modifications);
+            byte[] newBytes = doc.ToUtf8Bytes();
+
+            IReadOnlyList<IndexFieldEntry> newIndexFields;
+            if (hasIndexedFieldModifications)
+            {
+                newIndexFields = IndexFieldExtractor.ExtractFromBytes(newBytes, collection.Indexes);
+            }
+            else
+            {
+                newIndexFields = oldIndexFields;
+            }
+
+            WriteSetEntry entry = new WriteSetEntry
+            {
+                Operation = WriteOperation.Update,
+                CollectionName = collectionName,
+                DocumentId = documentId,
+                SerializedData = newBytes,
+                PreviousLocation = null,
+                NewLocation = null,
+                IndexFields = newIndexFields,
+                OldIndexFields = oldIndexFields,
+                ReadVersionTxId = readVersionTxId
+            };
+
+            _writeSet[key] = entry;
+        }
+
+        return exists;
+    }
+
+    private static List<string> GetIndexedFieldNames(CollectionEntry collection)
+    {
+        List<string> fieldNames = new List<string>(collection.Indexes.Count);
+        foreach (Storage.IndexDefinition index in collection.Indexes)
+        {
+            fieldNames.Add(index.FieldName);
+        }
+        return fieldNames;
     }
 }

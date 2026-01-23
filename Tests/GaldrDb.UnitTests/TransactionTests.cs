@@ -754,7 +754,7 @@ public class TransactionTests
             using (Transaction tx = db.BeginTransaction())
             {
                 Person updated = new Person { Id = insertedId, Name = "UpdatedAsync", Age = 30, Email = "updatedasync@example.com" };
-                bool result = await tx.UpdateAsync(updated);
+                bool result = await tx.ReplaceAsync(updated);
 
                 Assert.IsTrue(result);
 
@@ -782,7 +782,7 @@ public class TransactionTests
 
             using (Transaction tx = db.BeginTransaction())
             {
-                bool result = await tx.DeleteAsync<Person>(insertedId);
+                bool result = await tx.DeleteByIdAsync<Person>(insertedId);
 
                 Assert.IsTrue(result);
 
@@ -889,7 +889,7 @@ public class TransactionTests
             int id = db.Insert(person);
 
             Person updated = new Person { Id = id, Name = "DbAsyncUpdateNew", Age = 55, Email = "dbasyncupdatenew@example.com" };
-            bool result = await db.UpdateAsync(updated);
+            bool result = await db.ReplaceAsync(updated);
 
             Assert.IsTrue(result);
 

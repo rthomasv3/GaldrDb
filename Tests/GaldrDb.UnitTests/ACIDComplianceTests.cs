@@ -514,7 +514,7 @@ public class ACIDComplianceTests
 
             using (Transaction tx = db.BeginTransaction())
             {
-                bool updated = await tx.UpdateAsync(new Person { Id = id, Name = "Updated", Age = 26 });
+                bool updated = await tx.ReplaceAsync(new Person { Id = id, Name = "Updated", Age = 26 });
                 Assert.IsTrue(updated);
                 await tx.CommitAsync();
             }
@@ -524,7 +524,7 @@ public class ACIDComplianceTests
 
             using (Transaction tx = db.BeginTransaction())
             {
-                bool deleted = await tx.DeleteAsync<Person>(id);
+                bool deleted = await tx.DeleteByIdAsync<Person>(id);
                 Assert.IsTrue(deleted);
                 await tx.CommitAsync();
             }
@@ -585,7 +585,7 @@ public class ACIDComplianceTests
                 {
                     using (Transaction tx = db.BeginTransaction())
                     {
-                        await tx.UpdateAsync(new Person { Id = ids[idx], Name = $"AsyncUpdated{idx}", Age = 100 + idx });
+                        await tx.ReplaceAsync(new Person { Id = ids[idx], Name = $"AsyncUpdated{idx}", Age = 100 + idx });
                         await tx.CommitAsync();
                         lock (lockObj) { successCount++; }
                     }
@@ -617,13 +617,13 @@ public class ACIDComplianceTests
 
             using (Transaction tx2 = db.BeginTransaction())
             {
-                await tx2.UpdateAsync(new Person { Id = id, Name = "FromTx2", Age = 31 });
+                await tx2.ReplaceAsync(new Person { Id = id, Name = "FromTx2", Age = 31 });
                 await tx2.CommitAsync();
             }
 
             await Assert.ThrowsExactlyAsync<WriteConflictException>(async () =>
             {
-                await tx1.UpdateAsync(new Person { Id = id, Name = "FromTx1", Age = 32 });
+                await tx1.ReplaceAsync(new Person { Id = id, Name = "FromTx1", Age = 32 });
             });
 
             tx1.Dispose();
