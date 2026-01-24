@@ -144,6 +144,38 @@ internal class WalFrame
         }
     }
 
+    /// <summary>
+    /// Validates checksum directly on a buffer without deserializing.
+    /// Buffer must contain a complete frame (header + data).
+    /// </summary>
+    public static bool ValidateChecksumInBuffer(byte[] buffer, int pageSize)
+    {
+        int dataLength = BinaryHelper.ReadInt32LE(buffer, 24);
+        uint storedChecksum = BinaryHelper.ReadUInt32LE(buffer, 36);
+
+        int totalSize = FRAME_HEADER_SIZE + dataLength;
+        uint calculatedChecksum = CalculateFrameChecksumInPlace(buffer, 0, totalSize);
+
+        return calculatedChecksum == storedChecksum;
+    }
+
+    /// <summary>
+    /// Reads salt values directly from a frame buffer without deserializing.
+    /// </summary>
+    public static void ReadSaltsFromBuffer(byte[] buffer, out uint salt1, out uint salt2)
+    {
+        salt1 = BinaryHelper.ReadUInt32LE(buffer, 28);
+        salt2 = BinaryHelper.ReadUInt32LE(buffer, 32);
+    }
+
+    /// <summary>
+    /// Reads data length directly from a frame buffer without deserializing.
+    /// </summary>
+    public static int ReadDataLengthFromBuffer(byte[] buffer)
+    {
+        return BinaryHelper.ReadInt32LE(buffer, 24);
+    }
+
     public bool IsCommit()
     {
         return (Flags & WalFrameFlags.Commit) != 0;

@@ -770,7 +770,7 @@ public class WalTests
     }
 
     [TestMethod]
-    public void WriteAheadLog_WriteTransactionBatch_AllFramesHaveCorrectSalts()
+    public void WriteAheadLog_WriteFrameEntries_AllFramesHaveCorrectSalts()
     {
         string walPath = Path.Combine(_testDirectory, "test.wal");
         int pageSize = 4096;
@@ -781,14 +781,14 @@ public class WalTests
             uint expectedSalt1 = wal.Header.Salt1;
             uint expectedSalt2 = wal.Header.Salt2;
 
-            List<PendingPageWrite> writes = new List<PendingPageWrite>
+            List<WalFrameEntry> entries = new List<WalFrameEntry>
             {
-                new PendingPageWrite(0, new byte[pageSize], 0x01),
-                new PendingPageWrite(1, new byte[pageSize], 0x01),
-                new PendingPageWrite(2, new byte[pageSize], 0x01)
+                new WalFrameEntry { PageId = 0, PageType = 0x01, Data = new byte[pageSize] },
+                new WalFrameEntry { PageId = 1, PageType = 0x01, Data = new byte[pageSize] },
+                new WalFrameEntry { PageId = 2, PageType = 0x01, Data = new byte[pageSize] }
             };
 
-            wal.WriteTransactionBatch(1, writes);
+            wal.WriteFrameEntries(1, entries);
 
             List<WalFrame> frames = wal.ReadAllFrames();
 

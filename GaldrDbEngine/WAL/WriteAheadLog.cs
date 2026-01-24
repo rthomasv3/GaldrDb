@@ -192,63 +192,66 @@ internal class WriteAheadLog : IDisposable
         }
     }
 
-    public void WriteTransactionBatch(ulong txId, List<PendingPageWrite> pendingWrites)
+    public long WriteFrameEntries(ulong txId, List<WalFrameEntry> entries)
     {
-        if (pendingWrites.Count == 0)
-        {
-            return;
-        }
+        long startingFrameNumber = 0;
 
-        lock (_writeLock)
+        if (entries.Count > 0)
         {
-            int frameSize = WalFrame.FRAME_HEADER_SIZE + _pageSize;
-            int totalSize = frameSize * pendingWrites.Count;
-            byte[] batchBuffer = BufferPool.Rent(totalSize);
-
-            try
+            lock (_writeLock)
             {
-                int bufferOffset = 0;
+                int frameSize = WalFrame.FRAME_HEADER_SIZE + _pageSize;
+                int totalSize = frameSize * entries.Count;
+                byte[] batchBuffer = BufferPool.Rent(totalSize);
 
-                for (int i = 0; i < pendingWrites.Count; i++)
+                try
                 {
-                    _currentFrameNumber++;
-                    PendingPageWrite write = pendingWrites[i];
-                    bool isLastFrame = (i == pendingWrites.Count - 1);
-                    WalFrameFlags flags = isLastFrame ? WalFrameFlags.Commit : WalFrameFlags.None;
-                    byte[] data = write.Data ?? Array.Empty<byte>();
+                    int bufferOffset = 0;
+                    startingFrameNumber = _currentFrameNumber + 1;
 
-                    int bytesWritten = WalFrame.SerializeFrameTo(
-                        batchBuffer,
-                        bufferOffset,
-                        _currentFrameNumber,
-                        txId,
-                        write.PageId,
-                        write.PageType,
-                        flags,
-                        _header.Salt1,
-                        _header.Salt2,
-                        data);
-
-                    // Pad to full frame size if data is smaller
-                    int paddingNeeded = frameSize - bytesWritten;
-                    if (paddingNeeded > 0)
+                    for (int i = 0; i < entries.Count; i++)
                     {
-                        Array.Clear(batchBuffer, bufferOffset + bytesWritten, paddingNeeded);
+                        _currentFrameNumber++;
+                        WalFrameEntry entry = entries[i];
+                        bool isLastFrame = (i == entries.Count - 1);
+                        WalFrameFlags flags = isLastFrame ? WalFrameFlags.Commit : WalFrameFlags.None;
+                        byte[] data = entry.Data ?? Array.Empty<byte>();
+
+                        int bytesWritten = WalFrame.SerializeFrameTo(
+                            batchBuffer,
+                            bufferOffset,
+                            _currentFrameNumber,
+                            txId,
+                            entry.PageId,
+                            entry.PageType,
+                            flags,
+                            _header.Salt1,
+                            _header.Salt2,
+                            data);
+
+                        // Pad to full frame size if data is smaller
+                        int paddingNeeded = frameSize - bytesWritten;
+                        if (paddingNeeded > 0)
+                        {
+                            Array.Clear(batchBuffer, bufferOffset + bytesWritten, paddingNeeded);
+                        }
+
+                        bufferOffset += frameSize;
                     }
 
-                    bufferOffset += frameSize;
+                    // Write all frames in a single I/O operation
+                    long startPosition = WalHeader.HEADER_SIZE + (_currentFrameNumber - entries.Count) * frameSize;
+                    _walStream.Position = startPosition;
+                    _walStream.Write(batchBuffer, 0, totalSize);
                 }
-
-                // Write all frames in a single I/O operation
-                long startPosition = WalHeader.HEADER_SIZE + (_currentFrameNumber - pendingWrites.Count) * frameSize;
-                _walStream.Position = startPosition;
-                _walStream.Write(batchBuffer, 0, totalSize);
-            }
-            finally
-            {
-                BufferPool.Return(batchBuffer);
+                finally
+                {
+                    BufferPool.Return(batchBuffer);
+                }
             }
         }
+
+        return startingFrameNumber;
     }
 
     public List<WalFrame> ReadAllFrames()
@@ -352,6 +355,49 @@ internal class WriteAheadLog : IDisposable
         {
             FlushStream();
         }
+    }
+
+    public bool ReadFrameData(long frameNumber, Span<byte> destination)
+    {
+        bool success = false;
+
+        if (frameNumber >= 1)
+        {
+            int frameSize = WalFrame.FRAME_HEADER_SIZE + _pageSize;
+            long framePosition = WalHeader.HEADER_SIZE + (frameNumber - 1) * frameSize;
+
+            byte[] frameBuffer = BufferPool.Rent(frameSize);
+            try
+            {
+                _walStream.Position = framePosition;
+                int bytesRead = _walStream.Read(frameBuffer, 0, frameSize);
+
+                if (bytesRead >= frameSize)
+                {
+                    // Read header fields directly without allocating WalFrame
+                    WalFrame.ReadSaltsFromBuffer(frameBuffer, out uint salt1, out uint salt2);
+
+                    if (salt1 == _header.Salt1 && salt2 == _header.Salt2)
+                    {
+                        // Validate checksum directly on buffer (no re-serialization)
+                        if (WalFrame.ValidateChecksumInBuffer(frameBuffer, _pageSize))
+                        {
+                            // Copy data directly from buffer to destination
+                            int dataLength = WalFrame.ReadDataLengthFromBuffer(frameBuffer);
+                            int copyLength = Math.Min(dataLength, destination.Length);
+                            frameBuffer.AsSpan(WalFrame.FRAME_HEADER_SIZE, copyLength).CopyTo(destination);
+                            success = true;
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                BufferPool.Return(frameBuffer);
+            }
+        }
+
+        return success;
     }
 
     public void Truncate()

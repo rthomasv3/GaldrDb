@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,11 +24,11 @@ internal class WalPageIO : IPageIO
     private long _nBackfill;         // Frames checkpointed to database
     private long _writeFrameNumber;  // Current write position (may include uncommitted)
 
-    // Per-transaction WAL write buffers (cache writes are immediate, WAL writes are batched)
-    private readonly ConcurrentDictionary<ulong, List<PendingPageWrite>> _txWalWrites;
-
     // Track current transaction per async flow (thread/task)
     private readonly AsyncLocal<ulong?> _currentTxId;
+
+    // Track previous _pageLatestFrame values for rollback (pageId -> previous frame, null means no previous)
+    private readonly Dictionary<int, long> _txPreviousFrames;
 
     // Lock for serializing WAL commits
     private readonly object _commitLock;
@@ -53,8 +52,8 @@ internal class WalPageIO : IPageIO
         _mxFrame = 0;
         _nBackfill = 0;
         _writeFrameNumber = 0;
-        _txWalWrites = new ConcurrentDictionary<ulong, List<PendingPageWrite>>();
         _currentTxId = new AsyncLocal<ulong?>();
+        _txPreviousFrames = new Dictionary<int, long>();
         _commitLock = new object();
         _checkpointMutex = new object();
         _rwLock = new object();
@@ -81,7 +80,11 @@ internal class WalPageIO : IPageIO
             ResetWal();
         }
 
-        _txWalWrites[txId] = new List<PendingPageWrite>();
+        lock (_cacheLock)
+        {
+            _txPreviousFrames.Clear();
+        }
+
         _currentTxId.Value = txId;
     }
 
@@ -93,112 +96,150 @@ internal class WalPageIO : IPageIO
             throw new InvalidOperationException("No transaction in progress");
         }
 
-        if (!_txWalWrites.TryRemove(txId.Value, out List<PendingPageWrite> walWrites))
-        {
-            throw new InvalidOperationException("Transaction WAL buffer not found");
-        }
-
-        // Write all buffered WAL frames atomically
         lock (_commitLock)
         {
-            if (walWrites.Count > 0)
+            long currentMxFrame = Interlocked.Read(ref _mxFrame);
+            long currentWriteFrame = Interlocked.Read(ref _writeFrameNumber);
+
+            if (currentWriteFrame > currentMxFrame)
             {
-                _wal.WriteTransactionBatch(txId.Value, walWrites);
-                _wal.Flush();
+                // Collect uncommitted frames from _walFrames, preserving pageId order
+                List<WalFrameEntry> framesToWrite = new List<WalFrameEntry>();
+                List<int> pageIdsInOrder = new List<int>();
+                lock (_cacheLock)
+                {
+                    for (long frameNum = currentMxFrame + 1; frameNum <= currentWriteFrame; frameNum++)
+                    {
+                        if (_walFrames.TryGetValue(frameNum, out WalFrameEntry entry))
+                        {
+                            framesToWrite.Add(entry);
+                            pageIdsInOrder.Add(entry.PageId);
+                        }
+                    }
+                }
+
+                long walStartFrame = 0;
+                if (framesToWrite.Count > 0)
+                {
+                    walStartFrame = _wal.WriteFrameEntries(txId.Value, framesToWrite);
+                    _wal.Flush();
+                }
+
+                // Release buffers and update _pageLatestFrame with actual WAL frame numbers
+                lock (_cacheLock)
+                {
+                    for (long frameNum = currentMxFrame + 1; frameNum <= currentWriteFrame; frameNum++)
+                    {
+                        if (_walFrames.TryGetValue(frameNum, out WalFrameEntry entry))
+                        {
+                            BufferPool.Return(entry.Data);
+                            _walFrames.Remove(frameNum);
+                        }
+                    }
+
+                    // Update _pageLatestFrame with actual WAL frame numbers
+                    for (int i = 0; i < pageIdsInOrder.Count; i++)
+                    {
+                        int pageId = pageIdsInOrder[i];
+                        long actualWalFrame = walStartFrame + i;
+                        _pageLatestFrame[pageId] = actualWalFrame;
+                    }
+
+                    // Update _writeFrameNumber to match WAL's frame counter
+                    if (walStartFrame > 0)
+                    {
+                        Interlocked.Exchange(ref _writeFrameNumber, walStartFrame + framesToWrite.Count - 1);
+                    }
+                }
+
+                // Mark all written frames as committed (using WAL frame numbers now)
+                long newMxFrame = walStartFrame > 0 ? walStartFrame + framesToWrite.Count - 1 : currentMxFrame;
+                Interlocked.Exchange(ref _mxFrame, newMxFrame);
             }
-
-            // Mark all written frames as committed
-            Interlocked.Exchange(ref _mxFrame, Interlocked.Read(ref _writeFrameNumber));
         }
 
-        // Return WAL buffers to pool
-        foreach (PendingPageWrite write in walWrites)
+        lock (_cacheLock)
         {
-            BufferPool.Return(write.Data);
+            _txPreviousFrames.Clear();
         }
 
-        walWrites.Clear();
         _currentTxId.Value = null;
     }
 
     public void AbortTransaction()
     {
-        ulong? txId = _currentTxId.Value;
-        if (!txId.HasValue)
-        {
-            return;
-        }
-
-        if (_txWalWrites.TryRemove(txId.Value, out List<PendingPageWrite> walWrites))
+        if (_currentTxId.Value.HasValue)
         {
             // Rollback: remove uncommitted frames and restore _pageLatestFrame
             lock (_cacheLock)
             {
-                HashSet<int> affectedPages = new HashSet<int>();
                 long currentMxFrame = Interlocked.Read(ref _mxFrame);
                 long currentWriteFrame = Interlocked.Read(ref _writeFrameNumber);
 
+                // Remove uncommitted frames and return buffers
                 for (long f = currentMxFrame + 1; f <= currentWriteFrame; f++)
                 {
                     if (_walFrames.TryGetValue(f, out WalFrameEntry entry))
                     {
-                        affectedPages.Add(entry.PageId);
                         BufferPool.Return(entry.Data);
                         _walFrames.Remove(f);
                     }
                 }
 
-                // Restore _pageLatestFrame for affected pages
-                foreach (int pageId in affectedPages)
+                // Restore _pageLatestFrame from saved previous values
+                foreach (KeyValuePair<int, long> kvp in _txPreviousFrames)
                 {
-                    long latestCommittedFrame = 0;
-                    for (long f = currentMxFrame; f >= 1; f--)
+                    if (kvp.Value > 0)
                     {
-                        if (_walFrames.TryGetValue(f, out WalFrameEntry entry) && entry.PageId == pageId)
-                        {
-                            latestCommittedFrame = f;
-                            break;
-                        }
-                    }
-
-                    if (latestCommittedFrame > 0)
-                    {
-                        _pageLatestFrame[pageId] = latestCommittedFrame;
+                        _pageLatestFrame[kvp.Key] = kvp.Value;
                     }
                     else
                     {
-                        _pageLatestFrame.Remove(pageId);
+                        _pageLatestFrame.Remove(kvp.Key);
                     }
                 }
 
+                _txPreviousFrames.Clear();
                 Interlocked.Exchange(ref _writeFrameNumber, currentMxFrame);
             }
 
-            // Return WAL buffers to pool
-            foreach (PendingPageWrite write in walWrites)
-            {
-                BufferPool.Return(write.Data);
-            }
-            walWrites.Clear();
+            _currentTxId.Value = null;
         }
-
-        _currentTxId.Value = null;
     }
 
     public void ReadPage(int pageId, Span<byte> destination)
     {
         bool foundInWal = false;
+        long frameNum = 0;
+        bool isUncommitted = false;
 
         lock (_cacheLock)
         {
-            if (_pageLatestFrame.TryGetValue(pageId, out long frameNum))
+            if (_pageLatestFrame.TryGetValue(pageId, out frameNum))
             {
                 long currentNBackfill = Interlocked.Read(ref _nBackfill);
-                if (frameNum > currentNBackfill && _walFrames.TryGetValue(frameNum, out WalFrameEntry entry))
+                long currentMxFrame = Interlocked.Read(ref _mxFrame);
+
+                if (frameNum > currentNBackfill)
                 {
-                    entry.Data.AsSpan().CopyTo(destination);
-                    foundInWal = true;
+                    // Check if uncommitted (still in _walFrames with buffer)
+                    if (frameNum > currentMxFrame && _walFrames.TryGetValue(frameNum, out WalFrameEntry entry))
+                    {
+                        entry.Data.AsSpan().CopyTo(destination);
+                        foundInWal = true;
+                        isUncommitted = true;
+                    }
                 }
+            }
+        }
+
+        if (!foundInWal && frameNum > 0 && !isUncommitted)
+        {
+            // Read committed frame from WAL file
+            long currentNBackfill = Interlocked.Read(ref _nBackfill);
+            if (frameNum > currentNBackfill)
+            {
+                foundInWal = _wal.ReadFrameData(frameNum, destination);
             }
         }
 
@@ -214,56 +255,73 @@ internal class WalPageIO : IPageIO
     public void WritePage(int pageId, ReadOnlySpan<byte> data)
     {
         byte[] cacheData = BufferPool.Rent(_pageSize);
-        data.CopyTo(cacheData);
-        byte pageType = DeterminePageType(cacheData);
+        bool bufferOwnershipTransferred = false;
 
-        ulong? txId = _currentTxId.Value;
-        if (txId.HasValue && _txWalWrites.TryGetValue(txId.Value, out List<PendingPageWrite> walWrites))
+        try
         {
-            // Transaction write: add to cache and buffer for WAL
-            lock (_cacheLock)
-            {
-                long frameNum = Interlocked.Increment(ref _writeFrameNumber);
+            data.CopyTo(cacheData);
+            byte pageType = DeterminePageType(cacheData);
 
-                // Return old buffer if this page was already in cache at a different frame
-                if (_pageLatestFrame.TryGetValue(pageId, out long oldFrameNum))
+            ulong? txId = _currentTxId.Value;
+            if (txId.HasValue)
+            {
+                // Transaction write: add to cache only, WAL write happens at commit
+                lock (_cacheLock)
                 {
-                    if (_walFrames.TryGetValue(oldFrameNum, out WalFrameEntry oldEntry))
+                    long frameNum = Interlocked.Increment(ref _writeFrameNumber);
+
+                    // Save previous frame for potential rollback (only first write to this page in transaction)
+                    if (!_txPreviousFrames.ContainsKey(pageId))
                     {
-                        // Only return buffer if it's from an uncommitted frame we're replacing
-                        long currentMxFrame = Interlocked.Read(ref _mxFrame);
-                        if (oldFrameNum > currentMxFrame)
+                        if (_pageLatestFrame.TryGetValue(pageId, out long prevFrame))
+                        {
+                            _txPreviousFrames[pageId] = prevFrame;
+                        }
+                        else
+                        {
+                            _txPreviousFrames[pageId] = 0; // 0 means no previous frame
+                        }
+                    }
+
+                    // Return old buffer if this page was already written in this transaction
+                    // (All frames in _walFrames are uncommitted, so we can always clean up)
+                    if (_pageLatestFrame.TryGetValue(pageId, out long oldFrameNum))
+                    {
+                        if (_walFrames.TryGetValue(oldFrameNum, out WalFrameEntry oldEntry))
                         {
                             BufferPool.Return(oldEntry.Data);
                             _walFrames.Remove(oldFrameNum);
                         }
                     }
+
+                    _walFrames[frameNum] = new WalFrameEntry { PageId = pageId, PageType = pageType, Data = cacheData };
+                    _pageLatestFrame[pageId] = frameNum;
+                    bufferOwnershipTransferred = true;
+                }
+            }
+            else
+            {
+                // Non-transaction write: write to WAL immediately and release buffer
+                long walFrameNum;
+                lock (_commitLock)
+                {
+                    walFrameNum = _wal.WriteFrame(0, pageId, pageType, cacheData, WalFrameFlags.Commit);
                 }
 
-                _walFrames[frameNum] = new WalFrameEntry { PageId = pageId, Data = cacheData };
-                _pageLatestFrame[pageId] = frameNum;
+                lock (_cacheLock)
+                {
+                    _pageLatestFrame[pageId] = walFrameNum;
+                    Interlocked.Exchange(ref _writeFrameNumber, walFrameNum);
+                    Interlocked.Exchange(ref _mxFrame, walFrameNum);
+                }
             }
-
-            // Make a separate copy for WAL buffer
-            byte[] walData = BufferPool.Rent(_pageSize);
-            data.CopyTo(walData);
-            walWrites.Add(new PendingPageWrite(pageId, walData, pageType));
         }
-        else
+        finally
         {
-            // Non-transaction write: auto-commit immediately
-            lock (_cacheLock)
+            // Return buffer if ownership wasn't transferred to _walFrames
+            if (!bufferOwnershipTransferred)
             {
-                long frameNum = Interlocked.Increment(ref _writeFrameNumber);
-
-                _walFrames[frameNum] = new WalFrameEntry { PageId = pageId, Data = cacheData };
-                _pageLatestFrame[pageId] = frameNum;
-            }
-
-            lock (_commitLock)
-            {
-                _wal.WriteFrame(0, pageId, pageType, cacheData, WalFrameFlags.Commit);
-                Interlocked.Exchange(ref _mxFrame, Interlocked.Read(ref _writeFrameNumber));
+                BufferPool.Return(cacheData);
             }
         }
     }
@@ -282,17 +340,36 @@ internal class WalPageIO : IPageIO
     public async Task ReadPageAsync(int pageId, Memory<byte> destination, CancellationToken cancellationToken = default)
     {
         bool foundInWal = false;
+        long frameNum = 0;
+        bool isUncommitted = false;
 
         lock (_cacheLock)
         {
-            if (_pageLatestFrame.TryGetValue(pageId, out long frameNum))
+            if (_pageLatestFrame.TryGetValue(pageId, out frameNum))
             {
                 long currentNBackfill = Interlocked.Read(ref _nBackfill);
-                if (frameNum > currentNBackfill && _walFrames.TryGetValue(frameNum, out WalFrameEntry entry))
+                long currentMxFrame = Interlocked.Read(ref _mxFrame);
+
+                if (frameNum > currentNBackfill)
                 {
-                    entry.Data.AsMemory().CopyTo(destination);
-                    foundInWal = true;
+                    // Check if uncommitted (still in _walFrames with buffer)
+                    if (frameNum > currentMxFrame && _walFrames.TryGetValue(frameNum, out WalFrameEntry entry))
+                    {
+                        entry.Data.AsMemory().CopyTo(destination);
+                        foundInWal = true;
+                        isUncommitted = true;
+                    }
                 }
+            }
+        }
+
+        if (!foundInWal && frameNum > 0 && !isUncommitted)
+        {
+            // Read committed frame from WAL file
+            long currentNBackfill = Interlocked.Read(ref _nBackfill);
+            if (frameNum > currentNBackfill)
+            {
+                foundInWal = _wal.ReadFrameData(frameNum, destination.Span);
             }
         }
 
@@ -353,36 +430,56 @@ internal class WalPageIO : IPageIO
 
                 if (currentMxFrame > currentNBackfill)
                 {
-                    // Collect frames to checkpoint
-                    List<KeyValuePair<long, WalFrameEntry>> framesToCheckpoint = new List<KeyValuePair<long, WalFrameEntry>>();
+                    // Collect page IDs and frame numbers to checkpoint
+                    List<KeyValuePair<int, long>> pagesToCheckpoint = new List<KeyValuePair<int, long>>();
 
                     lock (_cacheLock)
                     {
-                        for (long frameNum = currentNBackfill + 1; frameNum <= currentMxFrame; frameNum++)
+                        foreach (KeyValuePair<int, long> kvp in _pageLatestFrame)
                         {
-                            if (_walFrames.TryGetValue(frameNum, out WalFrameEntry entry))
+                            if (kvp.Value > currentNBackfill && kvp.Value <= currentMxFrame)
                             {
-                                framesToCheckpoint.Add(new KeyValuePair<long, WalFrameEntry>(frameNum, entry));
+                                pagesToCheckpoint.Add(kvp);
                             }
                         }
                     }
 
-                    // Write to database (outside cache lock)
-                    lock (_rwLock)
+                    // Read from WAL file and write to database
+                    byte[] buffer = BufferPool.Rent(_pageSize);
+                    try
                     {
-                        foreach (KeyValuePair<long, WalFrameEntry> kvp in framesToCheckpoint)
+                        lock (_rwLock)
                         {
-                            _innerPageIO.WritePage(kvp.Value.PageId, kvp.Value.Data);
-                        }
+                            foreach (KeyValuePair<int, long> kvp in pagesToCheckpoint)
+                            {
+                                if (_wal.ReadFrameData(kvp.Value, buffer))
+                                {
+                                    _innerPageIO.WritePage(kvp.Key, buffer);
+                                }
+                            }
 
-                        _innerPageIO.Flush();
+                            _innerPageIO.Flush();
+                        }
+                    }
+                    finally
+                    {
+                        BufferPool.Return(buffer);
                     }
 
                     // Update nBackfill
                     Interlocked.Exchange(ref _nBackfill, currentMxFrame);
 
-                    // Clear checkpointed frames from cache
-                    ClearCheckpointedFrames(currentNBackfill, currentMxFrame);
+                    // Clear checkpointed entries from _pageLatestFrame
+                    lock (_cacheLock)
+                    {
+                        foreach (KeyValuePair<int, long> kvp in pagesToCheckpoint)
+                        {
+                            if (_pageLatestFrame.TryGetValue(kvp.Key, out long latestFrame) && latestFrame == kvp.Value)
+                            {
+                                _pageLatestFrame.Remove(kvp.Key);
+                            }
+                        }
+                    }
 
                     madeProgress = true;
                 }
@@ -409,34 +506,54 @@ internal class WalPageIO : IPageIO
 
                 if (currentMxFrame > currentNBackfill)
                 {
-                    // Collect frames to checkpoint
-                    List<KeyValuePair<long, WalFrameEntry>> framesToCheckpoint = new List<KeyValuePair<long, WalFrameEntry>>();
+                    // Collect page IDs and frame numbers to checkpoint
+                    List<KeyValuePair<int, long>> pagesToCheckpoint = new List<KeyValuePair<int, long>>();
 
                     lock (_cacheLock)
                     {
-                        for (long frameNum = currentNBackfill + 1; frameNum <= currentMxFrame; frameNum++)
+                        foreach (KeyValuePair<int, long> kvp in _pageLatestFrame)
                         {
-                            if (_walFrames.TryGetValue(frameNum, out WalFrameEntry entry))
+                            if (kvp.Value > currentNBackfill && kvp.Value <= currentMxFrame)
                             {
-                                framesToCheckpoint.Add(new KeyValuePair<long, WalFrameEntry>(frameNum, entry));
+                                pagesToCheckpoint.Add(kvp);
                             }
                         }
                     }
 
-                    // Write to database (outside cache lock)
-                    foreach (KeyValuePair<long, WalFrameEntry> kvp in framesToCheckpoint)
+                    // Read from WAL file and write to database
+                    byte[] buffer = BufferPool.Rent(_pageSize);
+                    try
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        await _innerPageIO.WritePageAsync(kvp.Value.PageId, kvp.Value.Data, cancellationToken).ConfigureAwait(false);
-                    }
+                        foreach (KeyValuePair<int, long> kvp in pagesToCheckpoint)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            if (_wal.ReadFrameData(kvp.Value, buffer))
+                            {
+                                await _innerPageIO.WritePageAsync(kvp.Key, buffer, cancellationToken).ConfigureAwait(false);
+                            }
+                        }
 
-                    await _innerPageIO.FlushAsync(cancellationToken).ConfigureAwait(false);
+                        await _innerPageIO.FlushAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        BufferPool.Return(buffer);
+                    }
 
                     // Update nBackfill
                     Interlocked.Exchange(ref _nBackfill, currentMxFrame);
 
-                    // Clear checkpointed frames from cache
-                    ClearCheckpointedFrames(currentNBackfill, currentMxFrame);
+                    // Clear checkpointed entries from _pageLatestFrame
+                    lock (_cacheLock)
+                    {
+                        foreach (KeyValuePair<int, long> kvp in pagesToCheckpoint)
+                        {
+                            if (_pageLatestFrame.TryGetValue(kvp.Key, out long latestFrame) && latestFrame == kvp.Value)
+                            {
+                                _pageLatestFrame.Remove(kvp.Key);
+                            }
+                        }
+                    }
 
                     madeProgress = true;
                 }
@@ -462,11 +579,7 @@ internal class WalPageIO : IPageIO
                 {
                     long frameNum = frame.FrameNumber;
 
-                    // Copy data to owned buffer
-                    byte[] data = BufferPool.Rent(_pageSize);
-                    Array.Copy(frame.Data, 0, data, 0, Math.Min(frame.Data.Length, _pageSize));
-
-                    _walFrames[frameNum] = new WalFrameEntry { PageId = frame.PageId, Data = data };
+                    // Just track the frame in _pageLatestFrame - data stays in WAL file
                     _pageLatestFrame[frame.PageId] = frameNum;
 
                     if (frame.IsCommit())
@@ -479,7 +592,6 @@ internal class WalPageIO : IPageIO
             // Set counters based on recovered frames
             if (frames.Count > 0)
             {
-                long maxFrameNum = frames[frames.Count - 1].FrameNumber;
                 Interlocked.Exchange(ref _writeFrameNumber, lastCommitFrame);
                 Interlocked.Exchange(ref _mxFrame, lastCommitFrame);
                 Interlocked.Exchange(ref _nBackfill, 0); // Nothing checkpointed after recovery
@@ -523,27 +635,6 @@ internal class WalPageIO : IPageIO
 
         // Reset WAL file with new salts
         _wal.Truncate();
-    }
-
-    private void ClearCheckpointedFrames(long fromFrame, long toFrame)
-    {
-        lock (_cacheLock)
-        {
-            for (long frameNum = fromFrame + 1; frameNum <= toFrame; frameNum++)
-            {
-                if (_walFrames.TryGetValue(frameNum, out WalFrameEntry entry))
-                {
-                    // Only remove from _pageLatestFrame if this was the latest frame for this page
-                    if (_pageLatestFrame.TryGetValue(entry.PageId, out long latestFrame) && latestFrame == frameNum)
-                    {
-                        _pageLatestFrame.Remove(entry.PageId);
-                    }
-
-                    BufferPool.Return(entry.Data);
-                    _walFrames.Remove(frameNum);
-                }
-            }
-        }
     }
 
     private static byte DeterminePageType(byte[] pageData)

@@ -1,7 +1,8 @@
 namespace GaldrDbEngine.WAL;
 
-internal class WalFrameEntry
+internal struct WalFrameEntry
 {
-    public int PageId { get; set; }
-    public byte[] Data { get; set; }
+    public int PageId;
+    public byte PageType;
+    public byte[] Data;
 }
