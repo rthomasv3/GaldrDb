@@ -1957,8 +1957,7 @@ public class GaldrDb : IDisposable
 
         DocumentLocation newLocation = _documentStorage.WriteDocument(serializedData);
 
-        btree.Delete(docId);
-        btree.Insert(docId, newLocation);
+        btree.Update(docId, newLocation);
 
         int newRootPageId = btree.GetRootPageId();
         if (newRootPageId != collection.RootPage)

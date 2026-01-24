@@ -67,7 +67,7 @@ internal class WalFrame
         }
 
         // Calculate checksum over entire frame (excluding checksum field at bytes 36-39)
-        Checksum = CalculateFrameChecksumInPlace(buffer, totalSize);
+        Checksum = CalculateFrameChecksum(buffer, totalSize);
         BinaryHelper.WriteUInt32LE(buffer, FRAME_HEADER_SIZE - 4, Checksum);
 
         return totalSize;
@@ -134,7 +134,7 @@ internal class WalFrame
         try
         {
             int totalSize = SerializeTo(buffer);
-            uint calculatedChecksum = CalculateFrameChecksumInPlace(buffer, totalSize);
+            uint calculatedChecksum = CalculateFrameChecksum(buffer, totalSize);
 
             return calculatedChecksum == Checksum;
         }
@@ -154,7 +154,7 @@ internal class WalFrame
         uint storedChecksum = BinaryHelper.ReadUInt32LE(buffer, 36);
 
         int totalSize = FRAME_HEADER_SIZE + dataLength;
-        uint calculatedChecksum = CalculateFrameChecksumInPlace(buffer, 0, totalSize);
+        uint calculatedChecksum = CalculateFrameChecksum(buffer, 0, totalSize);
 
         return calculatedChecksum == storedChecksum;
     }
@@ -186,33 +186,23 @@ internal class WalFrame
         return (Flags & WalFrameFlags.Checkpoint) != 0;
     }
 
-    private static uint CalculateFrameChecksumInPlace(byte[] buffer, int totalSize)
+    private static uint CalculateFrameChecksum(byte[] buffer, int totalSize)
     {
-        return CalculateFrameChecksumInPlace(buffer, 0, totalSize);
+        return CalculateFrameChecksum(buffer, 0, totalSize);
     }
 
-    private static uint CalculateFrameChecksumInPlace(byte[] buffer, int startOffset, int totalSize)
+    private static uint CalculateFrameChecksum(byte[] buffer, int startOffset, int totalSize)
     {
-        // Calculate checksum over frame header (excluding checksum field at bytes 36-39) + data
-        // Segment 1: bytes 0-35 (header before checksum)
-        // Segment 2: bytes 40+ (data after header)
-        int headerBeforeChecksum = FRAME_HEADER_SIZE - 4; // 36 bytes
-        int dataLength = totalSize - FRAME_HEADER_SIZE;
+        // Zero the checksum field (bytes 36-39), then calculate CRC32 over contiguous buffer.
+        // For writes: we'll write the checksum immediately after.
+        // For validation: caller reads stored checksum first, then we zero and calculate to compare.
+        int checksumOffset = startOffset + FRAME_HEADER_SIZE - 4;
+        buffer[checksumOffset] = 0;
+        buffer[checksumOffset + 1] = 0;
+        buffer[checksumOffset + 2] = 0;
+        buffer[checksumOffset + 3] = 0;
 
-        uint checksum;
-        if (dataLength > 0)
-        {
-            checksum = BinaryHelper.CalculateCRC32Segmented(
-                buffer,
-                startOffset, headerBeforeChecksum,
-                startOffset + FRAME_HEADER_SIZE, dataLength);
-        }
-        else
-        {
-            checksum = BinaryHelper.CalculateCRC32(buffer, startOffset, headerBeforeChecksum);
-        }
-
-        return checksum;
+        return BinaryHelper.CalculateCRC32(buffer, startOffset, totalSize);
     }
 
     public static int SerializeFrameTo(
@@ -270,7 +260,7 @@ internal class WalFrame
         }
 
         // Calculate checksum over entire frame (excluding checksum field at bytes 36-39)
-        uint checksum = CalculateFrameChecksumInPlace(buffer, startOffset, totalSize);
+        uint checksum = CalculateFrameChecksum(buffer, startOffset, totalSize);
         BinaryHelper.WriteUInt32LE(buffer, startOffset + FRAME_HEADER_SIZE - 4, checksum);
 
         return totalSize;

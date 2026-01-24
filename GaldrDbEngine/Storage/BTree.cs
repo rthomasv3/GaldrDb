@@ -87,6 +87,49 @@ internal class BTree
         return SearchNode(_rootPageId, docId);
     }
 
+    /// <summary>
+    /// Updates the location for an existing key. Returns true if key was found and updated.
+    /// This is more efficient than Delete + Insert when only the value changes.
+    /// </summary>
+    public bool Update(int docId, DocumentLocation newLocation)
+    {
+        bool updated = false;
+
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        try
+        {
+            int currentPageId = _rootPageId;
+
+            while (currentPageId != 0)
+            {
+                _pageIO.ReadPage(currentPageId, buffer);
+                ushort keyCount = BTreeNode.GetKeyCount(buffer);
+                int pos = BTreeNode.FindKeyPosition(buffer, keyCount, docId);
+
+                if (BTreeNode.IsLeafNode(buffer))
+                {
+                    if (pos < keyCount && BTreeNode.GetKey(buffer, pos) == docId)
+                    {
+                        BTreeNode.SetLeafValue(buffer, keyCount, pos, newLocation);
+                        _pageIO.WritePage(currentPageId, buffer);
+                        updated = true;
+                    }
+                    break;
+                }
+                else
+                {
+                    currentPageId = BTreeNode.GetChildPageId(buffer, keyCount, pos);
+                }
+            }
+        }
+        finally
+        {
+            BufferPool.Return(buffer);
+        }
+
+        return updated;
+    }
+
     public List<BTreeEntry> SearchRange(int startDocId, int endDocId, bool includeStart, bool includeEnd)
     {
         List<BTreeEntry> results = new List<BTreeEntry>();
