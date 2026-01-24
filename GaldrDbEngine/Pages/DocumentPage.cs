@@ -254,6 +254,63 @@ internal class DocumentPage
         Array.Copy(buffer, 0, page.PageData, 0, pageSize);
     }
 
+    /// <summary>
+    /// Reads document data directly from a page buffer without copying to PageData.
+    /// Use this for read-only operations to avoid the 8KB PageData copy.
+    /// Returns the slot entry and continuation page info if needed.
+    /// </summary>
+    public static ReadDocumentResult ReadDocumentFromBuffer(byte[] buffer, int slotIndex)
+    {
+        int offset = 0;
+
+        byte pageType = buffer[offset];
+        offset += 1;
+
+        // For non-document pages or uninitialized pages, treat as 0 slots
+        ushort slotCount = 0;
+        if (pageType == PageConstants.PAGE_TYPE_DOCUMENT)
+        {
+            offset += 1; // flags
+
+            slotCount = BinaryHelper.ReadUInt16LE(buffer, offset);
+            offset += 2;
+
+            offset += 2; // FreeSpaceOffset
+            offset += 2; // FreeSpaceEnd
+            offset += 4; // Crc
+        }
+
+        if (slotIndex < 0 || slotIndex >= slotCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(slotIndex));
+        }
+
+        // Skip to the requested slot
+        for (int i = 0; i < slotIndex; i++)
+        {
+            int pageCount = BinaryHelper.ReadInt32LE(buffer, offset);
+            offset += 4 + (pageCount * 4) + 4 + 4 + 4; // pageCount + pageIds + totalSize + offset + length
+        }
+
+        // Parse the target slot
+        SlotEntry slot = SlotEntry.Deserialize(buffer, offset);
+
+        if (slot.PageCount == 0 || slot.TotalSize == 0)
+        {
+            throw new InvalidOperationException("Document slot has been deleted");
+        }
+
+        // Extract document data directly from buffer
+        byte[] documentData = new byte[slot.Length];
+        Array.Copy(buffer, slot.Offset, documentData, 0, slot.Length);
+
+        return new ReadDocumentResult
+        {
+            DocumentData = documentData,
+            Slot = slot
+        };
+    }
+
     public static int GetLogicalFreeSpaceFromBuffer(byte[] buffer, int pageSize)
     {
         int result = -1;

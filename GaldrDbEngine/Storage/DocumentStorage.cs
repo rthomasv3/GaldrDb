@@ -165,39 +165,30 @@ internal class DocumentStorage : IDisposable
         byte[] result = null;
         int[] continuationPageIds = null;
         int continuationPageCount = 0;
+        DocumentPage page = null;
 
         _pageLockManager.AcquireReadLock(pageId);
         byte[] pageBuffer = BufferPool.Rent(_pageSize);
-        DocumentPage page = DocumentPagePool.Rent(_pageSize);
         try
         {
             _pageIO.ReadPage(pageId, pageBuffer);
-            DocumentPage.DeserializeTo(pageBuffer, page, _pageSize);
 
-            if (slotIndex < 0 || slotIndex >= page.SlotCount)
-            {
-                throw new ArgumentOutOfRangeException(nameof(slotIndex));
-            }
-
-            SlotEntry entry = page.Slots[slotIndex];
-
-            if (entry.PageCount == 0 || entry.TotalSize == 0)
-            {
-                throw new InvalidOperationException("Document slot has been deleted");
-            }
+            // Use fast path for single-page documents (avoids 8KB PageData copy)
+            ReadDocumentResult readResult = DocumentPage.ReadDocumentFromBuffer(pageBuffer, slotIndex);
+            SlotEntry entry = readResult.Slot;
 
             if (entry.PageCount == 1)
             {
-                result = page.GetDocumentData(slotIndex);
+                result = readResult.DocumentData;
             }
             else
             {
+                // Multi-page document: need full deserialization for continuation pages
                 byte[] fullDocument = new byte[entry.TotalSize];
                 int offset = 0;
 
-                byte[] firstPageData = page.GetDocumentData(slotIndex);
-                Array.Copy(firstPageData, 0, fullDocument, offset, firstPageData.Length);
-                offset += firstPageData.Length;
+                Array.Copy(readResult.DocumentData, 0, fullDocument, offset, readResult.DocumentData.Length);
+                offset += readResult.DocumentData.Length;
 
                 // Store continuation page IDs and acquire locks
                 continuationPageCount = entry.PageCount - 1;
@@ -221,6 +212,12 @@ internal class DocumentStorage : IDisposable
 
                 result = fullDocument;
             }
+
+            // Return the pooled int array from the slot
+            if (entry.PageIds != null)
+            {
+                IntArrayPool.Return(entry.PageIds);
+            }
         }
         finally
         {
@@ -232,7 +229,10 @@ internal class DocumentStorage : IDisposable
                     _pageLockManager.ReleaseReadLock(continuationPageIds[i]);
                 }
             }
-            DocumentPagePool.Return(page);
+            if (page != null)
+            {
+                DocumentPagePool.Return(page);
+            }
             BufferPool.Return(pageBuffer);
         }
 

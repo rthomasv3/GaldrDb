@@ -39,6 +39,10 @@ internal class WalPageIO : IPageIO
     // Lock for coordinating base file access during checkpoint
     private readonly object _rwLock;
 
+    // Reusable lists for CommitTransaction (protected by _commitLock)
+    private readonly List<WalFrameEntry> _commitFramesList;
+    private readonly List<int> _commitPageIdsList;
+
     private bool _disposed;
 
     public WalPageIO(IPageIO innerPageIO, WriteAheadLog wal, int pageSize)
@@ -57,6 +61,8 @@ internal class WalPageIO : IPageIO
         _commitLock = new object();
         _checkpointMutex = new object();
         _rwLock = new object();
+        _commitFramesList = new List<WalFrameEntry>();
+        _commitPageIdsList = new List<int>();
         _disposed = false;
     }
 
@@ -104,24 +110,25 @@ internal class WalPageIO : IPageIO
             if (currentWriteFrame > currentMxFrame)
             {
                 // Collect uncommitted frames from _walFrames, preserving pageId order
-                List<WalFrameEntry> framesToWrite = new List<WalFrameEntry>();
-                List<int> pageIdsInOrder = new List<int>();
+                _commitFramesList.Clear();
+                _commitPageIdsList.Clear();
+                
                 lock (_cacheLock)
                 {
                     for (long frameNum = currentMxFrame + 1; frameNum <= currentWriteFrame; frameNum++)
                     {
                         if (_walFrames.TryGetValue(frameNum, out WalFrameEntry entry))
                         {
-                            framesToWrite.Add(entry);
-                            pageIdsInOrder.Add(entry.PageId);
+                            _commitFramesList.Add(entry);
+                            _commitPageIdsList.Add(entry.PageId);
                         }
                     }
                 }
 
                 long walStartFrame = 0;
-                if (framesToWrite.Count > 0)
+                if (_commitFramesList.Count > 0)
                 {
-                    walStartFrame = _wal.WriteFrameEntries(txId.Value, framesToWrite);
+                    walStartFrame = _wal.WriteFrameEntries(txId.Value, _commitFramesList);
                     _wal.Flush();
                 }
 
@@ -138,9 +145,9 @@ internal class WalPageIO : IPageIO
                     }
 
                     // Update _pageLatestFrame with actual WAL frame numbers
-                    for (int i = 0; i < pageIdsInOrder.Count; i++)
+                    for (int i = 0; i < _commitPageIdsList.Count; i++)
                     {
-                        int pageId = pageIdsInOrder[i];
+                        int pageId = _commitPageIdsList[i];
                         long actualWalFrame = walStartFrame + i;
                         _pageLatestFrame[pageId] = actualWalFrame;
                     }
@@ -148,12 +155,12 @@ internal class WalPageIO : IPageIO
                     // Update _writeFrameNumber to match WAL's frame counter
                     if (walStartFrame > 0)
                     {
-                        Interlocked.Exchange(ref _writeFrameNumber, walStartFrame + framesToWrite.Count - 1);
+                        Interlocked.Exchange(ref _writeFrameNumber, walStartFrame + _commitFramesList.Count - 1);
                     }
                 }
 
                 // Mark all written frames as committed (using WAL frame numbers now)
-                long newMxFrame = walStartFrame > 0 ? walStartFrame + framesToWrite.Count - 1 : currentMxFrame;
+                long newMxFrame = walStartFrame > 0 ? walStartFrame + _commitFramesList.Count - 1 : currentMxFrame;
                 Interlocked.Exchange(ref _mxFrame, newMxFrame);
             }
         }
