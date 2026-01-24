@@ -1584,33 +1584,31 @@ public class GaldrDb : IDisposable
 
         _wal.Open();
 
-        // Get all committed transactions
+        // Get all committed transactions and all frames
         HashSet<ulong> committedTxIds = _wal.GetCommittedTransactions();
-        Dictionary<ulong, List<WalFrame>> framesByTx = _wal.GetFramesByTransaction();
+        List<WalFrame> allFrames = _wal.ReadAllFrames();
 
         // Find the highest committed TxId for TransactionManager initialization
         ulong maxCommittedTxId = 0;
-
-        // Apply committed transactions in order
-        List<ulong> sortedTxIds = new List<ulong>(committedTxIds);
-        sortedTxIds.Sort();
-
-        foreach (ulong txId in sortedTxIds)
+        foreach (ulong txId in committedTxIds)
         {
-            if (framesByTx.TryGetValue(txId, out List<WalFrame> frames))
-            {
-                foreach (WalFrame frame in frames)
-                {
-                    if (frame.PageId >= 0 && frame.Data.Length > 0)
-                    {
-                        _basePageIO.WritePage(frame.PageId, frame.Data);
-                    }
-                }
-            }
-
             if (txId > maxCommittedTxId)
             {
                 maxCommittedTxId = txId;
+            }
+        }
+
+        // Apply frames in WAL order (frame number order), but only for committed transactions.
+        // This is critical because auto-commits (txId=0) may be interleaved with regular
+        // transactions, and we must preserve the actual write order to get correct state.
+        foreach (WalFrame frame in allFrames)
+        {
+            if (committedTxIds.Contains(frame.TxId))
+            {
+                if (frame.PageId >= 0 && frame.Data.Length > 0)
+                {
+                    _basePageIO.WritePage(frame.PageId, frame.Data);
+                }
             }
         }
 

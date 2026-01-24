@@ -30,7 +30,7 @@ public class SingleOperationAotBenchmarks
     private const bool ENABLE_PERF_TRACING = false;
     private const int PRINT_EVERY_N_ITERATIONS = 4;
 
-    private const bool MANUAL_CHECKPOINT = true;
+    private const bool MANUAL_CHECKPOINT = false;
     private const int CHECKPOINT_ITERATIONS = 2;
 
     [GlobalSetup]
@@ -53,10 +53,7 @@ public class SingleOperationAotBenchmarks
         _galdrDb = GaldrDb.Create(_galdrDbPath, new GaldrDbOptions
         {
             UseWal = true, 
-            AutoCheckpoint = !MANUAL_CHECKPOINT, 
-            PageCacheSize = 6000,
-            WarmupOnOpen = true,
-            ExpansionPageCount = 512
+            AutoCheckpoint = !MANUAL_CHECKPOINT,
         });
 
         _existingId = _galdrDb.Insert(new BenchmarkPerson

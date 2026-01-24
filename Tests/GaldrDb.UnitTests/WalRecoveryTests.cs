@@ -138,24 +138,18 @@ public class WalRecoveryTests
     }
 
     [TestMethod]
-    public void WalRecovery_Checkpoint_ReducesWalSize()
+    public void WalRecovery_Checkpoint_WritesToBaseFile_KeepsWalIntact()
     {
         string dbPath = Path.Combine(_testDirectory, "test.db");
         string walPath = Path.Combine(_testDirectory, "test.wal");
         GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true };
 
+        int insertedId;
+
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            for (int i = 0; i < 50; i++)
-            {
-                Person person = new Person
-                {
-                    Name = $"Person {i}",
-                    Age = 20 + i,
-                    Email = $"person{i}@example.com"
-                };
-                db.Insert(person);
-            }
+            Person person = new Person { Name = "Test", Age = 30, Email = "test@example.com" };
+            insertedId = db.Insert(person);
 
             long walSizeBeforeCheckpoint = new FileInfo(walPath).Length;
 
@@ -163,7 +157,120 @@ public class WalRecoveryTests
 
             long walSizeAfterCheckpoint = new FileInfo(walPath).Length;
 
-            Assert.IsLessThan(walSizeBeforeCheckpoint, walSizeAfterCheckpoint);
+            // WAL should not shrink after checkpoint (it's not truncated until reset)
+            Assert.IsGreaterThanOrEqualTo(walSizeBeforeCheckpoint, walSizeAfterCheckpoint);
+
+            // Data should still be accessible after checkpoint
+            Person retrieved = db.GetById<Person>(insertedId);
+            Assert.IsNotNull(retrieved);
+            Assert.AreEqual("Test", retrieved.Name);
+        }
+
+        // After close and reopen with no WAL, data should still be in the base file
+        // This verifies checkpoint actually wrote to the base file
+        File.Delete(walPath);
+
+        using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
+        {
+            Person retrieved = db.GetById<Person>(insertedId);
+            Assert.IsNotNull(retrieved);
+            Assert.AreEqual("Test", retrieved.Name);
+        }
+    }
+
+    [TestMethod]
+    public void WalRecovery_DataAfterCheckpointAndNewTransaction_AllRecovered()
+    {
+        // Tests that data written before checkpoint, and data written after checkpoint
+        // are both recovered correctly on reopen.
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true };
+
+        int id1;
+        int id2;
+        int id3;
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            // Insert data before checkpoint
+            id1 = db.Insert(new Person { Name = "First", Age = 25, Email = "first@example.com" });
+
+            // Checkpoint writes to base file
+            db.Checkpoint();
+
+            // Insert more data after checkpoint (WAL may be reset on BeginTransaction)
+            using (Transaction tx = db.BeginTransaction())
+            {
+                id2 = tx.Insert(new Person { Name = "Second", Age = 30, Email = "second@example.com" });
+                tx.Commit();
+            }
+
+            // Another insert
+            id3 = db.Insert(new Person { Name = "Third", Age = 35, Email = "third@example.com" });
+        }
+
+        // Verify all documents accessible after reopen
+        using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
+        {
+            Person r1 = db.GetById<Person>(id1);
+            Person r2 = db.GetById<Person>(id2);
+            Person r3 = db.GetById<Person>(id3);
+
+            Assert.IsNotNull(r1);
+            Assert.IsNotNull(r2);
+            Assert.IsNotNull(r3);
+            Assert.AreEqual("First", r1.Name);
+            Assert.AreEqual("Second", r2.Name);
+            Assert.AreEqual("Third", r3.Name);
+        }
+    }
+
+    [TestMethod]
+    public void WalRecovery_InterleavedAutoCommitAndTransaction_RecoveredInWalOrder()
+    {
+        // This test verifies that auto-commits (txId=0) interleaved with regular transactions
+        // are recovered in WAL frame order, not txId order. This is critical because
+        // txId=0 < txId=1, but the auto-commits may have been written AFTER txId=1's frames.
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true };
+
+        int id1;
+        int id2;
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            // First, create a transaction that writes some data
+            using (Transaction tx = db.BeginTransaction())
+            {
+                id1 = tx.Insert(new Person { Name = "TxPerson", Age = 25, Email = "tx@example.com" });
+                tx.Commit();
+            }
+
+            // Now do an auto-commit update (simulating what happens in compaction or direct updates)
+            // This creates frames with txId=0 that are written AFTER the transaction above
+            Person person = db.GetById<Person>(id1);
+            person.Name = "UpdatedByAutoCommit";
+            person.Age = 30;
+            db.Replace(person);
+
+            // Insert another document via auto-commit
+            id2 = db.Insert(new Person { Name = "AutoCommitPerson", Age = 35, Email = "auto@example.com" });
+        }
+
+        // Reopen and verify the auto-commit updates are preserved
+        // If recovery applied frames in txId order instead of WAL order,
+        // the earlier transaction's data would overwrite the auto-commit updates
+        using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
+        {
+            Person r1 = db.GetById<Person>(id1);
+            Person r2 = db.GetById<Person>(id2);
+
+            Assert.IsNotNull(r1);
+            Assert.AreEqual("UpdatedByAutoCommit", r1.Name);
+            Assert.AreEqual(30, r1.Age);
+
+            Assert.IsNotNull(r2);
+            Assert.AreEqual("AutoCommitPerson", r2.Name);
         }
     }
 
