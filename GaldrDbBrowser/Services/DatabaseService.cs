@@ -306,6 +306,105 @@ public class DatabaseService : IDisposable
         return result;
     }
 
+    public MutationResult InsertDocument(InsertDocumentRequest request)
+    {
+        MutationResult result = new MutationResult();
+
+        if (_database == null)
+        {
+            result.Success = false;
+            result.Error = "No database open";
+        }
+        else
+        {
+            try
+            {
+                int id = _database.InsertDynamic(request.Collection, request.Json);
+                result.Success = true;
+                result.Id = id;
+            }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.Error = ex.Message;
+            }
+        }
+
+        return result;
+    }
+
+    public MutationResult ReplaceDocument(ReplaceDocumentRequest request)
+    {
+        MutationResult result = new MutationResult();
+
+        if (_database == null)
+        {
+            result.Success = false;
+            result.Error = "No database open";
+        }
+        else
+        {
+            try
+            {
+                bool replaced = _database.ReplaceDynamic(request.Collection, request.Id, request.Json);
+                
+                if (replaced)
+                {
+                    result.Success = true;
+                    result.Id = request.Id;
+                }
+                else
+                {
+                    result.Success = false;
+                    result.Error = "Document not found";
+                }
+            }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.Error = ex.Message;
+            }
+        }
+
+        return result;
+    }
+
+    public MutationResult DeleteDocument(string collection, int id)
+    {
+        MutationResult result = new MutationResult();
+
+        if (_database == null)
+        {
+            result.Success = false;
+            result.Error = "No database open";
+        }
+        else
+        {
+            try
+            {
+                bool deleted = _database.DeleteByIdDynamic(collection, id);
+                
+                if (deleted)
+                {
+                    result.Success = true;
+                    result.Id = id;
+                }
+                else
+                {
+                    result.Success = false;
+                    result.Error = "Document not found";
+                }
+            }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.Error = ex.Message;
+            }
+        }
+
+        return result;
+    }
+
     public void Dispose()
     {
         CloseDatabase();

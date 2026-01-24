@@ -103,5 +103,20 @@ internal class Program
         {
             return db.GetDocument(collection, id);
         });
+
+        builder.AddFunction("insertDocument", (InsertDocumentRequest request, DatabaseService db) =>
+        {
+            return db.InsertDocument(request);
+        });
+
+        builder.AddFunction("replaceDocument", (ReplaceDocumentRequest request, DatabaseService db) =>
+        {
+            return db.ReplaceDocument(request);
+        });
+
+        builder.AddFunction("deleteDocument", (string collection, int id, DatabaseService db) =>
+        {
+            return db.DeleteDocument(collection, id);
+        });
     }
 }

@@ -3,6 +3,7 @@ import { ref, watch, computed } from "vue";
 import { useRoute } from "vue-router";
 import DocumentList from "./DocumentList.vue";
 import DocumentViewer from "./DocumentViewer.vue";
+import DocumentEditor from "./DocumentEditor.vue";
 import QueryPanel from "../query/QueryPanel.vue";
 
 const route = useRoute();
@@ -10,10 +11,14 @@ const collectionName = computed(() => decodeURIComponent(route.params.name));
 const collectionInfo = ref(null);
 const queryResult = ref(null);
 const selectedDocument = ref(null);
+const editingDocument = ref(null);
+const isCreating = ref(false);
 const currentPage = ref(0);
 const pageSize = 20;
 const loading = ref(false);
 const activeFilters = ref([]);
+
+const showEditor = computed(() => isCreating.value || editingDocument.value !== null);
 
 async function loadCollection() {
     loading.value = true;
@@ -66,6 +71,65 @@ function closeViewer() {
     selectedDocument.value = null;
 }
 
+function startCreate() {
+    selectedDocument.value = null;
+    editingDocument.value = null;
+    isCreating.value = true;
+}
+
+function startEdit(doc) {
+    editingDocument.value = doc;
+    isCreating.value = false;
+}
+
+function cancelEdit() {
+    editingDocument.value = null;
+    isCreating.value = false;
+}
+
+async function handleSave(id) {
+    const wasCreating = isCreating.value;
+    editingDocument.value = null;
+    isCreating.value = false;
+
+    const result = await galdrInvoke("getDocument", {
+        collection: collectionName.value,
+        id: id
+    });
+
+    if (result.success) {
+        selectedDocument.value = {
+            id: result.id,
+            json: result.json
+        };
+
+        if (wasCreating) {
+            await loadDocuments();
+            collectionInfo.value.documentCount++;
+        } else {
+            const docIndex = queryResult.value.documents.findIndex(d => d.id === id);
+            if (docIndex !== -1) {
+                queryResult.value.documents[docIndex] = {
+                    id: result.id,
+                    json: result.json
+                };
+            }
+        }
+    }
+}
+
+async function handleDelete(id) {
+    const result = await galdrInvoke("deleteDocument", {
+        collection: collectionName.value,
+        id: id
+    });
+
+    if (result.success) {
+        selectedDocument.value = null;
+        await loadCollection();
+    }
+}
+
 async function goToPage(page) {
     currentPage.value = page;
     await loadDocuments();
@@ -90,12 +154,18 @@ const totalPages = computed(() => {
                     {{ collectionInfo.documentCount }} documents
                 </span>
             </div>
-            <div v-if="collectionInfo && collectionInfo.indexes.length > 0" class="indexes-info">
-                <span class="indexes-label">Indexes:</span>
-                <span v-for="idx in collectionInfo.indexes" :key="idx.fieldName" class="index-badge">
-                    {{ idx.fieldName }}
-                </span>
+            <div class="header-actions">
+                <button class="btn btn-primary" @click="startCreate">
+                    + New Document
+                </button>
             </div>
+        </div>
+
+        <div v-if="collectionInfo && collectionInfo.indexes.length > 0" class="indexes-info">
+            <span class="indexes-label">Indexes:</span>
+            <span v-for="idx in collectionInfo.indexes" :key="idx.fieldName" class="index-badge">
+                {{ idx.fieldName }}
+            </span>
         </div>
 
         <QueryPanel
@@ -113,7 +183,7 @@ const totalPages = computed(() => {
         </div>
 
         <div class="collection-content">
-            <div class="documents-panel" :class="{ 'with-viewer': selectedDocument }">
+            <div class="documents-panel" :class="{ 'with-viewer': selectedDocument || showEditor }">
                 <DocumentList
                     v-if="queryResult && queryResult.success"
                     :documents="queryResult.documents"
@@ -127,10 +197,20 @@ const totalPages = computed(() => {
                 <div v-else class="empty">No documents found</div>
             </div>
 
+            <DocumentEditor
+                v-if="showEditor"
+                :document="editingDocument"
+                :collection-name="collectionName"
+                @save="handleSave"
+                @cancel="cancelEdit"
+            />
+
             <DocumentViewer
-                v-if="selectedDocument"
+                v-else-if="selectedDocument"
                 :document="selectedDocument"
                 @close="closeViewer"
+                @edit="startEdit"
+                @delete="handleDelete"
             />
         </div>
     </div>
@@ -146,10 +226,33 @@ const totalPages = computed(() => {
 .collection-header {
     display: flex;
     justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 1.25rem;
-    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 1rem;
     gap: 1rem;
+}
+
+.header-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.btn {
+    padding: 0.375rem 0.875rem;
+    border: none;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.btn-primary {
+    background-color: var(--accent-color);
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: var(--accent-hover);
 }
 
 .header-info {
@@ -177,6 +280,7 @@ const totalPages = computed(() => {
     align-items: center;
     gap: 0.375rem;
     flex-wrap: wrap;
+    margin-bottom: 1rem;
 }
 
 .indexes-label {
