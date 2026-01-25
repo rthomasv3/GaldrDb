@@ -10,7 +10,7 @@ internal static class PerfTracer
 
     private static long _startTicks;
     private static long _lastCheckpoint;
-    private static List<(string Phase, double Microseconds)> _phases = new();
+    private static List<(string Phase, double Microseconds)> _phases = new(capacity: 8192);
 
     public static void Reset()
     {

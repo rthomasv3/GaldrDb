@@ -20,9 +20,9 @@ public class GaldrDbOptions
     public bool UseWal { get; set; } = true;
 
     /// <summary>
-    /// Use memory-mapped I/O when supported. Falls back to standard I/O if unavailable. Default is true.
+    /// Use memory-mapped I/O when supported. Falls back to standard I/O if unavailable. Default is false.
     /// </summary>
-    public bool UseMmap { get; set; } = true;
+    public bool UseMmap { get; set; } = false;
 
     // TODO: Implement compression support
     // /// <summary>

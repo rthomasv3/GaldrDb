@@ -35,16 +35,21 @@ async function loadCollection() {
 }
 
 async function loadDocuments() {
-    queryResult.value = await galdrInvoke("queryDocuments", {
-        request: {
-            collection: collectionName.value,
-            skip: currentPage.value * pageSize,
-            limit: pageSize,
-            filters: activeFilters.value.length > 0 ? activeFilters.value : null,
-            orderByField: "Id",
-            orderByDescending: false
-        }
-    });
+    loading.value = true;
+    try {
+        queryResult.value = await galdrInvoke("queryDocuments", {
+            request: {
+                collection: collectionName.value,
+                skip: currentPage.value * pageSize,
+                limit: pageSize,
+                filters: activeFilters.value.length > 0 ? activeFilters.value : null,
+                orderByField: "Id",
+                orderByDescending: false
+            }
+        });
+    } finally {
+        loading.value = false;
+    }
 }
 
 async function handleSearch(filters) {
@@ -69,6 +74,14 @@ async function selectDocument(doc) {
 
 function closeViewer() {
     selectedDocument.value = null;
+}
+
+function closeDrawer() {
+    if (showEditor.value) {
+        cancelEdit();
+    } else {
+        closeViewer();
+    }
 }
 
 function startCreate() {
@@ -183,9 +196,12 @@ const totalPages = computed(() => {
         </div>
 
         <div class="collection-content">
-            <div class="documents-panel" :class="{ 'with-viewer': selectedDocument || showEditor }">
+            <div class="documents-panel">
+                <div v-if="loading" class="empty-state">
+                    <div class="empty-message">Loading...</div>
+                </div>
                 <DocumentList
-                    v-if="queryResult && queryResult.success"
+                    v-else-if="queryResult && queryResult.success && queryResult.documents.length > 0"
                     :documents="queryResult.documents"
                     :selected-id="selectedDocument?.id"
                     :current-page="currentPage"
@@ -193,26 +209,35 @@ const totalPages = computed(() => {
                     @select="selectDocument"
                     @page-change="goToPage"
                 />
-                <div v-else-if="loading" class="loading">Loading...</div>
-                <div v-else class="empty">No documents found</div>
+                <div v-else-if="queryResult && queryResult.success && queryResult.documents.length === 0" class="empty-state">
+                    <div class="empty-message">
+                        {{ activeFilters.length > 0 ? "No documents match your query" : "This collection is empty" }}
+                    </div>
+                </div>
             </div>
-
-            <DocumentEditor
-                v-if="showEditor"
-                :document="editingDocument"
-                :collection-name="collectionName"
-                @save="handleSave"
-                @cancel="cancelEdit"
-            />
-
-            <DocumentViewer
-                v-else-if="selectedDocument"
-                :document="selectedDocument"
-                @close="closeViewer"
-                @edit="startEdit"
-                @delete="handleDelete"
-            />
         </div>
+
+        <Transition name="drawer">
+            <div v-if="showEditor || selectedDocument" class="drawer-overlay" @click.self="closeDrawer">
+                <div class="drawer-panel">
+                    <DocumentEditor
+                        v-if="showEditor"
+                        :document="editingDocument"
+                        :collection-name="collectionName"
+                        @save="handleSave"
+                        @cancel="cancelEdit"
+                    />
+
+                    <DocumentViewer
+                        v-else-if="selectedDocument"
+                        :document="selectedDocument"
+                        @close="closeViewer"
+                        @edit="startEdit"
+                        @delete="handleDelete"
+                    />
+                </div>
+            </div>
+        </Transition>
     </div>
 </template>
 
@@ -234,25 +259,6 @@ const totalPages = computed(() => {
 .header-actions {
     display: flex;
     gap: 0.5rem;
-}
-
-.btn {
-    padding: 0.375rem 0.875rem;
-    border: none;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s ease;
-}
-
-.btn-primary {
-    background-color: var(--accent-color);
-    color: white;
-}
-
-.btn-primary:hover {
-    background-color: var(--accent-hover);
 }
 
 .header-info {
@@ -317,16 +323,55 @@ const totalPages = computed(() => {
     flex-direction: column;
 }
 
-.documents-panel.with-viewer {
-    max-width: 50%;
+.drawer-overlay {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: flex-end;
+    z-index: 100;
 }
 
-.loading,
-.empty {
+.drawer-panel {
+    width: 50%;
+    min-width: 350px;
+    max-width: 600px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.drawer-enter-active,
+.drawer-leave-active {
+    transition: opacity 0.2s ease;
+}
+
+.drawer-enter-active .drawer-panel,
+.drawer-leave-active .drawer-panel {
+    transition: transform 0.2s ease;
+}
+
+.drawer-enter-from,
+.drawer-leave-to {
+    opacity: 0;
+}
+
+.drawer-enter-from .drawer-panel,
+.drawer-leave-to .drawer-panel {
+    transform: translateX(100%);
+}
+
+.empty-state {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.empty-message {
     color: var(--text-muted);
-    padding: 3rem 2rem;
+    font-size: 0.9375rem;
     text-align: center;
-    font-size: 0.875rem;
 }
 
 .active-filters {

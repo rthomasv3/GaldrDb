@@ -65,8 +65,6 @@ internal class IndexDefinition
     public int GetSerializedSize()
     {
         int nameByteCount = Encoding.UTF8.GetByteCount(FieldName);
-        int result = 4 + nameByteCount + 1 + 4 + 1;
-
-        return result;
+        return 4 + nameByteCount + 1 + 4 + 1;
     }
 }

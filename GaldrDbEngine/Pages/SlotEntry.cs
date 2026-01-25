@@ -82,9 +82,7 @@ internal struct SlotEntry
         entry.Length = BinaryHelper.ReadInt32LE(buffer, offset);
         offset += 4;
 
-        SlotEntry result = entry;
-
-        return result;
+        return entry;
     }
 
     public void ReturnPageIdsToPool()

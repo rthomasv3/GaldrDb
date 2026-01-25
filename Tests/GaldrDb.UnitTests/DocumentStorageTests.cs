@@ -38,10 +38,7 @@ public class DocumentStorageTests
 
         pageIO.Flush();
 
-        DocumentStorage storage = new DocumentStorage(pageIO, pageManager, pageSize);
-        DocumentStorage result = storage;
-
-        return result;
+        return new DocumentStorage(pageIO, pageManager, pageSize);
     }
 
     [TestMethod]

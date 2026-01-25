@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.IO;
 
@@ -12,7 +13,7 @@ internal class LruPageCache : IPageIO
     private readonly Dictionary<int, LruCacheEntry> _cache;
     private readonly LinkedList<LruCacheEntry> _lruList;
     private readonly LinkedList<LruCacheEntry> _freeList;
-    private readonly ReaderWriterLockSlim _cacheLock;
+    private readonly AsyncReaderWriterLock _cacheLock;
     private bool _disposed;
 
     public LruPageCache(IPageIO innerPageIO, int pageSize, int maxPages)
@@ -22,7 +23,7 @@ internal class LruPageCache : IPageIO
         _cache = new Dictionary<int, LruCacheEntry>(maxPages);
         _lruList = new LinkedList<LruCacheEntry>();
         _freeList = new LinkedList<LruCacheEntry>();
-        _cacheLock = new ReaderWriterLockSlim();
+        _cacheLock = new AsyncReaderWriterLock();
         _disposed = false;
 
         for (int i = 0; i < maxPages; i++)
@@ -38,49 +39,52 @@ internal class LruPageCache : IPageIO
 
     public void ReadPage(int pageId, Span<byte> destination)
     {
-        _cacheLock.EnterUpgradeableReadLock();
+        bool cacheHit = false;
+
+        _cacheLock.EnterReadLock();
         try
         {
-            bool cacheHit = _cache.TryGetValue(pageId, out LruCacheEntry entry);
-
-            if (cacheHit)
+            if (_cache.TryGetValue(pageId, out LruCacheEntry entry))
             {
-                _cacheLock.EnterWriteLock();
-                try
-                {
-                    MoveToHead(entry);
-                }
-                finally
-                {
-                    _cacheLock.ExitWriteLock();
-                }
-
+                cacheHit = true;
                 entry.Data.AsSpan(0, _pageSize).CopyTo(destination);
-            }
-            else
-            {
-                _cacheLock.ExitUpgradeableReadLock();
-                _innerPageIO.ReadPage(pageId, destination);
-
-                _cacheLock.EnterWriteLock();
-                try
-                {
-                    if (!_cache.ContainsKey(pageId))
-                    {
-                        AddToCache(pageId, destination);
-                    }
-                }
-                finally
-                {
-                    _cacheLock.ExitWriteLock();
-                }
             }
         }
         finally
         {
-            if (_cacheLock.IsUpgradeableReadLockHeld)
+            _cacheLock.ExitReadLock();
+        }
+
+        if (cacheHit)
+        {
+            _cacheLock.EnterWriteLock();
+            try
             {
-                _cacheLock.ExitUpgradeableReadLock();
+                if (_cache.TryGetValue(pageId, out LruCacheEntry entry))
+                {
+                    MoveToHead(entry);
+                }
+            }
+            finally
+            {
+                _cacheLock.ExitWriteLock();
+            }
+        }
+        else
+        {
+            _innerPageIO.ReadPage(pageId, destination);
+
+            _cacheLock.EnterWriteLock();
+            try
+            {
+                if (!_cache.ContainsKey(pageId))
+                {
+                    AddToCache(pageId, destination);
+                }
+            }
+            finally
+            {
+                _cacheLock.ExitWriteLock();
             }
         }
     }
@@ -127,42 +131,42 @@ internal class LruPageCache : IPageIO
 
     public async Task ReadPageAsync(int pageId, Memory<byte> destination, CancellationToken cancellationToken = default)
     {
-        LruCacheEntry cachedEntry = null;
         bool cacheHit = false;
 
-        _cacheLock.EnterUpgradeableReadLock();
+        await _cacheLock.EnterReadLockAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            cacheHit = _cache.TryGetValue(pageId, out cachedEntry);
-
-            if (cacheHit)
+            if (_cache.TryGetValue(pageId, out LruCacheEntry entry))
             {
-                _cacheLock.EnterWriteLock();
-                try
-                {
-                    MoveToHead(cachedEntry);
-                }
-                finally
-                {
-                    _cacheLock.ExitWriteLock();
-                }
-
-                cachedEntry.Data.AsSpan(0, _pageSize).CopyTo(destination.Span);
+                cacheHit = true;
+                entry.Data.AsSpan(0, _pageSize).CopyTo(destination.Span);
             }
         }
         finally
         {
-            if (_cacheLock.IsUpgradeableReadLockHeld)
-            {
-                _cacheLock.ExitUpgradeableReadLock();
-            }
+            _cacheLock.ExitReadLock();
         }
 
-        if (!cacheHit)
+        if (cacheHit)
+        {
+            await _cacheLock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (_cache.TryGetValue(pageId, out LruCacheEntry entry))
+                {
+                    MoveToHead(entry);
+                }
+            }
+            finally
+            {
+                _cacheLock.ExitWriteLock();
+            }
+        }
+        else
         {
             await _innerPageIO.ReadPageAsync(pageId, destination, cancellationToken).ConfigureAwait(false);
 
-            _cacheLock.EnterWriteLock();
+            await _cacheLock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 if (!_cache.ContainsKey(pageId))
@@ -179,7 +183,7 @@ internal class LruPageCache : IPageIO
 
     public async Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
     {
-        _cacheLock.EnterWriteLock();
+        await _cacheLock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             AddOrUpdateCache(pageId, data.Span);

@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed } from "vue";
+import Combobox from "../common/Combobox.vue";
 
 const props = defineProps({
     indexes: {
@@ -31,11 +32,11 @@ const operators = [
 ];
 
 const availableFields = computed(() => {
-    const fields = [{ name: "Id", type: "Int32" }];
+    const fields = ["Id"];
     if (props.indexes) {
         props.indexes.forEach(idx => {
-            if (!fields.some(f => f.name === idx.fieldName)) {
-                fields.push({ name: idx.fieldName, type: idx.fieldType });
+            if (!fields.includes(idx.fieldName)) {
+                fields.push(idx.fieldName);
             }
         });
     }
@@ -109,11 +110,12 @@ function clearSearch() {
 
         <div class="tab-content">
             <div v-if="activeTab === 'simple'" class="simple-search">
-                <select v-model="simpleField" class="field-select">
-                    <option v-for="field in availableFields" :key="field.name" :value="field.name">
-                        {{ field.name }}
-                    </option>
-                </select>
+                <Combobox
+                    v-model="simpleField"
+                    :options="availableFields"
+                    placeholder="Field..."
+                    class="field-combobox"
+                />
                 <select v-model="simpleOp" class="op-select">
                     <option v-for="op in operators" :key="op.value" :value="op.value">
                         {{ op.label }}
@@ -133,11 +135,12 @@ function clearSearch() {
             <div v-else class="query-builder">
                 <div class="filters-list">
                     <div v-for="filter in filters" :key="filter.id" class="filter-row">
-                        <select v-model="filter.field" class="field-select">
-                            <option v-for="field in availableFields" :key="field.name" :value="field.name">
-                                {{ field.name }}
-                            </option>
-                        </select>
+                        <Combobox
+                            v-model="filter.field"
+                            :options="availableFields"
+                            placeholder="Field..."
+                            class="field-combobox"
+                        />
                         <select v-model="filter.op" class="op-select">
                             <option v-for="op in operators" :key="op.value" :value="op.value">
                                 {{ op.label }}
@@ -156,8 +159,8 @@ function clearSearch() {
                             class="value-input"
                             placeholder="Value 2..."
                         />
-                        <button class="btn btn-icon" @click="removeFilter(filter.id)" title="Remove filter">
-                            X
+                        <button class="btn btn-remove" @click="removeFilter(filter.id)" title="Remove filter">
+                            &times;
                         </button>
                     </div>
                     <div v-if="filters.length === 0" class="no-filters">
@@ -166,8 +169,10 @@ function clearSearch() {
                 </div>
                 <div class="builder-actions">
                     <button class="btn btn-secondary" @click="addFilter">Add Filter</button>
-                    <button class="btn btn-primary" @click="executeBuilderSearch">Search</button>
-                    <button class="btn btn-secondary" @click="clearSearch">Clear</button>
+                    <div class="builder-actions-right">
+                        <button class="btn btn-primary" @click="executeBuilderSearch">Search</button>
+                        <button class="btn btn-secondary" @click="clearSearch">Clear</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -223,7 +228,24 @@ function clearSearch() {
     flex-wrap: nowrap;
 }
 
-.field-select,
+@media (max-width: 900px) {
+    .simple-search {
+        flex-wrap: wrap;
+    }
+
+    .simple-search .value-input {
+        flex-basis: 100%;
+    }
+
+    .simple-search .btn {
+        order: 10;
+    }
+
+    .simple-search .btn:first-of-type {
+        margin-left: auto;
+    }
+}
+
 .op-select,
 .value-input {
     padding: 0.5rem 0.75rem;
@@ -235,7 +257,6 @@ function clearSearch() {
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.field-select:focus,
 .op-select:focus,
 .value-input:focus {
     outline: none;
@@ -243,67 +264,43 @@ function clearSearch() {
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
 }
 
-.field-select {
-    min-width: 120px;
+.field-combobox {
+    width: 180px;
+    flex-shrink: 0;
 }
 
 .op-select {
-    min-width: 110px;
+    width: auto;
+    min-width: 140px;
+    flex-shrink: 0;
 }
 
 .value-input {
     flex: 1;
-    min-width: 150px;
+    min-width: 120px;
 }
 
 .value-input::placeholder {
     color: var(--text-muted);
 }
 
-.btn {
-    padding: 0.5rem 1rem;
-    border: none;
-    border-radius: 0.375rem;
-    cursor: pointer;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    white-space: nowrap;
-    transition: all 0.15s ease;
-}
-
-.btn-primary {
-    background-color: var(--accent-color);
+.btn-remove {
+    padding: 0;
+    background-color: #dc2626;
     color: white;
-}
-
-.btn-primary:hover {
-    background-color: var(--accent-hover);
-}
-
-.btn-secondary {
-    background-color: var(--bg-tertiary);
-    color: var(--text-primary);
-}
-
-.btn-secondary:hover {
-    background-color: var(--bg-hover);
-}
-
-.btn-icon {
-    padding: 0.5rem;
-    background-color: var(--bg-tertiary);
-    color: var(--text-muted);
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     display: flex;
     align-items: center;
     justify-content: center;
     border-radius: 0.375rem;
+    font-size: 1.125rem;
+    line-height: 1;
+    flex-shrink: 0;
 }
 
-.btn-icon:hover {
-    background-color: var(--bg-hover);
-    color: var(--error);
+.btn-remove:hover {
+    background-color: #b91c1c;
 }
 
 .query-builder {
@@ -316,12 +313,39 @@ function clearSearch() {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+    max-height: 125px;
+    overflow-y: auto;
+    padding-right: 0.5rem;
 }
 
 .filter-row {
     display: flex;
     gap: 0.5rem;
     align-items: center;
+    flex-wrap: nowrap;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.filter-row:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+@media (max-width: 900px) {
+    .filter-row {
+        flex-wrap: wrap;
+    }
+
+    .filter-row .value-input {
+        flex: 1;
+        min-width: 100px;
+    }
+
+    .filter-row .btn-remove {
+        order: 10;
+        margin-left: auto;
+    }
 }
 
 .no-filters {
@@ -335,6 +359,13 @@ function clearSearch() {
 }
 
 .builder-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.builder-actions-right {
     display: flex;
     gap: 0.5rem;
 }

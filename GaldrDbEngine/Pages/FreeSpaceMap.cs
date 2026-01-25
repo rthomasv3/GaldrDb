@@ -60,9 +60,8 @@ internal class FreeSpaceMap
         int bitOffset = bitPosition % 8;
 
         byte value = (byte)((_fsm[byteIndex] >> bitOffset) & 0x03);
-        FreeSpaceLevel result = (FreeSpaceLevel)value;
 
-        return result;
+        return (FreeSpaceLevel)value;
     }
 
     public void SetFreeSpaceLevel(int pageId, FreeSpaceLevel level)

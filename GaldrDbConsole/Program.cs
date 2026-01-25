@@ -39,6 +39,25 @@ class Program
             case "-tp":
                 PerformanceTracingTest.Run();
                 break;
+            case "--test-perf-profile":
+            case "-tpp":
+                int updateIterations = args.Length > 1 && int.TryParse(args[1], out int n) ? n : 10000;
+                PerformanceTracingTest.RunUpdateProfiling(updateIterations);
+                break;
+            case "--test-perf-insert":
+            case "-tpi":
+                int insertIterations = args.Length > 1 && int.TryParse(args[1], out int m) ? m : 10000;
+                PerformanceTracingTest.RunInsertProfiling(insertIterations);
+                break;
+            case "--test-perf-insert-async":
+            case "-tpia":
+                int insertAsyncIterations = args.Length > 1 && int.TryParse(args[1], out int a) ? a : 10000;
+                PerformanceTracingTest.RunInsertAsyncProfiling(insertAsyncIterations).GetAwaiter().GetResult();
+                break;
+            case "--test-perf-large":
+            case "-tpl":
+                LargeDbPerformanceTracingTest.Run();
+                break;
             case "--test-diag":
             case "-td":
                 DiagnosticTest.Run();

@@ -59,9 +59,7 @@ public readonly struct TxId : IComparable<TxId>, IEquatable<TxId>
     /// <inheritdoc/>
     public override bool Equals(object obj)
     {
-        bool result = obj is TxId other && Equals(other);
-
-        return result;
+        return obj is TxId other && Equals(other);
     }
 
     /// <inheritdoc/>

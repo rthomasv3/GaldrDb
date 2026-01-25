@@ -118,17 +118,7 @@ function formatJson() {
     <div class="document-editor">
         <div class="editor-header">
             <div class="editor-title">{{ title }}</div>
-            <div class="editor-actions">
-                <button class="btn btn-secondary" @click="formatJson" :disabled="saving">
-                    Format
-                </button>
-                <button class="btn btn-secondary" @click="handleCancel" :disabled="saving">
-                    Cancel
-                </button>
-                <button class="btn btn-primary" @click="handleSave" :disabled="saving">
-                    {{ saving ? "Saving..." : "Save" }}
-                </button>
-            </div>
+            <button class="close-btn" @click="handleCancel" :disabled="saving">&times;</button>
         </div>
 
         <div v-if="error" class="error-message">
@@ -143,76 +133,68 @@ function formatJson() {
                 :disabled="saving"
             ></textarea>
         </div>
+
+        <div class="editor-footer">
+            <button class="btn btn-secondary" @click="formatJson" :disabled="saving">
+                Format
+            </button>
+            <button class="btn btn-secondary" @click="handleCancel" :disabled="saving">
+                Cancel
+            </button>
+            <button class="btn btn-primary" @click="handleSave" :disabled="saving">
+                {{ saving ? "Saving..." : "Save" }}
+            </button>
+        </div>
     </div>
 </template>
 
 <style scoped>
 .document-editor {
     flex: 1;
-    min-width: 300px;
-    max-width: 50%;
     display: flex;
     flex-direction: column;
     background-color: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: 0.5rem;
+    border-left: 1px solid var(--border-color);
     overflow: hidden;
-    box-shadow: var(--shadow-md);
 }
 
 .editor-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding: 0.625rem 1rem;
+    gap: 0.75rem;
+    padding: 0 1rem;
+    height: 3.5rem;
     border-bottom: 1px solid var(--border-color);
-    background-color: var(--bg-tertiary);
+    background-color: var(--bg-secondary);
 }
 
 .editor-title {
     font-weight: 600;
-    font-size: 0.8125rem;
+    font-size: 0.875rem;
     color: var(--text-primary);
+    flex: 1;
 }
 
-.editor-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.btn {
-    padding: 0.375rem 0.75rem;
+.close-btn {
+    background: transparent;
     border: none;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    font-weight: 500;
+    color: var(--text-muted);
+    font-size: 1.5rem;
+    line-height: 1;
     cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
     transition: all 0.15s ease;
 }
 
-.btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-}
-
-.btn-primary {
-    background-color: var(--accent-color);
-    color: white;
-}
-
-.btn-primary:hover:not(:disabled) {
-    background-color: var(--accent-hover);
-}
-
-.btn-secondary {
-    background-color: var(--bg-primary);
+.close-btn:hover {
     color: var(--text-primary);
-    border: 1px solid var(--border-color);
+    background-color: var(--bg-hover);
 }
 
-.btn-secondary:hover:not(:disabled) {
-    background-color: var(--bg-hover);
+.close-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
 }
 
 .error-message {
@@ -243,5 +225,15 @@ function formatJson() {
 
 .json-editor:disabled {
     opacity: 0.7;
+}
+
+.editor-footer {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1rem;
+    border-top: 1px solid var(--border-color);
+    background-color: var(--bg-secondary);
 }
 </style>

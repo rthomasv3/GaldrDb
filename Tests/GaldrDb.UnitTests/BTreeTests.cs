@@ -46,10 +46,7 @@ public class BTreeTests
         pageIO.WritePage(rootPageId, rootBuffer);
         pageIO.Flush();
 
-        BTree btree = new BTree(pageIO, pageManager, rootPageId, pageSize, order);
-        BTree result = btree;
-
-        return result;
+        return new BTree(pageIO, pageManager, rootPageId, pageSize, order);
     }
 
     [TestMethod]

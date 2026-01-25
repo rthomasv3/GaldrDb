@@ -67,8 +67,9 @@ public static class AllocationTracingTest
                     AllocTracer.Checkpoint("Execute");
 
                     tx.Commit();
-                    // Commit() adds its own checkpoints internally
+                    AllocTracer.Checkpoint("Commit");
                 }
+                AllocTracer.Checkpoint("Dispose");
 
                 Console.WriteLine("=== UpdateById Allocation Breakdown ===");
                 AllocTracer.PrintSummary();

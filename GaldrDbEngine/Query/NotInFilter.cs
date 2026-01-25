@@ -68,8 +68,7 @@ public sealed class NotInFilter<TDocument, TField> : IFieldFilter
         TDocument doc = (TDocument)document;
         TField fieldValue = _field.Accessor(doc);
 
-        bool result = !_values.Contains(fieldValue);
-        return result;
+        return !_values.Contains(fieldValue);
     }
 
     /// <inheritdoc/>

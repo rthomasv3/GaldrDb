@@ -36,10 +36,7 @@ public class CollectionsMetadataTests
         pageIO.WritePage(0, emptyPage);
         pageIO.Flush();
 
-        CollectionsMetadata metadata = new CollectionsMetadata(pageIO, 0, 1, pageSize);
-        CollectionsMetadata result = metadata;
-
-        return result;
+        return new CollectionsMetadata(pageIO, 0, 1, pageSize);
     }
 
     [TestMethod]

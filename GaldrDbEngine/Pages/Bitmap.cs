@@ -58,9 +58,8 @@ internal class Bitmap
         int byteIndex = pageId / 8;
         int bitIndex = pageId % 8;
         byte mask = (byte)(1 << bitIndex);
-        bool result = (_bitmap[byteIndex] & mask) != 0;
 
-        return result;
+        return (_bitmap[byteIndex] & mask) != 0;
     }
 
     public void AllocatePage(int pageId)

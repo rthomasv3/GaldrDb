@@ -79,8 +79,7 @@ public sealed class BetweenFilter<TDocument, TField> : IFieldFilter where TField
         int compareToMin = fieldValue.CompareTo(_minValue);
         int compareToMax = fieldValue.CompareTo(_maxValue);
 
-        bool result = compareToMin >= 0 && compareToMax <= 0;
-        return result;
+        return compareToMin >= 0 && compareToMax <= 0;
     }
 
     /// <inheritdoc/>

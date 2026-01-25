@@ -44,46 +44,60 @@ const formattedJson = computed(() => {
         return props.document.json;
     }
 });
+
+const copied = ref(false);
+
+async function copyJson() {
+    try {
+        await navigator.clipboard.writeText(formattedJson.value);
+        copied.value = true;
+        setTimeout(() => {
+            copied.value = false;
+        }, 2000);
+    } catch {
+        // Clipboard API not available
+    }
+}
 </script>
 
 <template>
     <div class="document-viewer">
         <div class="viewer-header">
-            <div class="viewer-title">
-                <span>Document #{{ document.id }}</span>
-            </div>
-            <div class="viewer-actions">
-                <div class="view-toggle">
-                    <button
-                        class="toggle-btn"
-                        :class="{ active: viewMode === 'tree' }"
-                        @click="viewMode = 'tree'"
-                    >
-                        Tree
-                    </button>
-                    <button
-                        class="toggle-btn"
-                        :class="{ active: viewMode === 'json' }"
-                        @click="viewMode = 'json'"
-                    >
-                        JSON
-                    </button>
-                </div>
-                <button class="btn btn-edit" @click="emit('edit', document)">
-                    Edit
+            <div class="viewer-title">Document #{{ document.id }}</div>
+            <div class="view-toggle">
+                <button
+                    class="toggle-btn"
+                    :class="{ active: viewMode === 'tree' }"
+                    @click="viewMode = 'tree'"
+                >
+                    Tree
                 </button>
-                <button class="btn btn-delete" @click="confirmDelete">
-                    Delete
-                </button>
-                <button class="close-btn" @click="emit('close')">
-                    &times;
+                <button
+                    class="toggle-btn"
+                    :class="{ active: viewMode === 'json' }"
+                    @click="viewMode = 'json'"
+                >
+                    JSON
                 </button>
             </div>
+            <button class="close-btn" @click="emit('close')">&times;</button>
         </div>
 
         <div class="viewer-content">
             <JsonTreeView v-if="viewMode === 'tree' && parsedJson" :data="parsedJson" />
             <pre v-else class="json-raw">{{ formattedJson }}</pre>
+        </div>
+
+        <div class="viewer-footer">
+            <button class="btn btn-secondary w-16" @click="copyJson">
+                {{ copied ? "Copied!" : "Copy" }}
+            </button>
+            <button class="btn btn-primary" @click="emit('edit', document)">
+                Edit
+            </button>
+            <button class="btn btn-danger" @click="confirmDelete">
+                Delete
+            </button>
         </div>
 
         <div v-if="showDeleteConfirm" class="delete-confirm-overlay">
@@ -109,36 +123,29 @@ const formattedJson = computed(() => {
 <style scoped>
 .document-viewer {
     flex: 1;
-    min-width: 300px;
-    max-width: 50%;
     display: flex;
     flex-direction: column;
     background-color: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: 0.5rem;
+    border-left: 1px solid var(--border-color);
     overflow: hidden;
-    box-shadow: var(--shadow-md);
 }
 
 .viewer-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding: 0.625rem 1rem;
+    gap: 0.75rem;
+    padding: 0 1rem;
+    height: 3.5rem;
     border-bottom: 1px solid var(--border-color);
-    background-color: var(--bg-tertiary);
+    background-color: var(--bg-secondary);
 }
 
 .viewer-title {
     font-weight: 600;
-    font-size: 0.8125rem;
+    font-size: 0.875rem;
     color: var(--text-primary);
-}
-
-.viewer-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
+    white-space: nowrap;
+    flex: 1;
 }
 
 .view-toggle {
@@ -150,12 +157,12 @@ const formattedJson = computed(() => {
 }
 
 .toggle-btn {
-    padding: 0.25rem 0.75rem;
+    padding: 0.375rem 0.75rem;
     background: transparent;
     border: none;
     border-radius: 0.25rem;
     color: var(--text-muted);
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.15s ease;
@@ -176,10 +183,10 @@ const formattedJson = computed(() => {
     background: transparent;
     border: none;
     color: var(--text-muted);
-    font-size: 1.25rem;
+    font-size: 1.5rem;
     line-height: 1;
     cursor: pointer;
-    padding: 0.25rem;
+    padding: 0.25rem 0.5rem;
     border-radius: 0.25rem;
     transition: all 0.15s ease;
 }
@@ -196,6 +203,16 @@ const formattedJson = computed(() => {
     background-color: var(--bg-primary);
 }
 
+.viewer-footer {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1rem;
+    border-top: 1px solid var(--border-color);
+    background-color: var(--bg-secondary);
+}
+
 .json-raw {
     margin: 0;
     font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
@@ -204,59 +221,6 @@ const formattedJson = computed(() => {
     color: var(--text-primary);
     white-space: pre-wrap;
     word-break: break-word;
-}
-
-.btn {
-    padding: 0.25rem 0.625rem;
-    border: none;
-    border-radius: 0.25rem;
-    font-size: 0.6875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s ease;
-}
-
-.btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-}
-
-.btn-edit {
-    background-color: var(--accent-color);
-    color: white;
-}
-
-.btn-edit:hover:not(:disabled) {
-    background-color: var(--accent-hover);
-}
-
-.btn-delete {
-    background-color: #dc2626;
-    color: white;
-    border: none;
-}
-
-.btn-delete:hover:not(:disabled) {
-    background-color: #b91c1c;
-}
-
-.btn-secondary {
-    background-color: var(--bg-primary);
-    color: var(--text-primary);
-    border: 1px solid var(--border-color);
-}
-
-.btn-secondary:hover:not(:disabled) {
-    background-color: var(--bg-hover);
-}
-
-.btn-danger {
-    background-color: #dc2626;
-    color: white;
-}
-
-.btn-danger:hover:not(:disabled) {
-    background-color: #b91c1c;
 }
 
 .delete-confirm-overlay {
@@ -302,4 +266,5 @@ const formattedJson = computed(() => {
     padding: 0.375rem 0.875rem;
     font-size: 0.75rem;
 }
+
 </style>

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using GaldrDbBrowser.Models;
 using GaldrDbEngine;
 using GaldrDbEngine.Json;
@@ -150,7 +151,7 @@ public class DatabaseService : IDisposable
         return result;
     }
 
-    public QueryResult QueryDocuments(QueryRequest request)
+    public async Task<QueryResult> QueryDocumentsAsync(QueryRequest request)
     {
         QueryResult result = new QueryResult();
 
@@ -176,7 +177,7 @@ public class DatabaseService : IDisposable
                     }
                 }
 
-                int totalCount = countQuery.Count();
+                int totalCount = await countQuery.CountAsync();
 
                 string orderByField = string.IsNullOrEmpty(request.OrderByField) ? "Id" : request.OrderByField;
                 if (request.OrderByDescending)
@@ -188,10 +189,10 @@ public class DatabaseService : IDisposable
                     dataQuery.OrderBy(orderByField);
                 }
 
-                List<JsonDocument> docs = dataQuery
+                List<JsonDocument> docs = await dataQuery
                     .Skip(request.Skip)
                     .Limit(request.Limit)
-                    .ToList();
+                    .ToListAsync();
 
                 result.Success = true;
                 result.TotalCount = totalCount;
@@ -269,7 +270,7 @@ public class DatabaseService : IDisposable
         }
     }
 
-    public GetDocumentResult GetDocument(string collection, int id)
+    public async Task<GetDocumentResult> GetDocumentAsync(string collection, int id)
     {
         GetDocumentResult result = new GetDocumentResult();
 
@@ -282,7 +283,7 @@ public class DatabaseService : IDisposable
         {
             try
             {
-                JsonDocument doc = _database.GetByIdDynamic(collection, id);
+                JsonDocument doc = await _database.GetByIdDynamicAsync(collection, id);
 
                 if (doc != null)
                 {
@@ -306,7 +307,7 @@ public class DatabaseService : IDisposable
         return result;
     }
 
-    public MutationResult InsertDocument(InsertDocumentRequest request)
+    public async Task<MutationResult> InsertDocumentAsync(InsertDocumentRequest request)
     {
         MutationResult result = new MutationResult();
 
@@ -319,7 +320,7 @@ public class DatabaseService : IDisposable
         {
             try
             {
-                int id = _database.InsertDynamic(request.Collection, request.Json);
+                int id = await _database.InsertDynamicAsync(request.Collection, request.Json);
                 result.Success = true;
                 result.Id = id;
             }
@@ -333,7 +334,7 @@ public class DatabaseService : IDisposable
         return result;
     }
 
-    public MutationResult ReplaceDocument(ReplaceDocumentRequest request)
+    public async Task<MutationResult> ReplaceDocumentAsync(ReplaceDocumentRequest request)
     {
         MutationResult result = new MutationResult();
 
@@ -346,8 +347,8 @@ public class DatabaseService : IDisposable
         {
             try
             {
-                bool replaced = _database.ReplaceDynamic(request.Collection, request.Id, request.Json);
-                
+                bool replaced = await _database.ReplaceDynamicAsync(request.Collection, request.Id, request.Json);
+
                 if (replaced)
                 {
                     result.Success = true;
@@ -369,7 +370,7 @@ public class DatabaseService : IDisposable
         return result;
     }
 
-    public MutationResult DeleteDocument(string collection, int id)
+    public async Task<MutationResult> DeleteDocumentAsync(string collection, int id)
     {
         MutationResult result = new MutationResult();
 
@@ -382,8 +383,8 @@ public class DatabaseService : IDisposable
         {
             try
             {
-                bool deleted = _database.DeleteByIdDynamic(collection, id);
-                
+                bool deleted = await _database.DeleteByIdDynamicAsync(collection, id);
+
                 if (deleted)
                 {
                     result.Success = true;

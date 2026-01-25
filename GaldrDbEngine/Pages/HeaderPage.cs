@@ -57,9 +57,7 @@ internal class HeaderPage
 
         BinaryHelper.WriteInt32LE(buffer, offset, NextFreePageHint);
 
-        byte[] result = buffer;
-
-        return result;
+        return buffer;
     }
 
     public static HeaderPage Deserialize(byte[] buffer)
@@ -102,8 +100,6 @@ internal class HeaderPage
 
         header.NextFreePageHint = BinaryHelper.ReadInt32LE(buffer, offset);
 
-        HeaderPage result = header;
-
-        return result;
+        return header;
     }
 }

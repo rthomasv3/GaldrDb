@@ -94,29 +94,29 @@ internal class Program
             return db.GetCollectionInfo(name);
         });
 
-        builder.AddFunction("queryDocuments", (QueryRequest request, DatabaseService db) =>
+        builder.AddFunction("queryDocuments", async (QueryRequest request, DatabaseService db) =>
         {
-            return db.QueryDocuments(request);
+            return await db.QueryDocumentsAsync(request);
         });
 
-        builder.AddFunction("getDocument", (string collection, int id, DatabaseService db) =>
+        builder.AddFunction("getDocument", async (string collection, int id, DatabaseService db) =>
         {
-            return db.GetDocument(collection, id);
+            return await db.GetDocumentAsync(collection, id);
         });
 
-        builder.AddFunction("insertDocument", (InsertDocumentRequest request, DatabaseService db) =>
+        builder.AddFunction("insertDocument", async (InsertDocumentRequest request, DatabaseService db) =>
         {
-            return db.InsertDocument(request);
+            return await db.InsertDocumentAsync(request);
         });
 
-        builder.AddFunction("replaceDocument", (ReplaceDocumentRequest request, DatabaseService db) =>
+        builder.AddFunction("replaceDocument", async (ReplaceDocumentRequest request, DatabaseService db) =>
         {
-            return db.ReplaceDocument(request);
+            return await db.ReplaceDocumentAsync(request);
         });
 
-        builder.AddFunction("deleteDocument", (string collection, int id, DatabaseService db) =>
+        builder.AddFunction("deleteDocument", async (string collection, int id, DatabaseService db) =>
         {
-            return db.DeleteDocument(collection, id);
+            return await db.DeleteDocumentAsync(collection, id);
         });
     }
 }

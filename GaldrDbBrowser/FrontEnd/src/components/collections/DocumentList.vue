@@ -155,25 +155,32 @@ const canGoNext = computed(() => props.currentPage < props.totalPages - 1);
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 1rem;
-    padding-top: 1rem;
+    gap: 0.5rem;
+    padding-top: 0.75rem;
     border-top: 1px solid var(--border-color);
     margin-top: 0.75rem;
+    flex-wrap: nowrap;
 }
 
 .page-info {
     color: var(--text-muted);
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
 }
 
-.btn-sm {
-    padding: 0.375rem 0.875rem;
-    font-size: 0.8125rem;
-}
+@media (max-width: 900px) {
+    .pagination {
+        gap: 0.375rem;
+    }
 
-.btn-sm:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
+    .btn-sm {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.75rem;
+    }
+
+    .page-info {
+        font-size: 0.6875rem;
+    }
 }
 </style>

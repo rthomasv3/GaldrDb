@@ -1685,9 +1685,7 @@ public class GaldrDb : IDisposable
             order = 3;
         }
 
-        int result = order;
-
-        return result;
+        return order;
     }
 
     private static bool ContainsFieldName(IReadOnlyList<string> list, string fieldName)
@@ -2214,8 +2212,7 @@ public class GaldrDb : IDisposable
 
     internal async Task<byte[]> ReadDocumentByLocationAsync(DocumentLocation location, CancellationToken cancellationToken = default)
     {
-        byte[] result = await _documentStorage.ReadDocumentAsync(location.PageId, location.SlotIndex, cancellationToken).ConfigureAwait(false);
-        return result;
+        return await _documentStorage.ReadDocumentAsync(location.PageId, location.SlotIndex, cancellationToken).ConfigureAwait(false);
     }
 
     internal async Task CommitDeleteAsync(string collectionName, int docId, IReadOnlyList<IndexFieldEntry> oldIndexFields, CancellationToken cancellationToken = default)
