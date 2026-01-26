@@ -1,10 +1,10 @@
 using System;
 using System.IO;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using GaldrDb.SimulationTests.Core;
 using GaldrDb.SimulationTests.Workload;
 using GaldrDbEngine;
 using GaldrDbEngine.Transactions;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace GaldrDb.SimulationTests.Tests;
 
@@ -189,6 +189,7 @@ public class FaultInjectionTests
         SimulationStats stats = new SimulationStats();
         SimulationPageIO pageIO = new SimulationPageIO(8192, stats);
         SimulationWalStream walStream = new SimulationWalStream(stats);
+        SimulationWalStreamIO walStreamIO = new SimulationWalStreamIO(walStream);
         SimulationRandom rng = new SimulationRandom(42);
         FaultInjector faultInjector = new FaultInjector(rng, stats);
 
@@ -200,7 +201,7 @@ public class FaultInjectionTests
             UseWal = true,
             PageCacheSize = 0,
             CustomPageIO = pageIO,
-            CustomWalStream = walStream,
+            CustomWalStreamIO = walStreamIO,
             CustomWalSaltGenerator = () => rng.NextUInt()
         };
 
@@ -228,7 +229,7 @@ public class FaultInjectionTests
             UseWal = true,
             PageCacheSize = 0,
             CustomPageIO = pageIO,
-            CustomWalStream = walStream,
+            CustomWalStreamIO = walStreamIO,
             CustomWalSaltGenerator = () => rng.NextUInt()
         };
 
@@ -273,6 +274,7 @@ public class FaultInjectionTests
         SimulationStats stats = new SimulationStats();
         SimulationPageIO pageIO = new SimulationPageIO(8192, stats);
         SimulationWalStream walStream = new SimulationWalStream(stats);
+        SimulationWalStreamIO walStreamIO = new SimulationWalStreamIO(walStream);
         SimulationRandom rng = new SimulationRandom(42);
         FaultInjector faultInjector = new FaultInjector(rng, stats);
 
@@ -284,7 +286,7 @@ public class FaultInjectionTests
             PageSize = 8192,
             UseWal = true,
             CustomPageIO = pageIO,
-            CustomWalStream = walStream,
+            CustomWalStreamIO = walStreamIO,
             CustomWalSaltGenerator = () => rng.NextUInt()
         };
 

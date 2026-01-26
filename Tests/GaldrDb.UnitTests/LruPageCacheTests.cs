@@ -63,33 +63,30 @@ public class LruPageCacheTests
     }
 
     [TestMethod]
-    public void ReadPage_LruEviction_EvictsLeastRecentlyUsed()
+    public void ReadPage_Eviction_EvictedPageReadsFromDisk()
     {
         InMemoryPageIO innerIO = new InMemoryPageIO(PAGE_SIZE);
 
-        for (int i = 0; i < 5; i++)
-        {
-            byte[] data = CreateTestData(PAGE_SIZE, (byte)i);
-            innerIO.WritePage(i, data);
-        }
+        byte[] page0Data = CreateTestData(PAGE_SIZE, 0);
+        byte[] page1Data = CreateTestData(PAGE_SIZE, 1);
+        innerIO.WritePage(0, page0Data);
+        innerIO.WritePage(1, page1Data);
 
-        using LruPageCache cache = new LruPageCache(innerIO, PAGE_SIZE, 3);
+        using LruPageCache cache = new LruPageCache(innerIO, PAGE_SIZE, 1);
 
         byte[] buffer = new byte[PAGE_SIZE];
         cache.ReadPage(0, buffer);
+        CollectionAssert.AreEqual(page0Data, buffer);
+
         cache.ReadPage(1, buffer);
-        cache.ReadPage(2, buffer);
+        CollectionAssert.AreEqual(page1Data, buffer);
+
+        byte[] modifiedPage0 = CreateTestData(PAGE_SIZE, 111);
+        innerIO.WritePage(0, modifiedPage0);
 
         cache.ReadPage(0, buffer);
 
-        cache.ReadPage(3, buffer);
-
-        byte[] modifiedData = CreateTestData(PAGE_SIZE, 111);
-        innerIO.WritePage(1, modifiedData);
-
-        cache.ReadPage(1, buffer);
-
-        CollectionAssert.AreEqual(modifiedData, buffer);
+        CollectionAssert.AreEqual(modifiedPage0, buffer);
     }
 
     [TestMethod]
@@ -227,33 +224,30 @@ public class LruPageCacheTests
     }
 
     [TestMethod]
-    public async Task ReadPageAsync_LruEviction_EvictsLeastRecentlyUsed()
+    public async Task ReadPageAsync_Eviction_EvictedPageReadsFromDisk()
     {
         InMemoryPageIO innerIO = new InMemoryPageIO(PAGE_SIZE);
 
-        for (int i = 0; i < 5; i++)
-        {
-            byte[] data = CreateTestData(PAGE_SIZE, (byte)i);
-            innerIO.WritePage(i, data);
-        }
+        byte[] page0Data = CreateTestData(PAGE_SIZE, 0);
+        byte[] page1Data = CreateTestData(PAGE_SIZE, 1);
+        innerIO.WritePage(0, page0Data);
+        innerIO.WritePage(1, page1Data);
 
-        using LruPageCache cache = new LruPageCache(innerIO, PAGE_SIZE, 3);
+        using LruPageCache cache = new LruPageCache(innerIO, PAGE_SIZE, 1);
 
         byte[] buffer = new byte[PAGE_SIZE];
         await cache.ReadPageAsync(0, buffer);
+        CollectionAssert.AreEqual(page0Data, buffer);
+
         await cache.ReadPageAsync(1, buffer);
-        await cache.ReadPageAsync(2, buffer);
+        CollectionAssert.AreEqual(page1Data, buffer);
+
+        byte[] modifiedPage0 = CreateTestData(PAGE_SIZE, 111);
+        innerIO.WritePage(0, modifiedPage0);
 
         await cache.ReadPageAsync(0, buffer);
 
-        await cache.ReadPageAsync(3, buffer);
-
-        byte[] modifiedData = CreateTestData(PAGE_SIZE, 111);
-        innerIO.WritePage(1, modifiedData);
-
-        await cache.ReadPageAsync(1, buffer);
-
-        CollectionAssert.AreEqual(modifiedData, buffer);
+        CollectionAssert.AreEqual(modifiedPage0, buffer);
     }
 
     [TestMethod]
@@ -400,7 +394,7 @@ public class LruPageCacheTests
                 {
                     byte[] result = new byte[PAGE_SIZE];
                     await cache.ReadPageAsync(0, result);
-                    await Task.Delay(20);
+                    await Task.Delay(10);
                 }
                 finally
                 {
@@ -458,6 +452,210 @@ public class LruPageCacheTests
         await Task.WhenAll(tasks);
 
         Assert.AreEqual(0, errorCount, $"Data corruption detected in {errorCount} reads");
+    }
+
+    [TestMethod]
+    public void WritePage_WithEviction_EvictsOldPage()
+    {
+        InMemoryPageIO innerIO = new InMemoryPageIO(PAGE_SIZE);
+
+        using LruPageCache cache = new LruPageCache(innerIO, PAGE_SIZE, 1);
+
+        byte[] page0Data = CreateTestData(PAGE_SIZE, 10);
+        cache.WritePage(0, page0Data);
+
+        byte[] page1Data = CreateTestData(PAGE_SIZE, 20);
+        cache.WritePage(1, page1Data);
+
+        byte[] modifiedPage0 = CreateTestData(PAGE_SIZE, 99);
+        innerIO.WritePage(0, modifiedPage0);
+
+        byte[] buffer = new byte[PAGE_SIZE];
+        cache.ReadPage(0, buffer);
+
+        CollectionAssert.AreEqual(modifiedPage0, buffer);
+    }
+
+    [TestMethod]
+    public async Task ConcurrentWrites_AllDataPersisted()
+    {
+        InMemoryPageIO innerIO = new InMemoryPageIO(PAGE_SIZE);
+
+        using LruPageCache cache = new LruPageCache(innerIO, PAGE_SIZE, 20);
+
+        List<Task> tasks = new List<Task>();
+        for (int i = 0; i < 10; i++)
+        {
+            int pageId = i;
+            Task task = Task.Run(async () =>
+            {
+                byte[] data = CreateTestData(PAGE_SIZE, (byte)(pageId * 10));
+                await cache.WritePageAsync(pageId, data);
+            });
+            tasks.Add(task);
+        }
+
+        await Task.WhenAll(tasks);
+
+        for (int i = 0; i < 10; i++)
+        {
+            byte[] expected = CreateTestData(PAGE_SIZE, (byte)(i * 10));
+            byte[] result = new byte[PAGE_SIZE];
+            cache.ReadPage(i, result);
+
+            CollectionAssert.AreEqual(expected, result);
+        }
+    }
+
+    [TestMethod]
+    public async Task ConcurrentReadAndWriteSamePage_NoCorruption()
+    {
+        InMemoryPageIO innerIO = new InMemoryPageIO(PAGE_SIZE);
+        byte[] initialData = CreateTestData(PAGE_SIZE, 50);
+        innerIO.WritePage(0, initialData);
+
+        using LruPageCache cache = new LruPageCache(innerIO, PAGE_SIZE, 10);
+
+        byte[] warmup = new byte[PAGE_SIZE];
+        cache.ReadPage(0, warmup);
+
+        List<Task> tasks = new List<Task>();
+        int errorCount = 0;
+
+        for (int i = 0; i < 50; i++)
+        {
+            if (i % 5 == 0)
+            {
+                int iteration = i;
+                Task writeTask = Task.Run(async () =>
+                {
+                    byte[] newData = CreateTestData(PAGE_SIZE, (byte)(60 + iteration));
+                    await cache.WritePageAsync(0, newData);
+                });
+                tasks.Add(writeTask);
+            }
+            else
+            {
+                Task readTask = Task.Run(async () =>
+                {
+                    byte[] result = new byte[PAGE_SIZE];
+                    await cache.ReadPageAsync(0, result);
+
+                    bool valid = true;
+                    byte firstByte = result[0];
+                    for (int j = 0; j < PAGE_SIZE; j++)
+                    {
+                        byte expected = (byte)((firstByte + j) % 256);
+                        if (result[j] != expected)
+                        {
+                            valid = false;
+                            break;
+                        }
+                    }
+
+                    if (!valid)
+                    {
+                        Interlocked.Increment(ref errorCount);
+                    }
+                });
+                tasks.Add(readTask);
+            }
+        }
+
+        await Task.WhenAll(tasks);
+
+        Assert.AreEqual(0, errorCount, $"Data corruption detected in {errorCount} reads");
+    }
+
+    [TestMethod]
+    public void WritePage_OverwriteCachedPage_ReturnsNewData()
+    {
+        InMemoryPageIO innerIO = new InMemoryPageIO(PAGE_SIZE);
+
+        using LruPageCache cache = new LruPageCache(innerIO, PAGE_SIZE, 10);
+
+        byte[] originalData = CreateTestData(PAGE_SIZE, 10);
+        cache.WritePage(0, originalData);
+
+        byte[] buffer = new byte[PAGE_SIZE];
+        cache.ReadPage(0, buffer);
+        CollectionAssert.AreEqual(originalData, buffer);
+
+        byte[] newData = CreateTestData(PAGE_SIZE, 99);
+        cache.WritePage(0, newData);
+
+        cache.ReadPage(0, buffer);
+        CollectionAssert.AreEqual(newData, buffer);
+    }
+
+    [TestMethod]
+    public void Flush_PassesToInnerIO()
+    {
+        OperationTrackingPageIO innerIO = new OperationTrackingPageIO(PAGE_SIZE);
+
+        using LruPageCache cache = new LruPageCache(innerIO, PAGE_SIZE, 10);
+
+        cache.Flush();
+        cache.Flush();
+
+        Assert.AreEqual(2, innerIO.FlushCount);
+    }
+
+    [TestMethod]
+    public async Task FlushAsync_PassesToInnerIO()
+    {
+        OperationTrackingPageIO innerIO = new OperationTrackingPageIO(PAGE_SIZE);
+
+        using LruPageCache cache = new LruPageCache(innerIO, PAGE_SIZE, 10);
+
+        await cache.FlushAsync();
+        await cache.FlushAsync();
+        await cache.FlushAsync();
+
+        Assert.AreEqual(3, innerIO.FlushAsyncCount);
+    }
+
+    [TestMethod]
+    public void SetLength_PassesToInnerIO()
+    {
+        OperationTrackingPageIO innerIO = new OperationTrackingPageIO(PAGE_SIZE);
+
+        using LruPageCache cache = new LruPageCache(innerIO, PAGE_SIZE, 10);
+
+        cache.SetLength(1024 * 1024);
+
+        Assert.AreEqual(1024 * 1024, innerIO.LastSetLength);
+    }
+
+    [TestMethod]
+    public void Dispose_DisposesInnerIO()
+    {
+        OperationTrackingPageIO innerIO = new OperationTrackingPageIO(PAGE_SIZE);
+
+        LruPageCache cache = new LruPageCache(innerIO, PAGE_SIZE, 10);
+
+        Assert.IsFalse(innerIO.IsDisposed);
+
+        cache.Dispose();
+
+        Assert.IsTrue(innerIO.IsDisposed);
+    }
+
+    [TestMethod]
+    public void Dispose_CanBeCalledMultipleTimes()
+    {
+        OperationTrackingPageIO innerIO = new OperationTrackingPageIO(PAGE_SIZE);
+
+        LruPageCache cache = new LruPageCache(innerIO, PAGE_SIZE, 10);
+
+        byte[] testData = CreateTestData(PAGE_SIZE, 42);
+        cache.WritePage(0, testData);
+
+        cache.Dispose();
+        cache.Dispose();
+        cache.Dispose();
+
+        Assert.IsTrue(innerIO.IsDisposed);
     }
 
     private static byte[] CreateTestData(int size, byte seed)

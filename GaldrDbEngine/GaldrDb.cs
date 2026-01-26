@@ -1461,7 +1461,7 @@ public class GaldrDb : IDisposable
         {
             // When using custom WAL stream, always recover (stream contains WAL data)
             // When using file-based WAL, check if file exists
-            bool walExists = _options.CustomWalStream != null || File.Exists(_walPath);
+            bool walExists = _options.CustomWalStreamIO != null || File.Exists(_walPath);
 
             if (walExists)
             {
@@ -1553,9 +1553,9 @@ public class GaldrDb : IDisposable
     {
         _wal = new WriteAheadLog(_walPath, _options.PageSize);
 
-        if (_options.CustomWalStream != null)
+        if (_options.CustomWalStreamIO != null)
         {
-            _wal._testStream = _options.CustomWalStream;
+            _wal._testStreamIO = _options.CustomWalStreamIO;
         }
         if (_options.CustomWalSaltGenerator != null)
         {
@@ -1573,9 +1573,9 @@ public class GaldrDb : IDisposable
     {
         _wal = new WriteAheadLog(_walPath, _options.PageSize);
 
-        if (_options.CustomWalStream != null)
+        if (_options.CustomWalStreamIO != null)
         {
-            _wal._testStream = _options.CustomWalStream;
+            _wal._testStreamIO = _options.CustomWalStreamIO;
         }
         if (_options.CustomWalSaltGenerator != null)
         {

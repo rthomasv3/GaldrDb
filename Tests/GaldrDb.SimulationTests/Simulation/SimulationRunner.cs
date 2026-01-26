@@ -12,6 +12,7 @@ public class SimulationRunner
 {
     private readonly SimulationPageIO _pageIO;
     private readonly SimulationWalStream _walStream;
+    private readonly SimulationWalStreamIO _walStreamIO;
     private readonly SimulationRandom _rng;
     private readonly SimulationStats _stats;
     private readonly WorkloadConfiguration _config;
@@ -28,6 +29,7 @@ public class SimulationRunner
         _rng = new SimulationRandom(seed);
         _pageIO = new SimulationPageIO(8192, _stats);
         _walStream = new SimulationWalStream(_stats);
+        _walStreamIO = new SimulationWalStreamIO(_walStream);
         _state = new SimulationState();
         _workloadGenerator = new WorkloadGenerator(config, _rng);
         _initialized = false;
@@ -58,7 +60,7 @@ public class SimulationRunner
             PageSize = 8192,
             UseWal = true,
             CustomPageIO = _pageIO,
-            CustomWalStream = _walStream,
+            CustomWalStreamIO = _walStreamIO,
             CustomWalSaltGenerator = () => _rng.NextUInt()
         };
     }

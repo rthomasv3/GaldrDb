@@ -11,6 +11,7 @@ public class ConcurrencySimulationRunner
 {
     private readonly SimulationPageIO _pageIO;
     private readonly SimulationWalStream _walStream;
+    private readonly SimulationWalStreamIO _walStreamIO;
     private readonly SimulationRandom _rng;
     private readonly SimulationStats _stats;
     private readonly ConcurrencyConfiguration _config;
@@ -27,6 +28,7 @@ public class ConcurrencySimulationRunner
         _rng = new SimulationRandom(config.Seed);
         _pageIO = new SimulationPageIO(8192, _stats);
         _walStream = new SimulationWalStream(_stats);
+        _walStreamIO = new SimulationWalStreamIO(_walStream);
         _state = new ConcurrencyState();
         _scheduler = new ConcurrencyScheduler(_rng, config.Strategy);
         _actors = new List<ConcurrencyActor>();
@@ -42,7 +44,7 @@ public class ConcurrencySimulationRunner
             PageSize = 8192,
             UseWal = true,
             CustomPageIO = _pageIO,
-            CustomWalStream = _walStream,
+            CustomWalStreamIO = _walStreamIO,
             CustomWalSaltGenerator = () => _rng.NextUInt()
         };
 

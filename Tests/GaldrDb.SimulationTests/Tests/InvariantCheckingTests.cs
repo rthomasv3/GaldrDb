@@ -1,10 +1,9 @@
-using System;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using GaldrDb.SimulationTests.Core;
 using GaldrDb.SimulationTests.Simulation;
 using GaldrDb.SimulationTests.Workload;
 using GaldrDbEngine;
 using GaldrDbEngine.Transactions;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace GaldrDb.SimulationTests.Tests;
 
@@ -17,6 +16,7 @@ public class InvariantCheckingTests
         SimulationStats stats = new SimulationStats();
         SimulationPageIO pageIO = new SimulationPageIO(8192, stats);
         SimulationWalStream walStream = new SimulationWalStream(stats);
+        SimulationWalStreamIO walStreamIO = new SimulationWalStreamIO(walStream);
         SimulationRandom rng = new SimulationRandom(42);
         SimulationState state = new SimulationState();
         InvariantChecker checker = new InvariantChecker(stats);
@@ -26,7 +26,7 @@ public class InvariantCheckingTests
             PageSize = 8192,
             UseWal = true,
             CustomPageIO = pageIO,
-            CustomWalStream = walStream,
+            CustomWalStreamIO = walStreamIO,
             CustomWalSaltGenerator = () => rng.NextUInt()
         };
 
@@ -64,6 +64,7 @@ public class InvariantCheckingTests
         SimulationStats stats = new SimulationStats();
         SimulationPageIO pageIO = new SimulationPageIO(8192, stats);
         SimulationWalStream walStream = new SimulationWalStream(stats);
+        SimulationWalStreamIO walStreamIO = new SimulationWalStreamIO(walStream);
         SimulationRandom rng = new SimulationRandom(42);
         SimulationState state = new SimulationState();
         InvariantChecker checker = new InvariantChecker(stats);
@@ -73,7 +74,7 @@ public class InvariantCheckingTests
             PageSize = 8192,
             UseWal = true,
             CustomPageIO = pageIO,
-            CustomWalStream = walStream,
+            CustomWalStreamIO = walStreamIO,
             CustomWalSaltGenerator = () => rng.NextUInt()
         };
 
@@ -121,6 +122,7 @@ public class InvariantCheckingTests
         SimulationStats stats = new SimulationStats();
         SimulationPageIO pageIO = new SimulationPageIO(8192, stats);
         SimulationWalStream walStream = new SimulationWalStream(stats);
+        SimulationWalStreamIO walStreamIO = new SimulationWalStreamIO(walStream);
         SimulationRandom rng = new SimulationRandom(42);
         SimulationState state = new SimulationState();
         InvariantChecker checker = new InvariantChecker(stats);
@@ -130,7 +132,7 @@ public class InvariantCheckingTests
             PageSize = 8192,
             UseWal = true,
             CustomPageIO = pageIO,
-            CustomWalStream = walStream,
+            CustomWalStreamIO = walStreamIO,
             CustomWalSaltGenerator = () => rng.NextUInt()
         };
 
@@ -174,6 +176,7 @@ public class InvariantCheckingTests
         SimulationStats stats = new SimulationStats();
         SimulationPageIO pageIO = new SimulationPageIO(8192, stats);
         SimulationWalStream walStream = new SimulationWalStream(stats);
+        SimulationWalStreamIO walStreamIO = new SimulationWalStreamIO(walStream);
         SimulationRandom rng = new SimulationRandom(42);
         SimulationState state = new SimulationState();
         InvariantChecker checker = new InvariantChecker(stats);
@@ -183,7 +186,7 @@ public class InvariantCheckingTests
             PageSize = 8192,
             UseWal = true,
             CustomPageIO = pageIO,
-            CustomWalStream = walStream,
+            CustomWalStreamIO = walStreamIO,
             CustomWalSaltGenerator = () => rng.NextUInt()
         };
 
@@ -218,6 +221,7 @@ public class InvariantCheckingTests
         SimulationStats stats = new SimulationStats();
         SimulationPageIO pageIO = new SimulationPageIO(8192, stats);
         SimulationWalStream walStream = new SimulationWalStream(stats);
+        SimulationWalStreamIO walStreamIO = new SimulationWalStreamIO(walStream);
         SimulationRandom rng = new SimulationRandom(42);
         SimulationState state = new SimulationState();
         InvariantChecker checker = new InvariantChecker(stats);
@@ -227,7 +231,7 @@ public class InvariantCheckingTests
             PageSize = 8192,
             UseWal = true,
             CustomPageIO = pageIO,
-            CustomWalStream = walStream,
+            CustomWalStreamIO = walStreamIO,
             CustomWalSaltGenerator = () => rng.NextUInt()
         };
 
@@ -262,6 +266,7 @@ public class InvariantCheckingTests
         SimulationStats stats = new SimulationStats();
         SimulationPageIO pageIO = new SimulationPageIO(8192, stats);
         SimulationWalStream walStream = new SimulationWalStream(stats);
+        SimulationWalStreamIO walStreamIO = new SimulationWalStreamIO(walStream);
         SimulationRandom rng = new SimulationRandom(42);
         SimulationState state = new SimulationState();
         InvariantChecker checker = new InvariantChecker(stats);
@@ -271,7 +276,7 @@ public class InvariantCheckingTests
             PageSize = 8192,
             UseWal = true,
             CustomPageIO = pageIO,
-            CustomWalStream = walStream,
+            CustomWalStreamIO = walStreamIO,
             CustomWalSaltGenerator = () => rng.NextUInt()
         };
 

@@ -23,6 +23,7 @@ public class CrashDebugTests
         SimulationStats stats = new SimulationStats();
         SimulationPageIO pageIO = new SimulationPageIO(8192, stats);
         SimulationWalStream walStream = new SimulationWalStream(stats);
+        SimulationWalStreamIO walStreamIO = new SimulationWalStreamIO(walStream);
         SimulationRandom rng = new SimulationRandom(42);
 
         Console.WriteLine("=== PHASE 1: Create database ===");
@@ -32,7 +33,7 @@ public class CrashDebugTests
             PageSize = 8192,
             UseWal = true,
             CustomPageIO = pageIO,
-            CustomWalStream = walStream,
+            CustomWalStreamIO = walStreamIO,
             CustomWalSaltGenerator = () => rng.NextUInt()
         };
 
@@ -72,7 +73,7 @@ public class CrashDebugTests
         Console.WriteLine("\n=== PHASE 4.5: Inspect WAL before recovery ===");
         // Create a temporary WAL to read frames
         WriteAheadLog tempWal = new WriteAheadLog("temp.wal", 8192);
-        tempWal._testStream = walStream;
+        tempWal._testStreamIO = walStreamIO;
         tempWal._testSaltGenerator = () => rng.NextUInt();
         tempWal.Open();
 
@@ -115,7 +116,7 @@ public class CrashDebugTests
             PageSize = 8192,
             UseWal = true,
             CustomPageIO = pageIO,
-            CustomWalStream = walStream,
+            CustomWalStreamIO = walStreamIO,
             CustomWalSaltGenerator = () => rng.NextUInt()
         };
 

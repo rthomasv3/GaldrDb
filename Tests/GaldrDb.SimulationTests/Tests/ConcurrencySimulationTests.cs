@@ -282,13 +282,14 @@ public class ConcurrencySimulationTests
         SimulationRandom rng = new SimulationRandom(12345);
         SimulationPageIO pageIO = new SimulationPageIO(8192, stats);
         SimulationWalStream walStream = new SimulationWalStream(stats);
+        SimulationWalStreamIO walStreamIO = new SimulationWalStreamIO(walStream);
 
         GaldrDbOptions options = new GaldrDbOptions
         {
             PageSize = 8192,
             UseWal = true,
             CustomPageIO = pageIO,
-            CustomWalStream = walStream,
+            CustomWalStreamIO = walStreamIO,
             CustomWalSaltGenerator = () => rng.NextUInt()
         };
 

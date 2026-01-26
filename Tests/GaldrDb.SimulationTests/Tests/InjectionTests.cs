@@ -1,8 +1,7 @@
-using System;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using GaldrDb.SimulationTests.Core;
 using GaldrDbEngine;
 using GaldrDbEngine.WAL;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace GaldrDb.SimulationTests.Tests;
 
@@ -15,6 +14,7 @@ public class InjectionTests
         SimulationStats stats = new SimulationStats();
         SimulationPageIO pageIO = new SimulationPageIO(8192, stats);
         SimulationWalStream walStream = new SimulationWalStream(stats);
+        SimulationWalStreamIO walStreamIO = new SimulationWalStreamIO(walStream);
         SimulationRandom rng = new SimulationRandom(12345);
 
         GaldrDbOptions options = new GaldrDbOptions
@@ -26,7 +26,7 @@ public class InjectionTests
 
         // Create WAL with test stream
         WriteAheadLog wal = new WriteAheadLog("test.wal", 8192);
-        wal._testStream = walStream;
+        wal._testStreamIO = walStreamIO;
         wal._testSaltGenerator = () => rng.NextUInt();
         wal.Create();
 
@@ -102,11 +102,12 @@ public class InjectionTests
     {
         SimulationStats stats = new SimulationStats();
         SimulationWalStream walStream = new SimulationWalStream(stats);
+        SimulationWalStreamIO walStreamIO = new SimulationWalStreamIO(walStream);
         SimulationRandom rng = new SimulationRandom(42);
 
         // Create WAL
         WriteAheadLog wal = new WriteAheadLog("test.wal", 8192);
-        wal._testStream = walStream;
+        wal._testStreamIO = walStreamIO;
         wal._testSaltGenerator = () => rng.NextUInt();
         wal.Create();
 
@@ -120,7 +121,7 @@ public class InjectionTests
 
         // Reopen WAL (simulating restart)
         WriteAheadLog wal2 = new WriteAheadLog("test.wal", 8192);
-        wal2._testStream = walStream;
+        wal2._testStreamIO = walStreamIO;
         wal2._testSaltGenerator = () => rng.NextUInt();
         wal2.Open();
 

@@ -1,6 +1,6 @@
 using System;
-using System.IO;
 using GaldrDbEngine.IO;
+using GaldrDbEngine.WAL;
 
 namespace GaldrDbEngine;
 
@@ -80,6 +80,6 @@ public class GaldrDbOptions
 
     // Internal: for simulation testing only (null in production)
     internal IPageIO CustomPageIO { get; set; }
-    internal Stream CustomWalStream { get; set; }
+    internal IWalStreamIO CustomWalStreamIO { get; set; }
     internal Func<uint> CustomWalSaltGenerator { get; set; }
 }

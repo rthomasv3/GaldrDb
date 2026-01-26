@@ -33,8 +33,8 @@ internal class WalPageIO : IPageIO
     // Lock for serializing WAL commits
     private readonly object _commitLock;
 
-    // Mutex for checkpoint (only one checkpoint at a time, but doesn't block readers/writers)
-    private readonly object _checkpointMutex;
+    // Semaphore for checkpoint (only one checkpoint at a time, but doesn't block readers/writers)
+    private readonly SemaphoreSlim _checkpointSemaphore;
 
     // Lock for coordinating base file access during checkpoint
     private readonly object _rwLock;
@@ -59,7 +59,7 @@ internal class WalPageIO : IPageIO
         _currentTxId = new AsyncLocal<ulong?>();
         _txPreviousFrames = new Dictionary<int, long>();
         _commitLock = new object();
-        _checkpointMutex = new object();
+        _checkpointSemaphore = new SemaphoreSlim(1, 1);
         _rwLock = new object();
         _commitFramesList = new List<WalFrameEntry>();
         _commitPageIdsList = new List<int>();
@@ -376,7 +376,7 @@ internal class WalPageIO : IPageIO
             long currentNBackfill = Interlocked.Read(ref _nBackfill);
             if (frameNum > currentNBackfill)
             {
-                foundInWal = _wal.ReadFrameData(frameNum, destination.Span);
+                foundInWal = await _wal.ReadFrameDataAsync(frameNum, destination, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -394,7 +394,7 @@ internal class WalPageIO : IPageIO
 
     public async Task FlushAsync(CancellationToken cancellationToken = default)
     {
-        _wal.Flush();
+        await _wal.FlushAsync(cancellationToken).ConfigureAwait(false);
         await _innerPageIO.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -420,6 +420,7 @@ internal class WalPageIO : IPageIO
                 _pageLatestFrame.Clear();
             }
 
+            _checkpointSemaphore.Dispose();
             _innerPageIO.Dispose();
         }
     }
@@ -428,7 +429,7 @@ internal class WalPageIO : IPageIO
     {
         bool madeProgress = false;
 
-        if (Monitor.TryEnter(_checkpointMutex))
+        if (_checkpointSemaphore.Wait(0))
         {
             try
             {
@@ -493,7 +494,7 @@ internal class WalPageIO : IPageIO
             }
             finally
             {
-                Monitor.Exit(_checkpointMutex);
+                _checkpointSemaphore.Release();
             }
         }
 
@@ -504,7 +505,7 @@ internal class WalPageIO : IPageIO
     {
         bool madeProgress = false;
 
-        if (Monitor.TryEnter(_checkpointMutex))
+        if (await _checkpointSemaphore.WaitAsync(0, cancellationToken).ConfigureAwait(false))
         {
             try
             {
@@ -534,7 +535,7 @@ internal class WalPageIO : IPageIO
                         foreach (KeyValuePair<int, long> kvp in pagesToCheckpoint)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
-                            if (_wal.ReadFrameData(kvp.Value, buffer))
+                            if (await _wal.ReadFrameDataAsync(kvp.Value, buffer.AsMemory(), cancellationToken).ConfigureAwait(false))
                             {
                                 await _innerPageIO.WritePageAsync(kvp.Key, buffer, cancellationToken).ConfigureAwait(false);
                             }
@@ -567,7 +568,7 @@ internal class WalPageIO : IPageIO
             }
             finally
             {
-                Monitor.Exit(_checkpointMutex);
+                _checkpointSemaphore.Release();
             }
         }
 

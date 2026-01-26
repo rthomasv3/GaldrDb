@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.WAL;
@@ -10,13 +12,13 @@ internal class WriteAheadLog : IDisposable
     private readonly string _walPath;
     private readonly int _pageSize;
     private readonly object _writeLock;
-    private Stream _walStream;
+    private IWalStreamIO _streamIO;
     private WalHeader _header;
     private long _currentFrameNumber;
     private bool _disposed;
 
     // Optional injection points for simulation testing (null in production)
-    internal Stream _testStream;
+    internal IWalStreamIO _testStreamIO;
     internal Func<uint> _testSaltGenerator;
 
     public WriteAheadLog(string walPath, int pageSize)
@@ -33,9 +35,9 @@ internal class WriteAheadLog : IDisposable
 
     public void Create()
     {
-        if (_testStream != null)
+        if (_testStreamIO != null)
         {
-            _walStream = _testStream;
+            _streamIO = _testStreamIO;
         }
         else
         {
@@ -44,7 +46,7 @@ internal class WriteAheadLog : IDisposable
                 throw new InvalidOperationException($"WAL file already exists: {_walPath}");
             }
 
-            _walStream = new FileStream(_walPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+            _streamIO = new FileWalStreamIO(_walPath, createNew: true);
         }
 
         _header = new WalHeader
@@ -61,9 +63,9 @@ internal class WriteAheadLog : IDisposable
 
     public void Open()
     {
-        if (_testStream != null)
+        if (_testStreamIO != null)
         {
-            _walStream = _testStream;
+            _streamIO = _testStreamIO;
         }
         else
         {
@@ -72,11 +74,11 @@ internal class WriteAheadLog : IDisposable
                 throw new FileNotFoundException($"WAL file not found: {_walPath}");
             }
 
-            _walStream = new FileStream(_walPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            _streamIO = new FileWalStreamIO(_walPath, createNew: false);
         }
 
         // Handle empty WAL file (can occur after truncation or crash during creation)
-        if (_walStream.Length == 0)
+        if (_streamIO.Length == 0)
         {
             _header = new WalHeader();
             _header.PageSize = _pageSize;
@@ -86,8 +88,8 @@ internal class WriteAheadLog : IDisposable
             try
             {
                 _header.SerializeTo(headerBuffer);
-                _walStream.Write(headerBuffer, 0, WalHeader.HEADER_SIZE);
-                _walStream.Flush();
+                _streamIO.WriteAtPosition(0, headerBuffer.AsSpan(0, WalHeader.HEADER_SIZE));
+                _streamIO.Flush();
             }
             finally
             {
@@ -100,8 +102,7 @@ internal class WriteAheadLog : IDisposable
             byte[] headerBuffer = BufferPool.Rent(WalHeader.HEADER_SIZE);
             try
             {
-                _walStream.Position = 0;
-                int bytesRead = _walStream.Read(headerBuffer, 0, WalHeader.HEADER_SIZE);
+                int bytesRead = _streamIO.ReadAtPosition(0, headerBuffer.AsSpan(0, WalHeader.HEADER_SIZE));
 
                 if (bytesRead < WalHeader.HEADER_SIZE)
                 {
@@ -126,7 +127,7 @@ internal class WriteAheadLog : IDisposable
             }
 
             // Calculate frame count from file size
-            long dataSize = _walStream.Length - WalHeader.HEADER_SIZE;
+            long dataSize = _streamIO.Length - WalHeader.HEADER_SIZE;
             int frameSize = WalFrame.FRAME_HEADER_SIZE + _pageSize;
             _currentFrameNumber = dataSize > 0 ? dataSize / frameSize : 0;
         }
@@ -157,17 +158,16 @@ internal class WriteAheadLog : IDisposable
                     frameData);
 
                 long framePosition = WalHeader.HEADER_SIZE + (_currentFrameNumber - 1) * (WalFrame.FRAME_HEADER_SIZE + _pageSize);
-                _walStream.Position = framePosition;
-                _walStream.Write(frameBuffer, 0, bytesWritten);
 
-                // Pad to full page size if data is smaller
+                // Pad to full frame size if data is smaller
                 int paddingNeeded = _pageSize - frameData.Length;
                 if (paddingNeeded > 0)
                 {
-                    // Clear the padding area in the same buffer and write it
-                    Array.Clear(frameBuffer, 0, paddingNeeded);
-                    _walStream.Write(frameBuffer, 0, paddingNeeded);
+                    Array.Clear(frameBuffer, bytesWritten, paddingNeeded);
                 }
+
+                int totalWriteSize = WalFrame.FRAME_HEADER_SIZE + _pageSize;
+                _streamIO.WriteAtPosition(framePosition, frameBuffer.AsSpan(0, totalWriteSize));
             }
             finally
             {
@@ -185,8 +185,7 @@ internal class WriteAheadLog : IDisposable
             int frameSize = WalFrame.FRAME_HEADER_SIZE + _pageSize;
             long startPosition = WalHeader.HEADER_SIZE + _currentFrameNumber * frameSize;
 
-            _walStream.Position = startPosition;
-            _walStream.Write(batchBuffer, 0, frameCount * frameSize);
+            _streamIO.WriteAtPosition(startPosition, batchBuffer.AsSpan(0, frameCount * frameSize));
 
             _currentFrameNumber += frameCount;
         }
@@ -241,8 +240,7 @@ internal class WriteAheadLog : IDisposable
 
                     // Write all frames in a single I/O operation
                     long startPosition = WalHeader.HEADER_SIZE + (_currentFrameNumber - entries.Count) * frameSize;
-                    _walStream.Position = startPosition;
-                    _walStream.Write(batchBuffer, 0, totalSize);
+                    _streamIO.WriteAtPosition(startPosition, batchBuffer.AsSpan(0, totalSize));
                 }
                 finally
                 {
@@ -266,8 +264,7 @@ internal class WriteAheadLog : IDisposable
 
             while (true)
             {
-                _walStream.Position = framePosition;
-                int bytesRead = _walStream.Read(frameBuffer, 0, frameSize);
+                int bytesRead = _streamIO.ReadAtPosition(framePosition, frameBuffer.AsSpan(0, frameSize));
 
                 // Stop at EOF
                 if (bytesRead < WalFrame.FRAME_HEADER_SIZE)
@@ -314,8 +311,7 @@ internal class WriteAheadLog : IDisposable
 
             while (true)
             {
-                _walStream.Position = framePosition;
-                int bytesRead = _walStream.Read(frameBuffer, 0, frameSize);
+                int bytesRead = _streamIO.ReadAtPosition(framePosition, frameBuffer.AsSpan(0, frameSize));
 
                 // Stop at EOF
                 if (bytesRead < WalFrame.FRAME_HEADER_SIZE)
@@ -353,8 +349,13 @@ internal class WriteAheadLog : IDisposable
     {
         lock (_writeLock)
         {
-            FlushStream();
+            _streamIO.Flush();
         }
+    }
+
+    public Task FlushAsync(CancellationToken cancellationToken = default)
+    {
+        return _streamIO.FlushAsync(cancellationToken);
     }
 
     public bool ReadFrameData(long frameNumber, Span<byte> destination)
@@ -369,8 +370,7 @@ internal class WriteAheadLog : IDisposable
             byte[] frameBuffer = BufferPool.Rent(frameSize);
             try
             {
-                _walStream.Position = framePosition;
-                int bytesRead = _walStream.Read(frameBuffer, 0, frameSize);
+                int bytesRead = _streamIO.ReadAtPosition(framePosition, frameBuffer.AsSpan(0, frameSize));
 
                 if (bytesRead >= frameSize)
                 {
@@ -400,16 +400,58 @@ internal class WriteAheadLog : IDisposable
         return success;
     }
 
+    public async Task<bool> ReadFrameDataAsync(long frameNumber, Memory<byte> destination, CancellationToken cancellationToken = default)
+    {
+        bool success = false;
+
+        if (frameNumber >= 1)
+        {
+            int frameSize = WalFrame.FRAME_HEADER_SIZE + _pageSize;
+            long framePosition = WalHeader.HEADER_SIZE + (frameNumber - 1) * frameSize;
+
+            byte[] frameBuffer = BufferPool.Rent(frameSize);
+            try
+            {
+                int bytesRead = await _streamIO.ReadAtPositionAsync(framePosition, frameBuffer.AsMemory(0, frameSize), cancellationToken).ConfigureAwait(false);
+
+                if (bytesRead >= frameSize)
+                {
+                    // Read header fields directly without allocating WalFrame
+                    WalFrame.ReadSaltsFromBuffer(frameBuffer, out uint salt1, out uint salt2);
+
+                    if (salt1 == _header.Salt1 && salt2 == _header.Salt2)
+                    {
+                        // Validate checksum directly on buffer (no re-serialization)
+                        if (WalFrame.ValidateChecksumInBuffer(frameBuffer, _pageSize))
+                        {
+                            // Copy data directly from buffer to destination
+                            int dataLength = WalFrame.ReadDataLengthFromBuffer(frameBuffer);
+                            int copyLength = Math.Min(dataLength, destination.Length);
+                            frameBuffer.AsMemory(WalFrame.FRAME_HEADER_SIZE, copyLength).CopyTo(destination);
+                            success = true;
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                BufferPool.Return(frameBuffer);
+            }
+        }
+
+        return success;
+    }
+
     public void Truncate()
     {
         lock (_writeLock)
         {
-            _walStream.SetLength(WalHeader.HEADER_SIZE);
+            _streamIO.SetLength(WalHeader.HEADER_SIZE);
             _currentFrameNumber = 0;
             _header.Salt1++;
             _header.Salt2 = GenerateRandomSalt();
             WriteHeader();
-            FlushStream();
+            _streamIO.Flush();
         }
     }
 
@@ -462,12 +504,11 @@ internal class WriteAheadLog : IDisposable
         {
             _disposed = true;
 
-            if (_walStream != null)
+            if (_streamIO != null)
             {
-                _walStream.Flush();
-                _walStream.Close();
-                _walStream.Dispose();
-                _walStream = null;
+                _streamIO.Flush();
+                _streamIO.Dispose();
+                _streamIO = null;
             }
         }
     }
@@ -478,24 +519,11 @@ internal class WriteAheadLog : IDisposable
         try
         {
             _header.SerializeTo(headerBuffer);
-            _walStream.Position = 0;
-            _walStream.Write(headerBuffer, 0, WalHeader.HEADER_SIZE);
+            _streamIO.WriteAtPosition(0, headerBuffer.AsSpan(0, WalHeader.HEADER_SIZE));
         }
         finally
         {
             BufferPool.Return(headerBuffer);
-        }
-    }
-
-    private void FlushStream()
-    {
-        if (_walStream is FileStream fs)
-        {
-            fs.Flush(true);
-        }
-        else
-        {
-            _walStream.Flush();
         }
     }
 

@@ -1,8 +1,11 @@
 using System;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using GaldrDb.SimulationTests.Core;
 using GaldrDb.SimulationTests.Simulation;
 using GaldrDb.SimulationTests.Workload;
+using GaldrDb.SimulationTests.Workload.Operations;
+using GaldrDbEngine;
+using GaldrDbEngine.Transactions;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace GaldrDb.SimulationTests.Tests;
 
@@ -135,6 +138,7 @@ public class LongRunningTests
         SimulationStats stats = new SimulationStats();
         SimulationPageIO pageIO = new SimulationPageIO(8192, stats);
         SimulationWalStream walStream = new SimulationWalStream(stats);
+        SimulationWalStreamIO walStreamIO = new SimulationWalStreamIO(walStream);
         SimulationRandom rng = new SimulationRandom(seed);
 
         // Run different workload types sequentially on the same database
@@ -149,12 +153,12 @@ public class LongRunningTests
         SimulationState sharedState = new SimulationState();
         sharedState.EnsureCollection("TestDocument");
 
-        GaldrDbEngine.GaldrDbOptions options = new GaldrDbEngine.GaldrDbOptions
+        GaldrDbOptions options = new GaldrDbOptions
         {
             PageSize = 8192,
             UseWal = true,
             CustomPageIO = pageIO,
-            CustomWalStream = walStream,
+            CustomWalStreamIO = walStreamIO,
             CustomWalSaltGenerator = () => rng.NextUInt()
         };
 
@@ -171,25 +175,25 @@ public class LongRunningTests
 
                 for (int i = 0; i < config.OperationCount; i++)
                 {
-                    GaldrDb.SimulationTests.Workload.Operations.Operation op = generator.GenerateOperation(sharedState);
+                    Operation op = generator.GenerateOperation(sharedState);
 
-                    using (GaldrDbEngine.Transactions.Transaction tx = db.BeginTransaction())
+                    using (Transaction tx = db.BeginTransaction())
                     {
-                        GaldrDb.SimulationTests.Workload.Operations.OperationResult result = op.Execute(db, tx, sharedState);
+                        OperationResult result = op.Execute(db, tx, sharedState);
 
                         if (result.Success)
                         {
                             tx.Commit();
 
-                            if (op is GaldrDb.SimulationTests.Workload.Operations.InsertOperation && result.DocId.HasValue)
+                            if (op is InsertOperation && result.DocId.HasValue)
                             {
                                 sharedState.RecordInsert(op.CollectionName, result.DocId.Value, result.ContentHash, tx.TxId.Value);
                             }
-                            else if (op is GaldrDb.SimulationTests.Workload.Operations.UpdateOperation updateOp && result.DocId.HasValue)
+                            else if (op is UpdateOperation updateOp && result.DocId.HasValue)
                             {
                                 sharedState.RecordUpdate(op.CollectionName, updateOp.DocId, result.ContentHash, tx.TxId.Value);
                             }
-                            else if (op is GaldrDb.SimulationTests.Workload.Operations.DeleteOperation deleteOp)
+                            else if (op is DeleteOperation deleteOp)
                             {
                                 sharedState.RecordDelete(op.CollectionName, deleteOp.DocId);
                             }

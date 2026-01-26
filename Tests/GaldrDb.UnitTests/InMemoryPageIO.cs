@@ -10,61 +10,72 @@ internal class InMemoryPageIO : IPageIO
 {
     private readonly int _pageSize;
     private readonly Dictionary<int, byte[]> _pages;
+    private readonly object _lock;
     private bool _disposed;
 
     public InMemoryPageIO(int pageSize)
     {
         _pageSize = pageSize;
         _pages = new Dictionary<int, byte[]>();
+        _lock = new object();
         _disposed = false;
     }
 
-    public int PageCount => _pages.Count;
+    public int PageCount
+    {
+        get { lock (_lock) { return _pages.Count; } }
+    }
 
     public void ReadPage(int pageId, Span<byte> destination)
     {
-        if (_disposed)
+        lock (_lock)
         {
-            throw new ObjectDisposedException(nameof(InMemoryPageIO));
-        }
+            if (_disposed)
+            {
+                throw new ObjectDisposedException(nameof(InMemoryPageIO));
+            }
 
-        if (_pages.TryGetValue(pageId, out byte[] data))
-        {
-            data.AsSpan().CopyTo(destination);
-        }
-        else
-        {
-            destination.Clear();
+            if (_pages.TryGetValue(pageId, out byte[] data))
+            {
+                data.AsSpan().CopyTo(destination);
+            }
+            else
+            {
+                destination.Clear();
+            }
         }
     }
 
     public void WritePage(int pageId, ReadOnlySpan<byte> data)
     {
-        if (_disposed)
+        lock (_lock)
         {
-            throw new ObjectDisposedException(nameof(InMemoryPageIO));
-        }
-
-        // Sparse storage: don't store all-zero pages
-        bool allZeros = true;
-        for (int i = 0; i < data.Length; i++)
-        {
-            if (data[i] != 0)
+            if (_disposed)
             {
-                allZeros = false;
-                break;
+                throw new ObjectDisposedException(nameof(InMemoryPageIO));
             }
-        }
 
-        if (allZeros)
-        {
-            _pages.Remove(pageId);
-        }
-        else
-        {
-            byte[] pageData = new byte[_pageSize];
-            data.CopyTo(pageData);
-            _pages[pageId] = pageData;
+            // Sparse storage: don't store all-zero pages
+            bool allZeros = true;
+            for (int i = 0; i < data.Length; i++)
+            {
+                if (data[i] != 0)
+                {
+                    allZeros = false;
+                    break;
+                }
+            }
+
+            if (allZeros)
+            {
+                _pages.Remove(pageId);
+            }
+            else
+            {
+                byte[] pageData = new byte[_pageSize];
+                data.CopyTo(pageData);
+                _pages[pageId] = pageData;
+            }
         }
     }
 
@@ -102,7 +113,10 @@ internal class InMemoryPageIO : IPageIO
 
     public void Dispose()
     {
-        _disposed = true;
-        _pages.Clear();
+        lock (_lock)
+        {
+            _disposed = true;
+            _pages.Clear();
+        }
     }
 }
