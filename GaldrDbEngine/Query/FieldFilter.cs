@@ -203,4 +203,10 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
     {
         return null;
     }
+
+    /// <inheritdoc/>
+    public IReadOnlyList<int> GetInValuesAsInt32()
+    {
+        return null;
+    }
 }

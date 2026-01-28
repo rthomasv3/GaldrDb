@@ -46,6 +46,11 @@ internal sealed class VersionScanner
             List<int> docIds = _db.SearchDocIdRange(collectionName, rangeSpec.StartDocId, rangeSpec.EndDocId, rangeSpec.IncludeStart, rangeSpec.IncludeEnd);
             versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, docIds, _snapshotTxId);
         }
+        else if (plan.PlanType == QueryPlanType.PrimaryKeyMultiPoint)
+        {
+            PrimaryKeyMultiPointSpec multiPointSpec = plan.PrimaryKeyMultiPoint;
+            versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, multiPointSpec.DocIds, _snapshotTxId);
+        }
         else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
         {
             List<SecondaryIndexEntry> entries = _indexScanner.GetEntries(plan.SecondaryIndex);
@@ -81,6 +86,11 @@ internal sealed class VersionScanner
             PrimaryKeyRangeSpec rangeSpec = plan.PrimaryKeyRange;
             List<int> docIds = await _db.SearchDocIdRangeAsync(collectionName, rangeSpec.StartDocId, rangeSpec.EndDocId, rangeSpec.IncludeStart, rangeSpec.IncludeEnd, cancellationToken).ConfigureAwait(false);
             versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, docIds, _snapshotTxId);
+        }
+        else if (plan.PlanType == QueryPlanType.PrimaryKeyMultiPoint)
+        {
+            PrimaryKeyMultiPointSpec multiPointSpec = plan.PrimaryKeyMultiPoint;
+            versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, multiPointSpec.DocIds, _snapshotTxId);
         }
         else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
         {

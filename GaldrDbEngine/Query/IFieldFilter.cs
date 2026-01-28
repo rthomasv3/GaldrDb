@@ -65,4 +65,10 @@ public interface IFieldFilter
     /// </summary>
     /// <returns>The maximum value, or null for non-range filters.</returns>
     object GetRangeMaxValue();
+
+    /// <summary>
+    /// Gets the values for an In filter when the field type is Int32.
+    /// </summary>
+    /// <returns>The int values, or null for non-In filters or non-Int32 fields.</returns>
+    IReadOnlyList<int> GetInValuesAsInt32();
 }

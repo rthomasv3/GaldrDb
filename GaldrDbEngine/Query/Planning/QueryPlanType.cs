@@ -5,5 +5,6 @@ internal enum QueryPlanType
     FullScan,
     PrimaryKeyScan,
     PrimaryKeyRange,
+    PrimaryKeyMultiPoint,
     SecondaryIndexScan
 }

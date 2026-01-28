@@ -107,6 +107,23 @@ internal sealed class QueryPlanner
             case FieldOp.Between:
                 result = CreateBetweenIdPlan(filter, filterIndex);
                 break;
+
+            case FieldOp.In:
+                result = CreateInIdPlan(filter, filterIndex);
+                break;
+        }
+
+        return result;
+    }
+
+    private static QueryPlan CreateInIdPlan(IFieldFilter filter, int filterIndex)
+    {
+        QueryPlan result = null;
+        IReadOnlyList<int> docIds = filter.GetInValuesAsInt32();
+
+        if (docIds != null && docIds.Count > 0)
+        {
+            result = QueryPlan.PrimaryKeyMultiPoint(docIds, filterIndex);
         }
 
         return result;
@@ -150,6 +167,7 @@ internal sealed class QueryPlanner
             case FieldOp.LessThan:
             case FieldOp.LessThanOrEqual:
             case FieldOp.Between:
+            case FieldOp.In:
                 result = true;
                 break;
             default:
@@ -281,21 +299,35 @@ internal sealed class QueryPlanner
 
             if (basePlan != null)
             {
-                PrimaryKeyRangeSpec rangeSpec = new PrimaryKeyRangeSpec(
-                    basePlan.StartDocId ?? int.MinValue,
-                    basePlan.EndDocId ?? int.MaxValue,
-                    basePlan.IncludeStart,
-                    basePlan.IncludeEnd);
                 IReadOnlyList<IFieldFilter> remaining = ComputeRemainingFilters(filters, basePlan.UsedFilterIndex);
                 bool canOptimize = isOrderByIdOnly && remaining.Count == 0;
 
-                result = QueryExecutionPlan.CreatePrimaryKeyRange(
-                    rangeSpec,
-                    basePlan.UsedFilterIndex.Value,
-                    remaining,
-                    direction,
-                    canOptimize,
-                    !isOrderByIdOnly);
+                if (basePlan.PlanType == QueryPlanType.PrimaryKeyMultiPoint)
+                {
+                    PrimaryKeyMultiPointSpec multiPointSpec = new PrimaryKeyMultiPointSpec(basePlan.DocIds);
+                    result = QueryExecutionPlan.CreatePrimaryKeyMultiPoint(
+                        multiPointSpec,
+                        basePlan.UsedFilterIndex.Value,
+                        remaining,
+                        direction,
+                        canOptimize,
+                        !isOrderByIdOnly);
+                }
+                else
+                {
+                    PrimaryKeyRangeSpec rangeSpec = new PrimaryKeyRangeSpec(
+                        basePlan.StartDocId ?? int.MinValue,
+                        basePlan.EndDocId ?? int.MaxValue,
+                        basePlan.IncludeStart,
+                        basePlan.IncludeEnd);
+                    result = QueryExecutionPlan.CreatePrimaryKeyRange(
+                        rangeSpec,
+                        basePlan.UsedFilterIndex.Value,
+                        remaining,
+                        direction,
+                        canOptimize,
+                        !isOrderByIdOnly);
+                }
             }
             else
             {

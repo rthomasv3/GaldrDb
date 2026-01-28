@@ -8,6 +8,7 @@ internal sealed class QueryExecutionPlan
     public int? UsedFilterIndex { get; }
     public IReadOnlyList<IFieldFilter> RemainingFilters { get; }
     public PrimaryKeyRangeSpec PrimaryKeyRange { get; }
+    public PrimaryKeyMultiPointSpec PrimaryKeyMultiPoint { get; }
     public SecondaryIndexSpec SecondaryIndex { get; }
     public bool CanApplySkipLimitDuringScan { get; }
     public bool RequiresPostScanOrdering { get; }
@@ -18,6 +19,7 @@ internal sealed class QueryExecutionPlan
         int? usedFilterIndex,
         IReadOnlyList<IFieldFilter> remainingFilters,
         PrimaryKeyRangeSpec primaryKeyRange,
+        PrimaryKeyMultiPointSpec primaryKeyMultiPoint,
         SecondaryIndexSpec secondaryIndex,
         bool canApplySkipLimitDuringScan,
         bool requiresPostScanOrdering,
@@ -27,6 +29,7 @@ internal sealed class QueryExecutionPlan
         UsedFilterIndex = usedFilterIndex;
         RemainingFilters = remainingFilters;
         PrimaryKeyRange = primaryKeyRange;
+        PrimaryKeyMultiPoint = primaryKeyMultiPoint;
         SecondaryIndex = secondaryIndex;
         CanApplySkipLimitDuringScan = canApplySkipLimitDuringScan;
         RequiresPostScanOrdering = requiresPostScanOrdering;
@@ -43,6 +46,7 @@ internal sealed class QueryExecutionPlan
             filters,
             null,
             null,
+            null,
             false,
             requiresPostScanOrdering,
             ScanDirection.Ascending);
@@ -57,6 +61,7 @@ internal sealed class QueryExecutionPlan
             QueryPlanType.PrimaryKeyScan,
             null,
             EmptyFilters,
+            null,
             null,
             null,
             canApplySkipLimitDuringScan,
@@ -78,6 +83,27 @@ internal sealed class QueryExecutionPlan
             remainingFilters,
             rangeSpec,
             null,
+            null,
+            canApplySkipLimitDuringScan,
+            requiresPostScanOrdering,
+            direction);
+    }
+
+    public static QueryExecutionPlan CreatePrimaryKeyMultiPoint(
+        PrimaryKeyMultiPointSpec multiPointSpec,
+        int usedFilterIndex,
+        IReadOnlyList<IFieldFilter> remainingFilters,
+        ScanDirection direction,
+        bool canApplySkipLimitDuringScan,
+        bool requiresPostScanOrdering)
+    {
+        return new QueryExecutionPlan(
+            QueryPlanType.PrimaryKeyMultiPoint,
+            usedFilterIndex,
+            remainingFilters,
+            null,
+            multiPointSpec,
+            null,
             canApplySkipLimitDuringScan,
             requiresPostScanOrdering,
             direction);
@@ -94,6 +120,7 @@ internal sealed class QueryExecutionPlan
             QueryPlanType.SecondaryIndexScan,
             usedFilterIndex,
             remainingFilters,
+            null,
             null,
             indexSpec,
             canApplySkipLimitDuringScan,

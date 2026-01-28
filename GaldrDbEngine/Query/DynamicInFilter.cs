@@ -149,4 +149,21 @@ internal sealed class DynamicInFilter : IFieldFilter
     {
         return null;
     }
+
+    public IReadOnlyList<int> GetInValuesAsInt32()
+    {
+        IReadOnlyList<int> result = null;
+
+        if (_fieldType == GaldrFieldType.Int32)
+        {
+            List<int> values = new List<int>(_valuesArray.Length);
+            foreach (object value in _valuesArray)
+            {
+                values.Add((int)value);
+            }
+            result = values;
+        }
+
+        return result;
+    }
 }

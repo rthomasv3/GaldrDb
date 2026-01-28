@@ -148,4 +148,9 @@ internal sealed class DynamicBetweenFilter : IFieldFilter
     {
         return _maxValue;
     }
+
+    public IReadOnlyList<int> GetInValuesAsInt32()
+    {
+        return null;
+    }
 }

@@ -131,4 +131,9 @@ internal sealed class DynamicNotInFilter : IFieldFilter
     {
         return null;
     }
+
+    public IReadOnlyList<int> GetInValuesAsInt32()
+    {
+        return null;
+    }
 }

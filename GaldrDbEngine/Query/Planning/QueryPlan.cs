@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using GaldrDbEngine.Storage;
 
 namespace GaldrDbEngine.Query.Planning;
@@ -12,6 +13,9 @@ internal sealed class QueryPlan
     public int? EndDocId { get; }
     public bool IncludeStart { get; }
     public bool IncludeEnd { get; }
+
+    // For PrimaryKeyMultiPoint
+    public IReadOnlyList<int> DocIds { get; }
 
     // For SecondaryIndexScan
     public IndexDefinition IndexDefinition { get; }
@@ -31,6 +35,7 @@ internal sealed class QueryPlan
         int? endDocId,
         bool includeStart,
         bool includeEnd,
+        IReadOnlyList<int> docIds,
         IndexDefinition indexDefinition,
         IFieldFilter indexFilter)
     {
@@ -40,6 +45,7 @@ internal sealed class QueryPlan
         EndDocId = endDocId;
         IncludeStart = includeStart;
         IncludeEnd = includeEnd;
+        DocIds = docIds;
         IndexDefinition = indexDefinition;
         IndexFilter = indexFilter;
     }
@@ -64,6 +70,21 @@ internal sealed class QueryPlan
             includeStart,
             includeEnd,
             null,
+            null,
+            null);
+    }
+
+    public static QueryPlan PrimaryKeyMultiPoint(IReadOnlyList<int> docIds, int filterIndex)
+    {
+        return new QueryPlan(
+            QueryPlanType.PrimaryKeyMultiPoint,
+            filterIndex,
+            null,
+            null,
+            true,
+            true,
+            docIds,
+            null,
             null);
     }
 
@@ -76,6 +97,7 @@ internal sealed class QueryPlan
             null,
             true,
             true,
+            null,
             indexDef,
             filter);
     }

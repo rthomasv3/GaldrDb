@@ -119,4 +119,17 @@ public sealed class InFilter<TDocument, TField> : IFieldFilter
     {
         return null;
     }
+
+    /// <inheritdoc/>
+    public IReadOnlyList<int> GetInValuesAsInt32()
+    {
+        IReadOnlyList<int> result = null;
+
+        if (_valuesArray is int[] intArray)
+        {
+            result = intArray;
+        }
+
+        return result;
+    }
 }

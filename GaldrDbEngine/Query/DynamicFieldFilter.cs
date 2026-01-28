@@ -218,4 +218,9 @@ internal sealed class DynamicFieldFilter : IFieldFilter
     {
         return null;
     }
+
+    public IReadOnlyList<int> GetInValuesAsInt32()
+    {
+        return null;
+    }
 }

@@ -106,4 +106,10 @@ public sealed class NotInFilter<TDocument, TField> : IFieldFilter
     {
         return null;
     }
+
+    /// <inheritdoc/>
+    public IReadOnlyList<int> GetInValuesAsInt32()
+    {
+        return null;
+    }
 }

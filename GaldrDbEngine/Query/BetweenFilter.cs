@@ -119,4 +119,10 @@ public sealed class BetweenFilter<TDocument, TField> : IFieldFilter where TField
     {
         return _maxValue;
     }
+
+    /// <inheritdoc/>
+    public IReadOnlyList<int> GetInValuesAsInt32()
+    {
+        return null;
+    }
 }
