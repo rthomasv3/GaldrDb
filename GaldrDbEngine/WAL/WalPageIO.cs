@@ -67,14 +67,6 @@ internal class WalPageIO : IPageIO
         _disposed = false;
     }
 
-    public bool InTransaction
-    {
-        get { return _currentTxId.Value.HasValue; }
-    }
-
-    public long MxFrame => Interlocked.Read(ref _mxFrame);
-    public long NBackfill => Interlocked.Read(ref _nBackfill);
-
     public void BeginTransaction(ulong txId)
     {
         // Check if WAL can be reset (all frames checkpointed, no uncommitted writes)
@@ -589,54 +581,6 @@ internal class WalPageIO : IPageIO
         }
 
         return madeProgress;
-    }
-
-    public void ApplyWalFrames(List<WalFrame> frames)
-    {
-        lock (_cacheLock)
-        {
-            long lastCommitFrame = 0;
-
-            foreach (WalFrame frame in frames)
-            {
-                if (frame.PageId >= 0 && frame.Data.Length > 0)
-                {
-                    long frameNum = frame.FrameNumber;
-
-                    // Just track the frame in _pageLatestFrame - data stays in WAL file
-                    _pageLatestFrame[frame.PageId] = frameNum;
-
-                    if (frame.IsCommit())
-                    {
-                        lastCommitFrame = frameNum;
-                    }
-                }
-            }
-
-            // Set counters based on recovered frames
-            if (frames.Count > 0)
-            {
-                Interlocked.Exchange(ref _writeFrameNumber, lastCommitFrame);
-                Interlocked.Exchange(ref _mxFrame, lastCommitFrame);
-                Interlocked.Exchange(ref _nBackfill, 0); // Nothing checkpointed after recovery
-            }
-        }
-    }
-
-    public void ClearCache()
-    {
-        lock (_cacheLock)
-        {
-            foreach (KeyValuePair<long, WalFrameEntry> kvp in _walFrames)
-            {
-                BufferPool.Return(kvp.Value.Data);
-            }
-            _walFrames.Clear();
-            _pageLatestFrame.Clear();
-            Interlocked.Exchange(ref _mxFrame, 0);
-            Interlocked.Exchange(ref _nBackfill, 0);
-            Interlocked.Exchange(ref _writeFrameNumber, 0);
-        }
     }
 
     private void ResetWal()
