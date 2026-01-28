@@ -116,4 +116,19 @@ internal sealed class DynamicNotInFilter : IFieldFilter
     {
         return null;
     }
+
+    public object GetFilterValue()
+    {
+        return null;
+    }
+
+    public object GetRangeMinValue()
+    {
+        return null;
+    }
+
+    public object GetRangeMaxValue()
+    {
+        return null;
+    }
 }

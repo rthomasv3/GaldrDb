@@ -47,4 +47,22 @@ public interface IFieldFilter
     /// </summary>
     /// <returns>Encoded key bytes for each value, or null for non-In filters.</returns>
     IEnumerable<byte[]> GetAllIndexKeyBytes();
+
+    /// <summary>
+    /// Gets the filter value as a boxed object.
+    /// </summary>
+    /// <returns>The filter value, or null for filters without a single value.</returns>
+    object GetFilterValue();
+
+    /// <summary>
+    /// Gets the minimum value for range filters (Between).
+    /// </summary>
+    /// <returns>The minimum value, or null for non-range filters.</returns>
+    object GetRangeMinValue();
+
+    /// <summary>
+    /// Gets the maximum value for range filters (Between).
+    /// </summary>
+    /// <returns>The maximum value, or null for non-range filters.</returns>
+    object GetRangeMaxValue();
 }

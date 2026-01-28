@@ -203,4 +203,19 @@ internal sealed class DynamicFieldFilter : IFieldFilter
     {
         return null;
     }
+
+    public object GetFilterValue()
+    {
+        return _value;
+    }
+
+    public object GetRangeMinValue()
+    {
+        return null;
+    }
+
+    public object GetRangeMaxValue()
+    {
+        return null;
+    }
 }

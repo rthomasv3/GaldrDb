@@ -87,6 +87,7 @@ internal sealed class QueryExecutionPlan
         SecondaryIndexSpec indexSpec,
         int usedFilterIndex,
         IReadOnlyList<IFieldFilter> remainingFilters,
+        bool canApplySkipLimitDuringScan,
         bool requiresPostScanOrdering)
     {
         return new QueryExecutionPlan(
@@ -95,7 +96,7 @@ internal sealed class QueryExecutionPlan
             remainingFilters,
             null,
             indexSpec,
-            false,
+            canApplySkipLimitDuringScan,
             requiresPostScanOrdering,
             ScanDirection.Ascending);
     }

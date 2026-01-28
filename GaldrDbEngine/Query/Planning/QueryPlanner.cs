@@ -115,40 +115,24 @@ internal sealed class QueryPlanner
     private QueryPlan CreateBetweenIdPlan(IFieldFilter filter, int filterIndex)
     {
         QueryPlan result = null;
-        Type filterType = filter.GetType();
+        object minObj = filter.GetRangeMinValue();
+        object maxObj = filter.GetRangeMaxValue();
 
-        if (filterType.IsGenericType)
+        if (minObj is int minVal && maxObj is int maxVal)
         {
-            System.Reflection.PropertyInfo minProp = filterType.GetProperty("MinValue");
-            System.Reflection.PropertyInfo maxProp = filterType.GetProperty("MaxValue");
-
-            if (minProp != null && maxProp != null)
-            {
-                object minObj = minProp.GetValue(filter);
-                object maxObj = maxProp.GetValue(filter);
-
-                if (minObj is int minVal && maxObj is int maxVal)
-                {
-                    result = QueryPlan.PrimaryKeyRange(minVal, maxVal, true, true, filterIndex);
-                }
-            }
+            result = QueryPlan.PrimaryKeyRange(minVal, maxVal, true, true, filterIndex);
         }
 
         return result;
     }
 
-    private int GetFilterIntValue(IFieldFilter filter)
+    private static int GetFilterIntValue(IFieldFilter filter)
     {
-        Type filterType = filter.GetType();
-        System.Reflection.PropertyInfo valueProp = filterType.GetProperty("Value");
+        object valueObj = filter.GetFilterValue();
 
-        if (valueProp != null)
+        if (valueObj is int intValue)
         {
-            object valueObj = valueProp.GetValue(filter);
-            if (valueObj is int intValue)
-            {
-                return intValue;
-            }
+            return intValue;
         }
 
         throw new InvalidOperationException($"Cannot extract int value from filter on field '{filter.FieldName}'");
@@ -324,12 +308,18 @@ internal sealed class QueryPlanner
                         indexResult.Filter,
                         indexOp);
                     IReadOnlyList<IFieldFilter> remaining = ComputeRemainingFilters(filters, indexResult.FilterIndex);
+                    string indexedFieldName = indexResult.Filter.FieldName;
+                    bool orderMatchesIndex = orderByFieldNames.Count == 0 ||
+                        (orderByFieldNames.Count == 1 && orderByFieldNames[0] == indexedFieldName && !hasDescendingOrder);
+                    bool requiresPostScanOrdering = !orderMatchesIndex;
+                    bool canOptimize = remaining.Count == 0 && !requiresPostScanOrdering;
 
                     result = QueryExecutionPlan.CreateSecondaryIndexScan(
                         indexSpec,
                         indexResult.FilterIndex,
                         remaining,
-                        !isOrderByIdOnly);
+                        canOptimize,
+                        requiresPostScanOrdering);
                 }
                 else
                 {

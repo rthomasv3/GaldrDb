@@ -39,10 +39,17 @@ internal sealed class SecondaryIndexScanner
         else if (filter.Operation == FieldOp.In)
         {
             entries = new List<SecondaryIndexEntry>();
+            HashSet<int> seenDocIds = new HashSet<int>();
             foreach (byte[] valueKeyBytes in filter.GetAllIndexKeyBytes())
             {
                 List<SecondaryIndexEntry> valueEntries = _db.SearchSecondaryIndexExact(indexDef, valueKeyBytes);
-                entries.AddRange(valueEntries);
+                foreach (SecondaryIndexEntry entry in valueEntries)
+                {
+                    if (seenDocIds.Add(entry.DocId))
+                    {
+                        entries.Add(entry);
+                    }
+                }
             }
         }
         else if (filter.Operation == FieldOp.Between)
@@ -76,11 +83,12 @@ internal sealed class SecondaryIndexScanner
 
     public static List<int> ExtractDocIds(List<SecondaryIndexEntry> entries)
     {
+        HashSet<int> seen = new HashSet<int>(entries.Count);
         List<int> docIds = new List<int>(entries.Count);
 
         foreach (SecondaryIndexEntry entry in entries)
         {
-            if (!docIds.Contains(entry.DocId))
+            if (seen.Add(entry.DocId))
             {
                 docIds.Add(entry.DocId);
             }

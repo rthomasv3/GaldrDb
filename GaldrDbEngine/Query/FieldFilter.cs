@@ -185,4 +185,22 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
     {
         return null;
     }
+
+    /// <inheritdoc/>
+    public object GetFilterValue()
+    {
+        return _value;
+    }
+
+    /// <inheritdoc/>
+    public object GetRangeMinValue()
+    {
+        return null;
+    }
+
+    /// <inheritdoc/>
+    public object GetRangeMaxValue()
+    {
+        return null;
+    }
 }

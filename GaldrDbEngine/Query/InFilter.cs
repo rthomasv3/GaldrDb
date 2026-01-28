@@ -101,4 +101,22 @@ public sealed class InFilter<TDocument, TField> : IFieldFilter
         }
         return keys;
     }
+
+    /// <inheritdoc/>
+    public object GetFilterValue()
+    {
+        return null;
+    }
+
+    /// <inheritdoc/>
+    public object GetRangeMinValue()
+    {
+        return null;
+    }
+
+    /// <inheritdoc/>
+    public object GetRangeMaxValue()
+    {
+        return null;
+    }
 }

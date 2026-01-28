@@ -101,4 +101,22 @@ public sealed class BetweenFilter<TDocument, TField> : IFieldFilter where TField
     {
         return null;
     }
+
+    /// <inheritdoc/>
+    public object GetFilterValue()
+    {
+        return null;
+    }
+
+    /// <inheritdoc/>
+    public object GetRangeMinValue()
+    {
+        return _minValue;
+    }
+
+    /// <inheritdoc/>
+    public object GetRangeMaxValue()
+    {
+        return _maxValue;
+    }
 }

@@ -133,4 +133,19 @@ internal sealed class DynamicBetweenFilter : IFieldFilter
     {
         return null;
     }
+
+    public object GetFilterValue()
+    {
+        return null;
+    }
+
+    public object GetRangeMinValue()
+    {
+        return _minValue;
+    }
+
+    public object GetRangeMaxValue()
+    {
+        return _maxValue;
+    }
 }
