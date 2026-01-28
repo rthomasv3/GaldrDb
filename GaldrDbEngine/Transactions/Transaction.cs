@@ -32,6 +32,8 @@ public class Transaction : IDisposable
     private bool _disposed;
     private bool _hasActiveWalTransaction;
 
+    private const int MAX_PAGE_CONFLICT_RETRIES = 10;
+
     /// <summary>
     /// The unique transaction identifier.
     /// </summary>
@@ -523,10 +525,12 @@ public class Transaction : IDisposable
         {
             State = TransactionState.Committing;
 
-            const int MAX_PAGE_CONFLICT_RETRIES = 10;
             int retryCount = 0;
             List<VersionOperation> versionOps = null;
 
+            // Write pages to WAL with retry on page conflicts.
+            // Page conflicts occur when concurrent transactions modify the same BTree pages.
+            // This is an internal detail - retries are transparent to the caller.
             while (true)
             {
                 _db.BeginWalTransaction(TxId.Value);
@@ -534,7 +538,6 @@ public class Transaction : IDisposable
 
                 try
                 {
-                    // Phase 1: Write all data to storage, collect version operations
                     versionOps = new List<VersionOperation>(_writeSet.Count);
 
                     foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in _writeSet)
@@ -561,16 +564,12 @@ public class Transaction : IDisposable
                         }
                     }
 
-                    // Phase 2: Commit WAL (may throw PageConflictException)
                     _db.CommitWalTransaction();
                     _hasActiveWalTransaction = false;
-
-                    // Successfully committed pages - exit retry loop
                     break;
                 }
                 catch (PageConflictException)
                 {
-                    // Page conflict detected - another transaction modified a page we wrote to
                     _db.AbortWalTransaction();
                     _hasActiveWalTransaction = false;
 
@@ -581,9 +580,6 @@ public class Transaction : IDisposable
                         _txManager.MarkAborted(TxId);
                         throw new InvalidOperationException($"Transaction failed after {MAX_PAGE_CONFLICT_RETRIES} page conflict retries");
                     }
-
-                    // Retry: begin new WAL transaction and re-execute commit operations
-                    continue;
                 }
                 catch
                 {
@@ -595,15 +591,14 @@ public class Transaction : IDisposable
                 }
             }
 
-            // Phase 3: Atomically validate and add all versions (after successful WAL commit)
+            // Validate document versions and add to version index.
+            // This may throw WriteConflictException if another transaction modified the same documents.
             try
             {
                 _versionIndex.ValidateAndAddVersions(TxId, SnapshotTxId, versionOps);
             }
             catch
             {
-                // Document-level conflict detected after WAL commit
-                // The committed pages are orphaned but will not be referenced
                 State = TransactionState.Aborted;
                 _txManager.MarkAborted(TxId);
                 throw;
@@ -1514,10 +1509,12 @@ public class Transaction : IDisposable
         {
             State = TransactionState.Committing;
 
-            const int MAX_PAGE_CONFLICT_RETRIES = 10;
             int retryCount = 0;
             List<VersionOperation> versionOps = null;
 
+            // Write pages to WAL with retry on page conflicts.
+            // Page conflicts occur when concurrent transactions modify the same BTree pages.
+            // This is an internal detail - retries are transparent to the caller.
             while (true)
             {
                 _db.BeginWalTransaction(TxId.Value);
@@ -1525,8 +1522,7 @@ public class Transaction : IDisposable
 
                 try
                 {
-                    // Phase 1: Write all data to storage, collect version operations
-                    versionOps = new List<VersionOperation>();
+                    versionOps = new List<VersionOperation>(_writeSet.Count);
 
                     foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in _writeSet)
                     {
@@ -1552,16 +1548,12 @@ public class Transaction : IDisposable
                         }
                     }
 
-                    // Phase 2: Commit WAL (may throw PageConflictException)
                     _db.CommitWalTransaction();
                     _hasActiveWalTransaction = false;
-
-                    // Successfully committed pages - exit retry loop
                     break;
                 }
                 catch (PageConflictException)
                 {
-                    // Page conflict detected - another transaction modified a page we wrote to
                     _db.AbortWalTransaction();
                     _hasActiveWalTransaction = false;
 
@@ -1572,9 +1564,6 @@ public class Transaction : IDisposable
                         _txManager.MarkAborted(TxId);
                         throw new InvalidOperationException($"Transaction failed after {MAX_PAGE_CONFLICT_RETRIES} page conflict retries");
                     }
-
-                    // Retry: begin new WAL transaction and re-execute commit operations
-                    continue;
                 }
                 catch
                 {
@@ -1586,15 +1575,14 @@ public class Transaction : IDisposable
                 }
             }
 
-            // Phase 3: Atomically validate and add all versions (after successful WAL commit)
+            // Validate document versions and add to version index.
+            // This may throw WriteConflictException if another transaction modified the same documents.
             try
             {
                 _versionIndex.ValidateAndAddVersions(TxId, SnapshotTxId, versionOps);
             }
             catch
             {
-                // Document-level conflict detected after WAL commit
-                // The committed pages are orphaned but will not be referenced
                 State = TransactionState.Aborted;
                 _txManager.MarkAborted(TxId);
                 throw;
