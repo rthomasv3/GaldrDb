@@ -228,11 +228,10 @@ internal class WalPageIO : IPageIO
 
     public void ReadPage(int pageId, Span<byte> destination)
     {
-        bool foundInWal = false;
-        long frameNum = 0;
-        ulong? currentTxId = _currentTxId.Value;
+        bool found = false;
 
-        // First, check if the current transaction has an uncommitted write for this page
+        // Check current transaction's uncommitted writes first (read-your-own-writes)
+        ulong? currentTxId = _currentTxId.Value;
         if (currentTxId.HasValue)
         {
             Dictionary<int, PageWriteEntry> txPageWrites = _txPageWrites.Value;
@@ -243,39 +242,29 @@ internal class WalPageIO : IPageIO
                     if (_walFrames.TryGetValue(writeInfo.FrameNum, out WalFrameEntry entry))
                     {
                         entry.Data.AsSpan().CopyTo(destination);
-                        foundInWal = true;
+                        found = true;
                     }
                 }
             }
         }
 
-        // If not found in current transaction's writes, look for committed data
-        if (!foundInWal)
+        // Check for committed data in WAL
+        if (!found)
         {
+            long frameNum;
             lock (_cacheLock)
             {
-                if (_pageLatestFrame.TryGetValue(pageId, out frameNum))
-                {
-                    long currentNBackfill = Interlocked.Read(ref _nBackfill);
-                    if (frameNum > currentNBackfill)
-                    {
-                        // Frame is in WAL (committed), will read below
-                    }
-                }
+                _pageLatestFrame.TryGetValue(pageId, out frameNum);
             }
-        }
 
-        if (!foundInWal && frameNum > 0)
-        {
-            // Read committed frame from WAL file
-            long currentNBackfill = Interlocked.Read(ref _nBackfill);
-            if (frameNum > currentNBackfill)
+            if (frameNum > 0 && frameNum > Interlocked.Read(ref _nBackfill))
             {
-                foundInWal = _wal.ReadFrameData(frameNum, destination);
+                found = _wal.ReadFrameData(frameNum, destination);
             }
         }
 
-        if (!foundInWal)
+        // Fall back to base file
+        if (!found)
         {
             lock (_rwLock)
             {
@@ -371,11 +360,10 @@ internal class WalPageIO : IPageIO
 
     public async Task ReadPageAsync(int pageId, Memory<byte> destination, CancellationToken cancellationToken = default)
     {
-        bool foundInWal = false;
-        long frameNum = 0;
-        ulong? currentTxId = _currentTxId.Value;
+        bool found = false;
 
-        // First, check if the current transaction has an uncommitted write for this page
+        // Check current transaction's uncommitted writes first (read-your-own-writes)
+        ulong? currentTxId = _currentTxId.Value;
         if (currentTxId.HasValue)
         {
             Dictionary<int, PageWriteEntry> txPageWrites = _txPageWrites.Value;
@@ -386,39 +374,29 @@ internal class WalPageIO : IPageIO
                     if (_walFrames.TryGetValue(writeInfo.FrameNum, out WalFrameEntry entry))
                     {
                         entry.Data.AsMemory().CopyTo(destination);
-                        foundInWal = true;
+                        found = true;
                     }
                 }
             }
         }
 
-        // If not found in current transaction's writes, look for committed data
-        if (!foundInWal)
+        // Check for committed data in WAL
+        if (!found)
         {
+            long frameNum;
             lock (_cacheLock)
             {
-                if (_pageLatestFrame.TryGetValue(pageId, out frameNum))
-                {
-                    long currentNBackfill = Interlocked.Read(ref _nBackfill);
-                    if (frameNum > currentNBackfill)
-                    {
-                        // Frame is in WAL (committed), will read below
-                    }
-                }
+                _pageLatestFrame.TryGetValue(pageId, out frameNum);
             }
-        }
 
-        if (!foundInWal && frameNum > 0)
-        {
-            // Read committed frame from WAL file
-            long currentNBackfill = Interlocked.Read(ref _nBackfill);
-            if (frameNum > currentNBackfill)
+            if (frameNum > 0 && frameNum > Interlocked.Read(ref _nBackfill))
             {
-                foundInWal = await _wal.ReadFrameDataAsync(frameNum, destination, cancellationToken).ConfigureAwait(false);
+                found = await _wal.ReadFrameDataAsync(frameNum, destination, cancellationToken).ConfigureAwait(false);
             }
         }
 
-        if (!foundInWal)
+        // Fall back to base file
+        if (!found)
         {
             await _innerPageIO.ReadPageAsync(pageId, destination, cancellationToken).ConfigureAwait(false);
         }
