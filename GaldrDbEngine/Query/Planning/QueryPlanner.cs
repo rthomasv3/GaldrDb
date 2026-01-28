@@ -335,16 +335,18 @@ internal sealed class QueryPlanner
                 if (indexResult != null)
                 {
                     SecondaryIndexOperation indexOp = GetSecondaryIndexOperation(indexResult.Filter.Operation);
-                    SecondaryIndexSpec indexSpec = new SecondaryIndexSpec(
-                        indexResult.IndexDefinition,
-                        indexResult.Filter,
-                        indexOp);
                     IReadOnlyList<IFieldFilter> remaining = ComputeRemainingFilters(filters, indexResult.FilterIndex);
                     string indexedFieldName = indexResult.Filter.FieldName;
                     bool orderMatchesIndex = orderByFieldNames.Count == 0 ||
-                        (orderByFieldNames.Count == 1 && orderByFieldNames[0] == indexedFieldName && !hasDescendingOrder);
+                        (orderByFieldNames.Count == 1 && orderByFieldNames[0] == indexedFieldName);
                     bool requiresPostScanOrdering = !orderMatchesIndex;
                     bool canOptimize = remaining.Count == 0 && !requiresPostScanOrdering;
+                    ScanDirection indexDirection = orderMatchesIndex ? direction : ScanDirection.Ascending;
+                    SecondaryIndexSpec indexSpec = new SecondaryIndexSpec(
+                        indexResult.IndexDefinition,
+                        indexResult.Filter,
+                        indexOp,
+                        indexDirection);
 
                     result = QueryExecutionPlan.CreateSecondaryIndexScan(
                         indexSpec,

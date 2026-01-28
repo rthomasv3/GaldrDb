@@ -54,6 +54,10 @@ internal sealed class VersionScanner
         else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
         {
             List<SecondaryIndexEntry> entries = _indexScanner.GetEntries(plan.SecondaryIndex);
+            if (plan.SecondaryIndex.Direction == ScanDirection.Descending)
+            {
+                entries.Reverse();
+            }
             List<int> docIds = SecondaryIndexScanner.ExtractDocIds(entries);
             versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, docIds, _snapshotTxId);
         }
@@ -95,6 +99,10 @@ internal sealed class VersionScanner
         else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
         {
             List<SecondaryIndexEntry> entries = _indexScanner.GetEntries(plan.SecondaryIndex);
+            if (plan.SecondaryIndex.Direction == ScanDirection.Descending)
+            {
+                entries.Reverse();
+            }
             List<int> docIds = SecondaryIndexScanner.ExtractDocIds(entries);
             versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, docIds, _snapshotTxId);
         }
