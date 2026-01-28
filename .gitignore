@@ -365,3 +365,6 @@ FodyWeavers.xsd
 .idea/
 
 TEMP/
+BenchmarkResults/
+Documents/
+.claude/

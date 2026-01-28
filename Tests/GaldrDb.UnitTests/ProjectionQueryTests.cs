@@ -39,7 +39,7 @@ public class ProjectionQueryTests
         {
             File.Delete(_testDbPath);
         }
-        string walPath = _testDbPath + ".wal";
+        string walPath = Path.ChangeExtension(_testDbPath, ".wal");
         if (File.Exists(walPath))
         {
             File.Delete(walPath);

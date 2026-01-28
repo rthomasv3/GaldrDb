@@ -1,8 +1,9 @@
-using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using GaldrDb.UnitTests.TestModels;
 using GaldrDbEngine.Generated;
 using GaldrDbEngine.Query;
+using GaldrDbEngine.Query.Execution;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace GaldrDb.UnitTests;
@@ -491,7 +492,7 @@ public class QueryBuilderTests
     }
 
     [TestMethod]
-    public async System.Threading.Tasks.Task QueryBuilder_AnyAsync_WithMatches_ReturnsTrue()
+    public async Task QueryBuilder_AnyAsync_WithMatches_ReturnsTrue()
     {
         // Arrange
         QueryBuilder<Person> query = new QueryBuilder<Person>(_executor)
@@ -505,7 +506,7 @@ public class QueryBuilderTests
     }
 
     [TestMethod]
-    public async System.Threading.Tasks.Task QueryBuilder_AnyAsync_WithNoMatches_ReturnsFalse()
+    public async Task QueryBuilder_AnyAsync_WithNoMatches_ReturnsFalse()
     {
         // Arrange
         QueryBuilder<Person> query = new QueryBuilder<Person>(_executor)

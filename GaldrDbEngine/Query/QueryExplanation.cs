@@ -1,3 +1,5 @@
+using GaldrDbEngine.Query.Planning;
+
 namespace GaldrDbEngine.Query;
 
 /// <summary>
@@ -89,6 +91,37 @@ public sealed class QueryExplanation
         return result;
     }
 
+    internal static QueryExplanation FromExecutionPlan(QueryExecutionPlan plan, int totalFilters)
+    {
+        QueryExplanation result;
+
+        switch (plan.PlanType)
+        {
+            case QueryPlanType.PrimaryKeyRange:
+                result = CreatePrimaryKeyRangeExplanationFromExecutionPlan(plan, totalFilters);
+                break;
+
+            case QueryPlanType.SecondaryIndexScan:
+                result = CreateSecondaryIndexExplanationFromExecutionPlan(plan, totalFilters);
+                break;
+
+            default:
+                result = new QueryExplanation(
+                    QueryScanType.FullScan,
+                    "Full collection scan - no index optimization available",
+                    null,
+                    null,
+                    null,
+                    false,
+                    false,
+                    totalFilters,
+                    0);
+                break;
+        }
+
+        return result;
+    }
+
     private static QueryExplanation CreatePrimaryKeyRangeExplanation(QueryPlan plan, int totalFilters)
     {
         string rangeStart = FormatBound(plan.StartDocId, int.MinValue, "MIN");
@@ -122,6 +155,55 @@ public sealed class QueryExplanation
     {
         string fieldName = plan.IndexFilter?.FieldName ?? "Unknown";
         string operation = plan.IndexFilter?.Operation.ToString() ?? "Unknown";
+        string description = $"Secondary index scan on '{fieldName}' using {operation}";
+
+        return new QueryExplanation(
+            QueryScanType.SecondaryIndex,
+            description,
+            fieldName,
+            null,
+            null,
+            true,
+            true,
+            totalFilters,
+            1);
+    }
+
+    private static QueryExplanation CreatePrimaryKeyRangeExplanationFromExecutionPlan(QueryExecutionPlan plan, int totalFilters)
+    {
+        PrimaryKeyRangeSpec rangeSpec = plan.PrimaryKeyRange;
+        string rangeStart = FormatBound(rangeSpec.StartDocId, int.MinValue, "MIN");
+        string rangeEnd = FormatBound(rangeSpec.EndDocId, int.MaxValue, "MAX");
+
+        string description;
+        if (rangeSpec.StartDocId == rangeSpec.EndDocId && rangeSpec.IncludeStart && rangeSpec.IncludeEnd)
+        {
+            description = $"Primary key lookup: Id = {rangeSpec.StartDocId}";
+        }
+        else
+        {
+            string startOp = rangeSpec.IncludeStart ? ">=" : ">";
+            string endOp = rangeSpec.IncludeEnd ? "<=" : "<";
+            description = $"Primary key range scan: Id {startOp} {rangeStart} AND Id {endOp} {rangeEnd}";
+        }
+
+        return new QueryExplanation(
+            QueryScanType.PrimaryKeyRange,
+            description,
+            "Id",
+            rangeStart,
+            rangeEnd,
+            rangeSpec.IncludeStart,
+            rangeSpec.IncludeEnd,
+            totalFilters,
+            1);
+    }
+
+    private static QueryExplanation CreateSecondaryIndexExplanationFromExecutionPlan(QueryExecutionPlan plan, int totalFilters)
+    {
+        SecondaryIndexSpec indexSpec = plan.SecondaryIndex;
+        string fieldName = indexSpec?.IndexDefinition?.FieldName ?? "Unknown";
+        string operation = indexSpec?.IndexFilter?.Operation.ToString() ?? "Unknown";
         string description = $"Secondary index scan on '{fieldName}' using {operation}";
 
         return new QueryExplanation(

@@ -4,7 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using GaldrDbEngine.Json;
 
-namespace GaldrDbEngine.Query;
+namespace GaldrDbEngine.Query.Execution;
 
 internal sealed class AutoDisposingDynamicQueryExecutor : IDynamicQueryExecutor
 {

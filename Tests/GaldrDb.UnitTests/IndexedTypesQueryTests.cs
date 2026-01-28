@@ -27,6 +27,11 @@ public class IndexedTypesQueryTests
         {
             File.Delete(_testDbPath);
         }
+        string walPath = Path.ChangeExtension(_testDbPath, ".wal");
+        if (File.Exists(walPath))
+        {
+            File.Delete(walPath);
+        }
     }
 
     [TestMethod]

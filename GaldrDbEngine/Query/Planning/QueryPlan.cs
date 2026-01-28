@@ -1,6 +1,6 @@
 using GaldrDbEngine.Storage;
 
-namespace GaldrDbEngine.Query;
+namespace GaldrDbEngine.Query.Planning;
 
 internal sealed class QueryPlan
 {

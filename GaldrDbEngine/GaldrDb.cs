@@ -9,10 +9,11 @@ using GaldrDbEngine.Json;
 using GaldrDbEngine.MVCC;
 using GaldrDbEngine.Pages;
 using GaldrDbEngine.Query;
+using GaldrDbEngine.Query.Execution;
 using GaldrDbEngine.Schema;
 using GaldrDbEngine.Storage;
-using GaldrDbEngine.Utilities;
 using GaldrDbEngine.Transactions;
+using GaldrDbEngine.Utilities;
 using GaldrDbEngine.WAL;
 using GaldrJson;
 
@@ -321,7 +322,7 @@ public class GaldrDb : IDisposable
         int collectionsCopied = 0;
         TxId currentSnapshot = _txManager.GetSnapshotTxId();
 
-        using (GaldrDb targetDb = GaldrDb.Create(targetPath, _options))
+        using (GaldrDb targetDb = Create(targetPath, _options))
         {
             foreach (IGaldrTypeInfo typeInfo in GaldrTypeRegistry.GetAll())
             {
@@ -413,7 +414,7 @@ public class GaldrDb : IDisposable
         int collectionsCopied = 0;
         TxId currentSnapshot = _txManager.GetSnapshotTxId();
 
-        using (GaldrDb targetDb = GaldrDb.Create(targetPath, _options))
+        using (GaldrDb targetDb = Create(targetPath, _options))
         {
             foreach (IGaldrTypeInfo typeInfo in GaldrTypeRegistry.GetAll())
             {
@@ -1483,7 +1484,7 @@ public class GaldrDb : IDisposable
 
                 _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataStartPage, _pageManager.Header.CollectionsMetadataPageCount, _pageManager.Header.PageSize);
                 _collectionsMetadata.LoadFromDisk();
-                
+
                 // Rebuild VersionIndex from current database state
                 RebuildVersionIndex(0);
             }
@@ -1502,7 +1503,7 @@ public class GaldrDb : IDisposable
 
             _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataStartPage, _pageManager.Header.CollectionsMetadataPageCount, _pageManager.Header.PageSize);
             _collectionsMetadata.LoadFromDisk();
-            
+
             // No WAL - still need to rebuild VersionIndex for MVCC reads to work
             RebuildVersionIndex(0);
         }

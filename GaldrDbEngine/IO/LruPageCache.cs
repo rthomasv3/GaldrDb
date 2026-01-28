@@ -150,26 +150,33 @@ internal class LruPageCache : IPageIO
 
     private void AddOrUpdateCache(int pageId, ReadOnlySpan<byte> data)
     {
-        bool exists = _cache.TryGetValue(pageId, out LruCacheEntry entry);
-
-        if (exists)
+        while (true)
         {
-            lock (entry.WriteLock)
+            bool exists = _cache.TryGetValue(pageId, out LruCacheEntry entry);
+
+            if (exists)
             {
-                entry.BeginWrite();
-                data.CopyTo(entry.Data);
-                entry.EndWrite();
+                lock (entry.WriteLock)
+                {
+                    entry.BeginWrite();
+                    data.CopyTo(entry.Data);
+                    entry.EndWrite();
+                }
+                entry.Touch();
+                break;
             }
-            entry.Touch();
-        }
-        else
-        {
-            EnsureCapacity();
+            else
+            {
+                EnsureCapacity();
 
-            LruCacheEntry newEntry = new LruCacheEntry(pageId, _pageSize);
-            data.CopyTo(newEntry.Data);
+                LruCacheEntry newEntry = new LruCacheEntry(pageId, _pageSize);
+                data.CopyTo(newEntry.Data);
 
-            _cache.TryAdd(pageId, newEntry);
+                if (_cache.TryAdd(pageId, newEntry))
+                {
+                    break;
+                }
+            }
         }
     }
 

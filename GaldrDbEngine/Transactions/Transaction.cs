@@ -6,8 +6,10 @@ using System.Threading.Tasks;
 using GaldrDbEngine.Json;
 using GaldrDbEngine.MVCC;
 using GaldrDbEngine.Query;
+using GaldrDbEngine.Query.Execution;
 using GaldrDbEngine.Storage;
 using GaldrDbEngine.Utilities;
+using GaldrDbEngine.WAL;
 using GaldrJson;
 
 namespace GaldrDbEngine.Transactions;
@@ -521,61 +523,98 @@ public class Transaction : IDisposable
         {
             State = TransactionState.Committing;
 
-            _db.BeginWalTransaction(TxId.Value);
-            _hasActiveWalTransaction = true;
+            const int MAX_PAGE_CONFLICT_RETRIES = 10;
+            int retryCount = 0;
+            List<VersionOperation> versionOps = null;
 
+            while (true)
+            {
+                _db.BeginWalTransaction(TxId.Value);
+                _hasActiveWalTransaction = true;
+
+                try
+                {
+                    // Phase 1: Write all data to storage, collect version operations
+                    versionOps = new List<VersionOperation>(_writeSet.Count);
+
+                    foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in _writeSet)
+                    {
+                        WriteSetEntry entry = kvp.Value;
+                        DocumentLocation location;
+
+                        switch (entry.Operation)
+                        {
+                            case WriteOperation.Insert:
+                                location = _db.CommitInsert(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields);
+                                versionOps.Add(VersionOperation.ForInsert(entry.CollectionName, entry.DocumentId, location));
+                                break;
+
+                            case WriteOperation.Update:
+                                location = _db.CommitUpdate(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, entry.OldIndexFields);
+                                versionOps.Add(VersionOperation.ForUpdate(entry.CollectionName, entry.DocumentId, location, entry.ReadVersionTxId));
+                                break;
+
+                            case WriteOperation.Delete:
+                                _db.CommitDelete(entry.CollectionName, entry.DocumentId, entry.OldIndexFields);
+                                versionOps.Add(VersionOperation.ForDelete(entry.CollectionName, entry.DocumentId, entry.ReadVersionTxId));
+                                break;
+                        }
+                    }
+
+                    // Phase 2: Commit WAL (may throw PageConflictException)
+                    _db.CommitWalTransaction();
+                    _hasActiveWalTransaction = false;
+
+                    // Successfully committed pages - exit retry loop
+                    break;
+                }
+                catch (PageConflictException)
+                {
+                    // Page conflict detected - another transaction modified a page we wrote to
+                    _db.AbortWalTransaction();
+                    _hasActiveWalTransaction = false;
+
+                    retryCount++;
+                    if (retryCount >= MAX_PAGE_CONFLICT_RETRIES)
+                    {
+                        State = TransactionState.Aborted;
+                        _txManager.MarkAborted(TxId);
+                        throw new InvalidOperationException($"Transaction failed after {MAX_PAGE_CONFLICT_RETRIES} page conflict retries");
+                    }
+
+                    // Retry: begin new WAL transaction and re-execute commit operations
+                    continue;
+                }
+                catch
+                {
+                    _db.AbortWalTransaction();
+                    _hasActiveWalTransaction = false;
+                    State = TransactionState.Aborted;
+                    _txManager.MarkAborted(TxId);
+                    throw;
+                }
+            }
+
+            // Phase 3: Atomically validate and add all versions (after successful WAL commit)
             try
             {
-                // Phase 1: Write all data to storage, collect version operations
-                List<VersionOperation> versionOps = new List<VersionOperation>(_writeSet.Count);
-
-                foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in _writeSet)
-                {
-                    WriteSetEntry entry = kvp.Value;
-                    DocumentLocation location;
-
-                    switch (entry.Operation)
-                    {
-                        case WriteOperation.Insert:
-                            location = _db.CommitInsert(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields);
-                            versionOps.Add(VersionOperation.ForInsert(entry.CollectionName, entry.DocumentId, location));
-                            break;
-
-                        case WriteOperation.Update:
-                            location = _db.CommitUpdate(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, entry.OldIndexFields);
-                            versionOps.Add(VersionOperation.ForUpdate(entry.CollectionName, entry.DocumentId, location, entry.ReadVersionTxId));
-                            break;
-
-                        case WriteOperation.Delete:
-                            _db.CommitDelete(entry.CollectionName, entry.DocumentId, entry.OldIndexFields);
-                            versionOps.Add(VersionOperation.ForDelete(entry.CollectionName, entry.DocumentId, entry.ReadVersionTxId));
-                            break;
-                    }
-                }
-
-                // Phase 2: Atomically validate and add all versions
-                // This ensures no concurrent transaction modified our documents
                 _versionIndex.ValidateAndAddVersions(TxId, SnapshotTxId, versionOps);
-
-                // Phase 3: Commit WAL
-                _db.CommitWalTransaction();
-                _hasActiveWalTransaction = false;
-
-                State = TransactionState.Committed;
-                _txManager.MarkCommitted(TxId);
-                _writeSet.Clear();
-
-                _db.TryRunGarbageCollection();
-                _db.TryRunAutoCheckpoint();
             }
             catch
             {
-                _db.AbortWalTransaction();
-                _hasActiveWalTransaction = false;
+                // Document-level conflict detected after WAL commit
+                // The committed pages are orphaned but will not be referenced
                 State = TransactionState.Aborted;
                 _txManager.MarkAborted(TxId);
                 throw;
             }
+
+            State = TransactionState.Committed;
+            _txManager.MarkCommitted(TxId);
+            _writeSet.Clear();
+
+            _db.TryRunGarbageCollection();
+            _db.TryRunAutoCheckpoint();
         }
     }
 
@@ -1475,61 +1514,99 @@ public class Transaction : IDisposable
         {
             State = TransactionState.Committing;
 
-            _db.BeginWalTransaction(TxId.Value);
-            _hasActiveWalTransaction = true;
+            const int MAX_PAGE_CONFLICT_RETRIES = 10;
+            int retryCount = 0;
+            List<VersionOperation> versionOps = null;
 
+            while (true)
+            {
+                _db.BeginWalTransaction(TxId.Value);
+                _hasActiveWalTransaction = true;
+
+                try
+                {
+                    // Phase 1: Write all data to storage, collect version operations
+                    versionOps = new List<VersionOperation>();
+
+                    foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in _writeSet)
+                    {
+                        WriteSetEntry entry = kvp.Value;
+                        DocumentLocation location;
+
+                        switch (entry.Operation)
+                        {
+                            case WriteOperation.Insert:
+                                location = await _db.CommitInsertAsync(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, cancellationToken).ConfigureAwait(false);
+                                versionOps.Add(VersionOperation.ForInsert(entry.CollectionName, entry.DocumentId, location));
+                                break;
+
+                            case WriteOperation.Update:
+                                location = await _db.CommitUpdateAsync(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, entry.OldIndexFields, cancellationToken).ConfigureAwait(false);
+                                versionOps.Add(VersionOperation.ForUpdate(entry.CollectionName, entry.DocumentId, location, entry.ReadVersionTxId));
+                                break;
+
+                            case WriteOperation.Delete:
+                                await _db.CommitDeleteAsync(entry.CollectionName, entry.DocumentId, entry.OldIndexFields, cancellationToken).ConfigureAwait(false);
+                                versionOps.Add(VersionOperation.ForDelete(entry.CollectionName, entry.DocumentId, entry.ReadVersionTxId));
+                                break;
+                        }
+                    }
+
+                    // Phase 2: Commit WAL (may throw PageConflictException)
+                    _db.CommitWalTransaction();
+                    _hasActiveWalTransaction = false;
+
+                    // Successfully committed pages - exit retry loop
+                    break;
+                }
+                catch (PageConflictException)
+                {
+                    // Page conflict detected - another transaction modified a page we wrote to
+                    _db.AbortWalTransaction();
+                    _hasActiveWalTransaction = false;
+
+                    retryCount++;
+                    if (retryCount >= MAX_PAGE_CONFLICT_RETRIES)
+                    {
+                        State = TransactionState.Aborted;
+                        _txManager.MarkAborted(TxId);
+                        throw new InvalidOperationException($"Transaction failed after {MAX_PAGE_CONFLICT_RETRIES} page conflict retries");
+                    }
+
+                    // Retry: begin new WAL transaction and re-execute commit operations
+                    continue;
+                }
+                catch
+                {
+                    _db.AbortWalTransaction();
+                    _hasActiveWalTransaction = false;
+                    State = TransactionState.Aborted;
+                    _txManager.MarkAborted(TxId);
+                    throw;
+                }
+            }
+
+            // Phase 3: Atomically validate and add all versions (after successful WAL commit)
             try
             {
-                // Phase 1: Write all data to storage, collect version operations
-                List<VersionOperation> versionOps = new List<VersionOperation>();
-
-                foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in _writeSet)
-                {
-                    WriteSetEntry entry = kvp.Value;
-                    DocumentLocation location;
-
-                    switch (entry.Operation)
-                    {
-                        case WriteOperation.Insert:
-                            location = await _db.CommitInsertAsync(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, cancellationToken).ConfigureAwait(false);
-                            versionOps.Add(VersionOperation.ForInsert(entry.CollectionName, entry.DocumentId, location));
-                            break;
-
-                        case WriteOperation.Update:
-                            location = await _db.CommitUpdateAsync(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, entry.OldIndexFields, cancellationToken).ConfigureAwait(false);
-                            versionOps.Add(VersionOperation.ForUpdate(entry.CollectionName, entry.DocumentId, location, entry.ReadVersionTxId));
-                            break;
-
-                        case WriteOperation.Delete:
-                            await _db.CommitDeleteAsync(entry.CollectionName, entry.DocumentId, entry.OldIndexFields, cancellationToken).ConfigureAwait(false);
-                            versionOps.Add(VersionOperation.ForDelete(entry.CollectionName, entry.DocumentId, entry.ReadVersionTxId));
-                            break;
-                    }
-                }
-
-                // Phase 2: Atomically validate and add all versions
                 _versionIndex.ValidateAndAddVersions(TxId, SnapshotTxId, versionOps);
-
-                // Phase 3: Commit WAL
-                _db.CommitWalTransaction();
-                _hasActiveWalTransaction = false;
-
-                State = TransactionState.Committed;
-                _txManager.MarkCommitted(TxId);
-                _writeSet.Clear();
-
-                _db.TryRunGarbageCollection();
-
-                _db.TryRunAutoCheckpoint();
             }
             catch
             {
-                _db.AbortWalTransaction();
-                _hasActiveWalTransaction = false;
+                // Document-level conflict detected after WAL commit
+                // The committed pages are orphaned but will not be referenced
                 State = TransactionState.Aborted;
                 _txManager.MarkAborted(TxId);
                 throw;
             }
+
+            State = TransactionState.Committed;
+            _txManager.MarkCommitted(TxId);
+            _writeSet.Clear();
+
+            _db.TryRunGarbageCollection();
+
+            _db.TryRunAutoCheckpoint();
         }
     }
 
@@ -2082,7 +2159,7 @@ public class Transaction : IDisposable
     private static List<string> GetIndexedFieldNames(CollectionEntry collection)
     {
         List<string> fieldNames = new List<string>(collection.Indexes.Count);
-        foreach (Storage.IndexDefinition index in collection.Indexes)
+        foreach (IndexDefinition index in collection.Indexes)
         {
             fieldNames.Add(index.FieldName);
         }

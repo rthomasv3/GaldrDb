@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace GaldrDbEngine.Query;
+namespace GaldrDbEngine.Query.Execution;
 
 internal sealed class AutoDisposingQueryExecutor<T> : IQueryExecutor<T>
 {

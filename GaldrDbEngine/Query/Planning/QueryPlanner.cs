@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using GaldrDbEngine.Storage;
 
-namespace GaldrDbEngine.Query;
+namespace GaldrDbEngine.Query.Planning;
 
 internal sealed class QueryPlanner
 {
@@ -272,6 +272,122 @@ internal sealed class QueryPlanner
                 break;
             default:
                 result = 100;
+                break;
+        }
+
+        return result;
+    }
+
+    public QueryExecutionPlan CreateExecutionPlan(
+        IReadOnlyList<IFieldFilter> filters,
+        IReadOnlyList<string> orderByFieldNames,
+        bool hasDescendingOrder)
+    {
+        QueryExecutionPlan result;
+        bool isOrderByIdOnly = IsOrderByIdOnly(orderByFieldNames);
+        ScanDirection direction = hasDescendingOrder ? ScanDirection.Descending : ScanDirection.Ascending;
+
+        if (filters.Count == 0)
+        {
+            result = QueryExecutionPlan.CreatePrimaryKeyScan(direction, isOrderByIdOnly, !isOrderByIdOnly);
+        }
+        else
+        {
+            QueryPlan basePlan = FindIdBasedPlan(filters);
+
+            if (basePlan != null)
+            {
+                PrimaryKeyRangeSpec rangeSpec = new PrimaryKeyRangeSpec(
+                    basePlan.StartDocId ?? int.MinValue,
+                    basePlan.EndDocId ?? int.MaxValue,
+                    basePlan.IncludeStart,
+                    basePlan.IncludeEnd);
+                IReadOnlyList<IFieldFilter> remaining = ComputeRemainingFilters(filters, basePlan.UsedFilterIndex);
+                bool canOptimize = isOrderByIdOnly && remaining.Count == 0;
+
+                result = QueryExecutionPlan.CreatePrimaryKeyRange(
+                    rangeSpec,
+                    basePlan.UsedFilterIndex.Value,
+                    remaining,
+                    direction,
+                    canOptimize,
+                    !isOrderByIdOnly);
+            }
+            else
+            {
+                IndexedFilterResult indexResult = FindBestIndexedFilter(filters);
+                if (indexResult != null)
+                {
+                    SecondaryIndexOperation indexOp = GetSecondaryIndexOperation(indexResult.Filter.Operation);
+                    SecondaryIndexSpec indexSpec = new SecondaryIndexSpec(
+                        indexResult.IndexDefinition,
+                        indexResult.Filter,
+                        indexOp);
+                    IReadOnlyList<IFieldFilter> remaining = ComputeRemainingFilters(filters, indexResult.FilterIndex);
+
+                    result = QueryExecutionPlan.CreateSecondaryIndexScan(
+                        indexSpec,
+                        indexResult.FilterIndex,
+                        remaining,
+                        !isOrderByIdOnly);
+                }
+                else
+                {
+                    result = QueryExecutionPlan.CreateFullScan(filters, !isOrderByIdOnly);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private static bool IsOrderByIdOnly(IReadOnlyList<string> orderByFieldNames)
+    {
+        return orderByFieldNames.Count == 0 ||
+               (orderByFieldNames.Count == 1 && orderByFieldNames[0] == ID_FIELD_NAME);
+    }
+
+    private static IReadOnlyList<IFieldFilter> ComputeRemainingFilters(IReadOnlyList<IFieldFilter> filters, int? usedFilterIndex)
+    {
+        IReadOnlyList<IFieldFilter> result;
+
+        if (!usedFilterIndex.HasValue)
+        {
+            result = filters;
+        }
+        else
+        {
+            List<IFieldFilter> remaining = new List<IFieldFilter>(filters.Count - 1);
+            for (int i = 0; i < filters.Count; i++)
+            {
+                if (i != usedFilterIndex.Value)
+                {
+                    remaining.Add(filters[i]);
+                }
+            }
+            result = remaining;
+        }
+
+        return result;
+    }
+
+    private static SecondaryIndexOperation GetSecondaryIndexOperation(FieldOp op)
+    {
+        SecondaryIndexOperation result;
+
+        switch (op)
+        {
+            case FieldOp.Equals:
+                result = SecondaryIndexOperation.ExactMatch;
+                break;
+            case FieldOp.StartsWith:
+                result = SecondaryIndexOperation.PrefixMatch;
+                break;
+            case FieldOp.In:
+                result = SecondaryIndexOperation.MultiMatch;
+                break;
+            default:
+                result = SecondaryIndexOperation.RangeScan;
                 break;
         }
 

@@ -1,4 +1,4 @@
-namespace GaldrDbEngine.Query;
+namespace GaldrDbEngine.Query.Planning;
 
 internal enum QueryPlanType
 {
