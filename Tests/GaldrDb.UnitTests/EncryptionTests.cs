@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
@@ -8,6 +9,7 @@ using GaldrDbEngine.Generated;
 using GaldrDbEngine.IO;
 using GaldrDbEngine.Pages;
 using GaldrDbEngine.Query;
+using GaldrDbEngine.Storage;
 using GaldrDbEngine.Transactions;
 using GaldrDbEngine.Utilities;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -964,7 +966,7 @@ public class EncryptionTests
             db.Insert(new Person { Name = "Alice", Age = 35, Email = "alice2@example.com" });
             db.Insert(new Person { Name = "Charlie", Age = 28, Email = "charlie@example.com" });
 
-            System.Collections.Generic.List<Person> alices = db.Query<Person>()
+            List<Person> alices = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.Equals, "Alice")
                 .ToList();
 
@@ -995,7 +997,7 @@ public class EncryptionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
-            System.Collections.Generic.List<Person> targets = db.Query<Person>()
+            List<Person> targets = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.Equals, "TargetName")
                 .ToList();
 
@@ -1023,7 +1025,7 @@ public class EncryptionTests
 
             db.DeleteById<Person>(id1);
 
-            System.Collections.Generic.List<Person> remaining = db.Query<Person>()
+            List<Person> remaining = db.Query<Person>()
                 .Where(PersonMeta.Name, FieldOp.Equals, "ToDelete")
                 .ToList();
 
@@ -1133,7 +1135,7 @@ public class EncryptionTests
             pageIO.WritePage(0, headerPage);
 
             // Create CollectionsMetadata with usable page size
-            GaldrDbEngine.Storage.CollectionsMetadata metadata = new GaldrDbEngine.Storage.CollectionsMetadata(
+            CollectionsMetadata metadata = new CollectionsMetadata(
                 pageIO, 3, metadataPageCount, pageSize, usableSize);
 
             // Add entries until we're past the first page's usable boundary
@@ -1158,7 +1160,7 @@ public class EncryptionTests
             pageIO.Flush();
 
             // Reload and verify all collections survived
-            GaldrDbEngine.Storage.CollectionsMetadata reloaded = new GaldrDbEngine.Storage.CollectionsMetadata(
+            CollectionsMetadata reloaded = new CollectionsMetadata(
                 pageIO, 3, metadataPageCount, pageSize, usableSize);
             reloaded.LoadFromDisk();
 
@@ -1171,11 +1173,403 @@ public class EncryptionTests
             for (int i = 0; i < entryCount; i++)
             {
                 string collectionName = $"TestCollection{i:D3}WithLongNameToFillSpace";
-                GaldrDbEngine.Storage.CollectionEntry found = reloaded.FindCollection(collectionName);
+                CollectionEntry found = reloaded.FindCollection(collectionName);
                 Assert.IsNotNull(found, $"Collection '{collectionName}' was lost - likely corrupted at page boundary");
                 Assert.AreEqual(100 + i, found.RootPage, $"Collection '{collectionName}' has wrong RootPage");
             }
         }
+    }
+
+    #endregion
+
+    #region CompactTo Tests
+
+    [TestMethod]
+    public void EncryptedDatabase_CompactTo_CopiesAllDocuments()
+    {
+        string sourcePath = Path.Combine(_testDirectory, "source.db");
+        string targetPath = Path.Combine(_testDirectory, "target.db");
+        GaldrDbOptions options = new GaldrDbOptions
+        {
+            PageSize = 8192,
+            UseWal = true,
+            Encryption = new EncryptionOptions { Password = "compactTest", KdfIterations = 1000 }
+        };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(sourcePath, options))
+        {
+            for (int i = 0; i < 10; i++)
+            {
+                db.Insert(new Person { Name = $"Person{i}", Age = 20 + i, Email = $"person{i}@example.com" });
+            }
+
+            DatabaseCompactResult result = db.CompactTo(targetPath);
+
+            Assert.AreEqual(1, result.CollectionsCompacted);
+            Assert.AreEqual(10, result.DocumentsCopied);
+        }
+
+        using (GaldrDbInstance targetDb = GaldrDbInstance.Open(targetPath, options))
+        {
+            List<Person> people = targetDb.Query<Person>().ToList();
+
+            Assert.HasCount(10, people);
+        }
+    }
+
+    [TestMethod]
+    public void EncryptedDatabase_CompactTo_TargetRequiresSamePassword()
+    {
+        string sourcePath = Path.Combine(_testDirectory, "source.db");
+        string targetPath = Path.Combine(_testDirectory, "target.db");
+        GaldrDbOptions options = new GaldrDbOptions
+        {
+            PageSize = 8192,
+            UseWal = true,
+            Encryption = new EncryptionOptions { Password = "compactPasswordTest", KdfIterations = 1000 }
+        };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(sourcePath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 30, Email = "alice@example.com" });
+            db.CompactTo(targetPath);
+        }
+
+        GaldrDbOptions wrongOptions = new GaldrDbOptions
+        {
+            Encryption = new EncryptionOptions { Password = "wrongPassword", KdfIterations = 1000 }
+        };
+
+        Assert.Throws<InvalidPasswordException>(() =>
+        {
+            using (GaldrDbInstance targetDb = GaldrDbInstance.Open(targetPath, wrongOptions))
+            {
+            }
+        });
+    }
+
+    [TestMethod]
+    public void EncryptedDatabase_CompactTo_TargetFileIsEncrypted()
+    {
+        string sourcePath = Path.Combine(_testDirectory, "source.db");
+        string targetPath = Path.Combine(_testDirectory, "target.db");
+        GaldrDbOptions options = new GaldrDbOptions
+        {
+            PageSize = 8192,
+            UseWal = true,
+            Encryption = new EncryptionOptions { Password = "encryptedTargetTest", KdfIterations = 1000 }
+        };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(sourcePath, options))
+        {
+            db.Insert(new Person { Name = "TestPerson", Age = 25, Email = "test@example.com" });
+            db.CompactTo(targetPath);
+        }
+
+        bool isEncrypted = EncryptedPageIO.IsEncryptedFile(targetPath);
+
+        Assert.IsTrue(isEncrypted, "Compacted target file should be encrypted");
+    }
+
+    [TestMethod]
+    public void EncryptedDatabase_CompactTo_TargetDoesNotContainPlaintext()
+    {
+        string sourcePath = Path.Combine(_testDirectory, "source.db");
+        string targetPath = Path.Combine(_testDirectory, "target.db");
+        string uniqueString = "COMPACT_UNIQUE_STRING_98765";
+        GaldrDbOptions options = new GaldrDbOptions
+        {
+            PageSize = 8192,
+            UseWal = true,
+            Encryption = new EncryptionOptions { Password = "plaintextTest", KdfIterations = 1000 }
+        };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(sourcePath, options))
+        {
+            db.Insert(new Person { Name = uniqueString, Age = 30, Email = $"{uniqueString}@example.com" });
+            db.CompactTo(targetPath);
+        }
+
+        byte[] targetContents = File.ReadAllBytes(targetPath);
+        string targetAsString = Encoding.UTF8.GetString(targetContents);
+
+        bool containsPlaintext = targetAsString.Contains(uniqueString);
+
+        Assert.IsFalse(containsPlaintext, "Compacted target file should not contain plaintext data");
+    }
+
+    [TestMethod]
+    public void EncryptedDatabase_CompactTo_PreservesDocumentIds()
+    {
+        string sourcePath = Path.Combine(_testDirectory, "source.db");
+        string targetPath = Path.Combine(_testDirectory, "target.db");
+        GaldrDbOptions options = new GaldrDbOptions
+        {
+            PageSize = 8192,
+            UseWal = true,
+            Encryption = new EncryptionOptions { Password = "preserveIdsTest", KdfIterations = 1000 }
+        };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(sourcePath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 30, Email = "alice@example.com" });
+            db.Insert(new Person { Name = "Bob", Age = 25, Email = "bob@example.com" });
+            db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
+            db.CompactTo(targetPath);
+        }
+
+        using (GaldrDbInstance targetDb = GaldrDbInstance.Open(targetPath, options))
+        {
+            Person alice = targetDb.Query<Person>().Where(PersonMeta.Id, FieldOp.Equals, 1).FirstOrDefault();
+            Person bob = targetDb.Query<Person>().Where(PersonMeta.Id, FieldOp.Equals, 2).FirstOrDefault();
+            Person charlie = targetDb.Query<Person>().Where(PersonMeta.Id, FieldOp.Equals, 3).FirstOrDefault();
+
+            Assert.IsNotNull(alice);
+            Assert.AreEqual("Alice", alice.Name);
+            Assert.IsNotNull(bob);
+            Assert.AreEqual("Bob", bob.Name);
+            Assert.IsNotNull(charlie);
+            Assert.AreEqual("Charlie", charlie.Name);
+        }
+    }
+
+    [TestMethod]
+    public void EncryptedDatabase_CompactTo_ExcludesDeletedDocuments()
+    {
+        string sourcePath = Path.Combine(_testDirectory, "source.db");
+        string targetPath = Path.Combine(_testDirectory, "target.db");
+        GaldrDbOptions options = new GaldrDbOptions
+        {
+            PageSize = 8192,
+            UseWal = true,
+            Encryption = new EncryptionOptions { Password = "deletedExcludeTest", KdfIterations = 1000 }
+        };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(sourcePath, options))
+        {
+            db.Insert(new Person { Name = "Alice", Age = 30, Email = "alice@example.com" });
+            db.Insert(new Person { Name = "Bob", Age = 25, Email = "bob@example.com" });
+            db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
+
+            db.DeleteById<Person>(2);
+
+            DatabaseCompactResult result = db.CompactTo(targetPath);
+
+            Assert.AreEqual(2, result.DocumentsCopied);
+        }
+
+        using (GaldrDbInstance targetDb = GaldrDbInstance.Open(targetPath, options))
+        {
+            List<Person> people = targetDb.Query<Person>().ToList();
+
+            Assert.HasCount(2, people);
+
+            Person bob = targetDb.Query<Person>().Where(PersonMeta.Id, FieldOp.Equals, 2).FirstOrDefault();
+
+            Assert.IsNull(bob);
+        }
+    }
+
+    [TestMethod]
+    public void EncryptedDatabase_CompactTo_WithoutWal_Success()
+    {
+        string sourcePath = Path.Combine(_testDirectory, "source.db");
+        string targetPath = Path.Combine(_testDirectory, "target.db");
+        GaldrDbOptions options = new GaldrDbOptions
+        {
+            PageSize = 8192,
+            UseWal = false,
+            Encryption = new EncryptionOptions { Password = "noWalCompactTest", KdfIterations = 1000 }
+        };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(sourcePath, options))
+        {
+            for (int i = 0; i < 20; i++)
+            {
+                db.Insert(new Person { Name = $"Person{i}", Age = 20 + i, Email = $"person{i}@example.com" });
+            }
+
+            DatabaseCompactResult result = db.CompactTo(targetPath);
+
+            Assert.AreEqual(20, result.DocumentsCopied);
+        }
+
+        using (GaldrDbInstance targetDb = GaldrDbInstance.Open(targetPath, options))
+        {
+            List<Person> people = targetDb.Query<Person>().ToList();
+
+            Assert.HasCount(20, people);
+
+            for (int i = 0; i < 20; i++)
+            {
+                Person person = targetDb.GetById<Person>(i + 1);
+
+                Assert.IsNotNull(person);
+                Assert.AreEqual($"Person{i}", person.Name);
+            }
+        }
+    }
+
+    [TestMethod]
+    public void EncryptedDatabase_CompactTo_PreservesSecondaryIndex()
+    {
+        string sourcePath = Path.Combine(_testDirectory, "source.db");
+        string targetPath = Path.Combine(_testDirectory, "target.db");
+        GaldrDbOptions options = new GaldrDbOptions
+        {
+            PageSize = 8192,
+            UseWal = true,
+            Encryption = new EncryptionOptions { Password = "indexCompactTest", KdfIterations = 1000 }
+        };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(sourcePath, options))
+        {
+            db.Insert(new User { Name = "Alice", Email = "alice@example.com", Department = "Engineering" });
+            db.Insert(new User { Name = "Bob", Email = "bob@example.com", Department = "Engineering" });
+            db.Insert(new User { Name = "Charlie", Email = "charlie@example.com", Department = "Sales" });
+
+            db.CompactTo(targetPath);
+        }
+
+        using (GaldrDbInstance targetDb = GaldrDbInstance.Open(targetPath, options))
+        {
+            User bob = targetDb.Query<User>()
+                .Where(UserMeta.Email, FieldOp.Equals, "bob@example.com")
+                .FirstOrDefault();
+
+            Assert.IsNotNull(bob);
+            Assert.AreEqual("Bob", bob.Name);
+        }
+    }
+
+    [TestMethod]
+    public void EncryptedDatabase_CompactTo_ReducesFileSizeAfterDeletes()
+    {
+        string sourcePath = Path.Combine(_testDirectory, "source.db");
+        string targetPath = Path.Combine(_testDirectory, "target.db");
+        GaldrDbOptions options = new GaldrDbOptions
+        {
+            PageSize = 8192,
+            UseWal = true,
+            ExpansionPageCount = 32,
+            Encryption = new EncryptionOptions { Password = "sizeReductionTest", KdfIterations = 1000 }
+        };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(sourcePath, options))
+        {
+            // Insert enough documents to cause multiple expansions
+            for (int i = 0; i < 2000; i++)
+            {
+                db.Insert(new Person { Name = $"Person{i} with a longer name to take up more space in the database file", Age = 20 + i, Email = $"person{i}@example.com" });
+            }
+
+            // Delete most documents
+            for (int i = 1; i <= 1900; i++)
+            {
+                db.DeleteById<Person>(i);
+            }
+
+            long sourceSize = new FileInfo(sourcePath).Length;
+            DatabaseCompactResult result = db.CompactTo(targetPath);
+
+            Assert.AreEqual(100, result.DocumentsCopied);
+            Assert.IsLessThan(sourceSize, result.TargetFileSize, $"Target size {result.TargetFileSize} should be less than source size {sourceSize}");
+            Assert.IsGreaterThan(0, result.BytesSaved);
+        }
+    }
+
+    [TestMethod]
+    public async Task EncryptedDatabase_CompactToAsync_CopiesAllDocuments()
+    {
+        string sourcePath = Path.Combine(_testDirectory, "source.db");
+        string targetPath = Path.Combine(_testDirectory, "target.db");
+        GaldrDbOptions options = new GaldrDbOptions
+        {
+            PageSize = 8192,
+            UseWal = true,
+            Encryption = new EncryptionOptions { Password = "asyncCompactTest", KdfIterations = 1000 }
+        };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(sourcePath, options))
+        {
+            for (int i = 0; i < 15; i++)
+            {
+                await db.InsertAsync(new Person { Name = $"AsyncPerson{i}", Age = 25 + i, Email = $"async{i}@example.com" });
+            }
+
+            DatabaseCompactResult result = await db.CompactToAsync(targetPath);
+
+            Assert.AreEqual(1, result.CollectionsCompacted);
+            Assert.AreEqual(15, result.DocumentsCopied);
+        }
+
+        using (GaldrDbInstance targetDb = GaldrDbInstance.Open(targetPath, options))
+        {
+            List<Person> people = targetDb.Query<Person>().ToList();
+
+            Assert.HasCount(15, people);
+
+            for (int i = 0; i < 15; i++)
+            {
+                Person person = await targetDb.GetByIdAsync<Person>(i + 1);
+
+                Assert.IsNotNull(person);
+                Assert.AreEqual($"AsyncPerson{i}", person.Name);
+            }
+        }
+    }
+
+    [TestMethod]
+    public void EncryptedDatabase_CompactTo_TargetHasDifferentSalt()
+    {
+        // Verify the target database uses fresh cryptographic material (different salt)
+        // by checking that the encrypted bytes at the same page position are different
+        string sourcePath = Path.Combine(_testDirectory, "source.db");
+        string targetPath = Path.Combine(_testDirectory, "target.db");
+        GaldrDbOptions options = new GaldrDbOptions
+        {
+            PageSize = 8192,
+            UseWal = false,
+            Encryption = new EncryptionOptions { Password = "saltTest", KdfIterations = 1000 }
+        };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(sourcePath, options))
+        {
+            db.Insert(new Person { Name = "SaltTestPerson", Age = 30, Email = "salt@example.com" });
+            db.CompactTo(targetPath);
+        }
+
+        // Read the encryption headers from both files
+        byte[] sourceHeader = new byte[32];
+        byte[] targetHeader = new byte[32];
+
+        using (FileStream fs = new FileStream(sourcePath, FileMode.Open, FileAccess.Read))
+        {
+            fs.ReadExactly(sourceHeader, 0, 32);
+        }
+
+        using (FileStream fs = new FileStream(targetPath, FileMode.Open, FileAccess.Read))
+        {
+            fs.ReadExactly(targetHeader, 0, 32);
+        }
+
+        // Salt is at offset 12, 16 bytes long
+        byte[] sourceSalt = new byte[16];
+        byte[] targetSalt = new byte[16];
+        Array.Copy(sourceHeader, 12, sourceSalt, 0, 16);
+        Array.Copy(targetHeader, 12, targetSalt, 0, 16);
+
+        bool saltsAreDifferent = false;
+        for (int i = 0; i < 16; i++)
+        {
+            if (sourceSalt[i] != targetSalt[i])
+            {
+                saltsAreDifferent = true;
+                break;
+            }
+        }
+
+        Assert.IsTrue(saltsAreDifferent, "Target database should have a different salt than source");
     }
 
     #endregion
