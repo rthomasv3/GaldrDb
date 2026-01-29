@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading;
 using GaldrDbEngine.Storage;
 using GaldrDbEngine.Transactions;
 
@@ -8,7 +9,7 @@ internal sealed class VersionIndex
 {
     private readonly Dictionary<string, SortedDictionary<int, DocumentVersion>> _index;
     private readonly HashSet<DocumentKey> _gcCandidates;
-    private readonly object _lock = new object();
+    private readonly ReaderWriterLockSlim _lock = new ReaderWriterLockSlim();
     private int _multiVersionDocumentCount;
 
     public VersionIndex()
@@ -22,9 +23,14 @@ internal sealed class VersionIndex
     {
         get
         {
-            lock (_lock)
+            _lock.EnterReadLock();
+            try
             {
                 return _multiVersionDocumentCount;
+            }
+            finally
+            {
+                _lock.ExitReadLock();
             }
         }
     }
@@ -33,7 +39,8 @@ internal sealed class VersionIndex
     {
         DocumentVersion result = null;
 
-        lock (_lock)
+        _lock.EnterReadLock();
+        try
         {
             if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
@@ -43,6 +50,10 @@ internal sealed class VersionIndex
                 }
             }
         }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
 
         return result;
     }
@@ -51,7 +62,8 @@ internal sealed class VersionIndex
     {
         DocumentVersion result = null;
 
-        lock (_lock)
+        _lock.EnterReadLock();
+        try
         {
             if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
@@ -71,6 +83,10 @@ internal sealed class VersionIndex
                 }
             }
         }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
 
         return result;
     }
@@ -79,7 +95,8 @@ internal sealed class VersionIndex
     {
         List<int> result;
 
-        lock (_lock)
+        _lock.EnterReadLock();
+        try
         {
             if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
@@ -90,13 +107,18 @@ internal sealed class VersionIndex
                 result = new List<int>();
             }
         }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
 
         return result;
     }
 
     public void AddVersion(string collectionName, int documentId, TxId createdBy, DocumentLocation location)
     {
-        lock (_lock)
+        _lock.EnterWriteLock();
+        try
         {
             if (!_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
@@ -123,11 +145,16 @@ internal sealed class VersionIndex
             DocumentVersion newVersion = new DocumentVersion(documentId, createdBy, location, previousVersion);
             collection[documentId] = newVersion;
         }
+        finally
+        {
+            _lock.ExitWriteLock();
+        }
     }
 
     public void ValidateAndAddVersions(TxId createdBy, TxId snapshotTxId, IReadOnlyList<VersionOperation> operations)
     {
-        lock (_lock)
+        _lock.EnterWriteLock();
+        try
         {
             // Phase 1: Validate all operations - if any conflict, throw before modifying anything
             foreach (VersionOperation op in operations)
@@ -175,6 +202,10 @@ internal sealed class VersionIndex
                 }
             }
         }
+        finally
+        {
+            _lock.ExitWriteLock();
+        }
     }
 
     private void AddVersionInternal(string collectionName, int documentId, TxId createdBy, DocumentLocation location)
@@ -217,7 +248,8 @@ internal sealed class VersionIndex
 
     public void MarkDeleted(string collectionName, int documentId, TxId deletedBy)
     {
-        lock (_lock)
+        _lock.EnterWriteLock();
+        try
         {
             if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
@@ -228,18 +260,27 @@ internal sealed class VersionIndex
                 }
             }
         }
+        finally
+        {
+            _lock.ExitWriteLock();
+        }
     }
 
     public bool HasVersion(string collectionName, int documentId)
     {
         bool result = false;
 
-        lock (_lock)
+        _lock.EnterReadLock();
+        try
         {
             if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
                 result = collection.ContainsKey(documentId);
             }
+        }
+        finally
+        {
+            _lock.ExitReadLock();
         }
 
         return result;
@@ -249,7 +290,8 @@ internal sealed class VersionIndex
     {
         int count = 0;
 
-        lock (_lock)
+        _lock.EnterReadLock();
+        try
         {
             if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
@@ -263,18 +305,27 @@ internal sealed class VersionIndex
                 }
             }
         }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
 
         return count;
     }
 
     public void EnsureCollection(string collectionName)
     {
-        lock (_lock)
+        _lock.EnterWriteLock();
+        try
         {
             if (!_index.ContainsKey(collectionName))
             {
                 _index[collectionName] = new SortedDictionary<int, DocumentVersion>();
             }
+        }
+        finally
+        {
+            _lock.ExitWriteLock();
         }
     }
 
@@ -282,7 +333,8 @@ internal sealed class VersionIndex
     {
         List<DocumentVersion> results = new List<DocumentVersion>();
 
-        lock (_lock)
+        _lock.EnterReadLock();
+        try
         {
             if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
@@ -303,6 +355,10 @@ internal sealed class VersionIndex
                 }
             }
         }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
 
         return results;
     }
@@ -311,7 +367,8 @@ internal sealed class VersionIndex
     {
         List<DocumentVersion> results = new List<DocumentVersion>();
 
-        lock (_lock)
+        _lock.EnterReadLock();
+        try
         {
             if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
@@ -333,13 +390,18 @@ internal sealed class VersionIndex
                 }
             }
         }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
 
         return results;
     }
 
     public void UnlinkVersion(string collectionName, int documentId, DocumentVersion previous, DocumentVersion toRemove)
     {
-        lock (_lock)
+        _lock.EnterWriteLock();
+        try
         {
             if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
@@ -391,19 +453,29 @@ internal sealed class VersionIndex
                 }
             }
         }
+        finally
+        {
+            _lock.ExitWriteLock();
+        }
     }
 
     internal List<string> GetCollectionNames()
     {
-        lock (_lock)
+        _lock.EnterReadLock();
+        try
         {
             return new List<string>(_index.Keys);
+        }
+        finally
+        {
+            _lock.ExitReadLock();
         }
     }
 
     internal int GetDocumentCount(string collectionName)
     {
-        lock (_lock)
+        _lock.EnterReadLock();
+        try
         {
             if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
@@ -411,11 +483,16 @@ internal sealed class VersionIndex
             }
             return 0;
         }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
     }
 
     public void CollectGarbageVersions(TxId oldestSnapshot, List<CollectableVersion> results)
     {
-        lock (_lock)
+        _lock.EnterReadLock();
+        try
         {
             foreach (DocumentKey docKey in _gcCandidates)
             {
@@ -493,6 +570,10 @@ internal sealed class VersionIndex
                     current = current.PreviousVersion;
                 }
             }
+        }
+        finally
+        {
+            _lock.ExitReadLock();
         }
     }
 }

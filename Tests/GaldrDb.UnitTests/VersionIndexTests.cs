@@ -1,3 +1,7 @@
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using GaldrDbEngine.MVCC;
 using GaldrDbEngine.Storage;
 using GaldrDbEngine.Transactions;
@@ -396,4 +400,560 @@ public class VersionIndexTests
         Assert.AreEqual(tx1, latest.PreviousVersion.PreviousVersion.CreatedBy);
         Assert.IsNull(latest.PreviousVersion.PreviousVersion.PreviousVersion);
     }
+
+    #region GetAllVisibleVersions Tests
+
+    [TestMethod]
+    public void VersionIndex_GetAllVisibleVersions_ReturnsVisibleVersions()
+    {
+        VersionIndex index = new VersionIndex();
+        TxId tx1 = new TxId(5);
+        TxId tx2 = new TxId(10);
+        TxId snapshotTxId = new TxId(15);
+
+        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 2, tx2, new DocumentLocation(2, 0));
+
+        List<DocumentVersion> versions = index.GetAllVisibleVersions("TestCollection", snapshotTxId);
+
+        Assert.HasCount(2, versions);
+    }
+
+    [TestMethod]
+    public void VersionIndex_GetAllVisibleVersions_ExcludesDeletedVersions()
+    {
+        VersionIndex index = new VersionIndex();
+        TxId tx1 = new TxId(5);
+        TxId deletedBy = new TxId(10);
+        TxId snapshotTxId = new TxId(15);
+
+        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 2, tx1, new DocumentLocation(2, 0));
+        index.MarkDeleted("TestCollection", 1, deletedBy);
+
+        List<DocumentVersion> versions = index.GetAllVisibleVersions("TestCollection", snapshotTxId);
+
+        Assert.HasCount(1, versions);
+        Assert.AreEqual(2, versions[0].DocumentId);
+    }
+
+    [TestMethod]
+    public void VersionIndex_GetAllVisibleVersions_EmptyCollection_ReturnsEmptyList()
+    {
+        VersionIndex index = new VersionIndex();
+        TxId snapshotTxId = new TxId(10);
+
+        List<DocumentVersion> versions = index.GetAllVisibleVersions("NonExistent", snapshotTxId);
+
+        Assert.IsEmpty(versions);
+    }
+
+    #endregion
+
+    #region GetVisibleVersionsForDocIds Tests
+
+    [TestMethod]
+    public void VersionIndex_GetVisibleVersionsForDocIds_ReturnsMatchingVersions()
+    {
+        VersionIndex index = new VersionIndex();
+        TxId tx1 = new TxId(5);
+        TxId snapshotTxId = new TxId(10);
+
+        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 2, tx1, new DocumentLocation(2, 0));
+        index.AddVersion("TestCollection", 3, tx1, new DocumentLocation(3, 0));
+
+        List<int> docIds = new List<int> { 1, 3 };
+        List<DocumentVersion> versions = index.GetVisibleVersionsForDocIds("TestCollection", docIds, snapshotTxId);
+
+        Assert.HasCount(2, versions);
+    }
+
+    [TestMethod]
+    public void VersionIndex_GetVisibleVersionsForDocIds_NonExistentDocIds_ReturnsEmpty()
+    {
+        VersionIndex index = new VersionIndex();
+        TxId tx1 = new TxId(5);
+        TxId snapshotTxId = new TxId(10);
+
+        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
+
+        List<int> docIds = new List<int> { 99, 100 };
+        List<DocumentVersion> versions = index.GetVisibleVersionsForDocIds("TestCollection", docIds, snapshotTxId);
+
+        Assert.IsEmpty(versions);
+    }
+
+    #endregion
+
+    #region GetDocumentIds Tests
+
+    [TestMethod]
+    public void VersionIndex_GetDocumentIds_ReturnsAllDocIds()
+    {
+        VersionIndex index = new VersionIndex();
+        TxId tx1 = new TxId(5);
+
+        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 5, tx1, new DocumentLocation(2, 0));
+        index.AddVersion("TestCollection", 10, tx1, new DocumentLocation(3, 0));
+
+        List<int> docIds = index.GetDocumentIds("TestCollection");
+
+        Assert.HasCount(3, docIds);
+        Assert.Contains(1, docIds);
+        Assert.Contains(5, docIds);
+        Assert.Contains(10, docIds);
+    }
+
+    [TestMethod]
+    public void VersionIndex_GetDocumentIds_EmptyCollection_ReturnsEmptyList()
+    {
+        VersionIndex index = new VersionIndex();
+
+        List<int> docIds = index.GetDocumentIds("NonExistent");
+
+        Assert.IsEmpty(docIds);
+    }
+
+    #endregion
+
+    #region Collection Metadata Tests
+
+    [TestMethod]
+    public void VersionIndex_GetCollectionNames_ReturnsAllCollections()
+    {
+        VersionIndex index = new VersionIndex();
+        TxId tx1 = new TxId(5);
+
+        index.AddVersion("Collection1", 1, tx1, new DocumentLocation(1, 0));
+        index.AddVersion("Collection2", 1, tx1, new DocumentLocation(2, 0));
+        index.AddVersion("Collection3", 1, tx1, new DocumentLocation(3, 0));
+
+        List<string> names = index.GetCollectionNames();
+
+        Assert.HasCount(3, names);
+        Assert.Contains("Collection1", names);
+        Assert.Contains("Collection2", names);
+        Assert.Contains("Collection3", names);
+    }
+
+    [TestMethod]
+    public void VersionIndex_GetDocumentCount_ReturnsCorrectCount()
+    {
+        VersionIndex index = new VersionIndex();
+        TxId tx1 = new TxId(5);
+
+        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 2, tx1, new DocumentLocation(2, 0));
+        index.AddVersion("TestCollection", 3, tx1, new DocumentLocation(3, 0));
+
+        int count = index.GetDocumentCount("TestCollection");
+
+        Assert.AreEqual(3, count);
+    }
+
+    [TestMethod]
+    public void VersionIndex_GetDocumentCount_EmptyCollection_ReturnsZero()
+    {
+        VersionIndex index = new VersionIndex();
+
+        int count = index.GetDocumentCount("NonExistent");
+
+        Assert.AreEqual(0, count);
+    }
+
+    [TestMethod]
+    public void VersionIndex_MultiVersionDocumentCount_TracksCorrectly()
+    {
+        VersionIndex index = new VersionIndex();
+        TxId tx1 = new TxId(5);
+        TxId tx2 = new TxId(10);
+
+        Assert.AreEqual(0, index.MultiVersionDocumentCount);
+
+        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
+        Assert.AreEqual(0, index.MultiVersionDocumentCount);
+
+        index.AddVersion("TestCollection", 1, tx2, new DocumentLocation(2, 0));
+        Assert.AreEqual(1, index.MultiVersionDocumentCount);
+
+        index.AddVersion("TestCollection", 2, tx1, new DocumentLocation(3, 0));
+        Assert.AreEqual(1, index.MultiVersionDocumentCount);
+
+        index.AddVersion("TestCollection", 2, tx2, new DocumentLocation(4, 0));
+        Assert.AreEqual(2, index.MultiVersionDocumentCount);
+    }
+
+    #endregion
+
+    #region ValidateAndAddVersions Tests
+
+    [TestMethod]
+    public void VersionIndex_ValidateAndAddVersions_NoConflict_Succeeds()
+    {
+        VersionIndex index = new VersionIndex();
+        TxId tx1 = new TxId(5);
+        TxId tx2 = new TxId(10);
+        TxId snapshotTxId = new TxId(8);
+
+        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
+
+        List<VersionOperation> operations = new List<VersionOperation>
+        {
+            new VersionOperation("TestCollection", 2, new DocumentLocation(2, 0), false, null)
+        };
+
+        index.ValidateAndAddVersions(tx2, snapshotTxId, operations);
+
+        Assert.IsTrue(index.HasVersion("TestCollection", 2));
+    }
+
+    [TestMethod]
+    public void VersionIndex_ValidateAndAddVersions_Conflict_Throws()
+    {
+        VersionIndex index = new VersionIndex();
+        TxId tx1 = new TxId(5);
+        TxId tx2 = new TxId(10);
+        TxId tx3 = new TxId(15);
+        TxId snapshotTxId = new TxId(8);
+
+        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 1, tx2, new DocumentLocation(2, 0));
+
+        List<VersionOperation> operations = new List<VersionOperation>
+        {
+            new VersionOperation("TestCollection", 1, new DocumentLocation(3, 0), false, tx1)
+        };
+
+        Assert.ThrowsExactly<WriteConflictException>(() =>
+        {
+            index.ValidateAndAddVersions(tx3, snapshotTxId, operations);
+        });
+    }
+
+    #endregion
+
+    #region UnlinkVersion Tests
+
+    [TestMethod]
+    public void VersionIndex_UnlinkVersion_RemovesFromChain()
+    {
+        VersionIndex index = new VersionIndex();
+        TxId tx1 = new TxId(5);
+        TxId tx2 = new TxId(10);
+
+        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 1, tx2, new DocumentLocation(2, 0));
+
+        DocumentVersion latest = index.GetLatestVersion("TestCollection", 1);
+        DocumentVersion previous = latest.PreviousVersion;
+
+        Assert.AreEqual(2, index.GetVersionCount("TestCollection", 1));
+
+        index.UnlinkVersion("TestCollection", 1, latest, previous);
+
+        Assert.AreEqual(1, index.GetVersionCount("TestCollection", 1));
+    }
+
+    [TestMethod]
+    public void VersionIndex_UnlinkVersion_LastVersion_RemovesDocument()
+    {
+        VersionIndex index = new VersionIndex();
+        TxId tx1 = new TxId(5);
+
+        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
+
+        DocumentVersion version = index.GetLatestVersion("TestCollection", 1);
+
+        index.UnlinkVersion("TestCollection", 1, null, version);
+
+        Assert.IsFalse(index.HasVersion("TestCollection", 1));
+    }
+
+    #endregion
+
+    #region Concurrent Access Tests
+
+    [TestMethod]
+    public void VersionIndex_ConcurrentReads_NoErrors()
+    {
+        VersionIndex index = new VersionIndex();
+        TxId tx1 = new TxId(5);
+        TxId snapshotTxId = new TxId(10);
+
+        for (int i = 0; i < 100; i++)
+        {
+            index.AddVersion("TestCollection", i, tx1, new DocumentLocation(i, 0));
+        }
+
+        int errors = 0;
+        List<Task> tasks = new List<Task>();
+
+        for (int i = 0; i < 20; i++)
+        {
+            tasks.Add(Task.Run(() =>
+            {
+                for (int j = 0; j < 100; j++)
+                {
+                    DocumentVersion version = index.GetVisibleVersion("TestCollection", j % 100, snapshotTxId);
+                    if (version == null)
+                    {
+                        Interlocked.Increment(ref errors);
+                    }
+                }
+            }));
+        }
+
+        Task.WaitAll(tasks.ToArray());
+
+        Assert.AreEqual(0, errors, "Concurrent reads should not produce errors");
+    }
+
+    [TestMethod]
+    public void VersionIndex_ConcurrentReadsAndWrites_NoExceptions()
+    {
+        VersionIndex index = new VersionIndex();
+        TxId snapshotTxId = new TxId(1000);
+        int nextTxId = 1;
+        object txIdLock = new object();
+
+        for (int i = 0; i < 50; i++)
+        {
+            index.AddVersion("TestCollection", i, new TxId((ulong)i + 1), new DocumentLocation(i, 0));
+        }
+        nextTxId = 51;
+
+        int exceptions = 0;
+        List<Task> tasks = new List<Task>();
+
+        for (int i = 0; i < 10; i++)
+        {
+            tasks.Add(Task.Run(() =>
+            {
+                for (int j = 0; j < 50; j++)
+                {
+                    try
+                    {
+                        index.GetVisibleVersion("TestCollection", j, snapshotTxId);
+                        index.GetAllVisibleVersions("TestCollection", snapshotTxId);
+                        index.GetDocumentIds("TestCollection");
+                        index.HasVersion("TestCollection", j);
+                        int unused = index.MultiVersionDocumentCount;
+                    }
+                    catch
+                    {
+                        Interlocked.Increment(ref exceptions);
+                    }
+                }
+            }));
+        }
+
+        for (int i = 0; i < 5; i++)
+        {
+            int writerIndex = i;
+            tasks.Add(Task.Run(() =>
+            {
+                for (int j = 0; j < 20; j++)
+                {
+                    try
+                    {
+                        int txId;
+                        lock (txIdLock)
+                        {
+                            txId = nextTxId++;
+                        }
+                        int docId = (writerIndex * 20 + j) % 50;
+                        index.AddVersion("TestCollection", docId, new TxId((ulong)txId), new DocumentLocation(txId, 0));
+                    }
+                    catch
+                    {
+                        Interlocked.Increment(ref exceptions);
+                    }
+                }
+            }));
+        }
+
+        Task.WaitAll(tasks.ToArray());
+
+        Assert.AreEqual(0, exceptions, "Concurrent reads and writes should not throw exceptions");
+    }
+
+    [TestMethod]
+    public void VersionIndex_ConcurrentReads_GetAllVisibleVersions_Consistent()
+    {
+        VersionIndex index = new VersionIndex();
+        TxId tx1 = new TxId(5);
+        TxId snapshotTxId = new TxId(10);
+        int documentCount = 100;
+
+        for (int i = 0; i < documentCount; i++)
+        {
+            index.AddVersion("TestCollection", i, tx1, new DocumentLocation(i, 0));
+        }
+
+        int inconsistencies = 0;
+        List<Task> tasks = new List<Task>();
+
+        for (int i = 0; i < 20; i++)
+        {
+            tasks.Add(Task.Run(() =>
+            {
+                for (int j = 0; j < 50; j++)
+                {
+                    List<DocumentVersion> versions = index.GetAllVisibleVersions("TestCollection", snapshotTxId);
+                    if (versions.Count != documentCount)
+                    {
+                        Interlocked.Increment(ref inconsistencies);
+                    }
+                }
+            }));
+        }
+
+        Task.WaitAll(tasks.ToArray());
+
+        Assert.AreEqual(0, inconsistencies, "All concurrent reads should see consistent document count");
+    }
+
+    [TestMethod]
+    public void VersionIndex_HighContentionWriters_NoDeadlock()
+    {
+        VersionIndex index = new VersionIndex();
+        int nextTxId = 1;
+        object txIdLock = new object();
+
+        index.EnsureCollection("TestCollection");
+
+        int completedOperations = 0;
+        List<Task> tasks = new List<Task>();
+        CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        for (int i = 0; i < 10; i++)
+        {
+            int writerIndex = i;
+            tasks.Add(Task.Run(() =>
+            {
+                for (int j = 0; j < 100 && !cts.Token.IsCancellationRequested; j++)
+                {
+                    int txId;
+                    lock (txIdLock)
+                    {
+                        txId = nextTxId++;
+                    }
+                    index.AddVersion("TestCollection", writerIndex, new TxId((ulong)txId), new DocumentLocation(txId, 0));
+                    Interlocked.Increment(ref completedOperations);
+                }
+            }));
+        }
+
+        bool completedInTime = Task.WaitAll(tasks.ToArray(), TimeSpan.FromSeconds(10));
+
+        Assert.IsTrue(completedInTime, "All writers should complete without deadlock");
+        Assert.AreEqual(1000, completedOperations, "All operations should complete");
+    }
+
+    [TestMethod]
+    public void VersionIndex_MixedOperations_StressTest()
+    {
+        VersionIndex index = new VersionIndex();
+        int nextTxId = 1;
+        object txIdLock = new object();
+        TxId snapshotTxId = new TxId(100000);
+
+        for (int i = 0; i < 50; i++)
+        {
+            index.AddVersion("TestCollection", i, new TxId((ulong)(i + 1)), new DocumentLocation(i, 0));
+        }
+        nextTxId = 51;
+
+        int errors = 0;
+        List<Task> tasks = new List<Task>();
+
+        for (int i = 0; i < 5; i++)
+        {
+            tasks.Add(Task.Run(() =>
+            {
+                for (int j = 0; j < 100; j++)
+                {
+                    try
+                    {
+                        index.GetVisibleVersion("TestCollection", j % 50, snapshotTxId);
+                    }
+                    catch
+                    {
+                        Interlocked.Increment(ref errors);
+                    }
+                }
+            }));
+        }
+
+        for (int i = 0; i < 5; i++)
+        {
+            tasks.Add(Task.Run(() =>
+            {
+                for (int j = 0; j < 100; j++)
+                {
+                    try
+                    {
+                        index.GetAllVisibleVersions("TestCollection", snapshotTxId);
+                    }
+                    catch
+                    {
+                        Interlocked.Increment(ref errors);
+                    }
+                }
+            }));
+        }
+
+        for (int i = 0; i < 3; i++)
+        {
+            int writerIndex = i;
+            tasks.Add(Task.Run(() =>
+            {
+                for (int j = 0; j < 50; j++)
+                {
+                    try
+                    {
+                        int txId;
+                        lock (txIdLock)
+                        {
+                            txId = nextTxId++;
+                        }
+                        index.AddVersion("TestCollection", writerIndex * 10 + (j % 10), new TxId((ulong)txId), new DocumentLocation(txId, 0));
+                    }
+                    catch
+                    {
+                        Interlocked.Increment(ref errors);
+                    }
+                }
+            }));
+        }
+
+        for (int i = 0; i < 2; i++)
+        {
+            tasks.Add(Task.Run(() =>
+            {
+                for (int j = 0; j < 50; j++)
+                {
+                    try
+                    {
+                        index.GetDocumentIds("TestCollection");
+                        index.GetCollectionNames();
+                        index.GetDocumentCount("TestCollection");
+                        int unused = index.MultiVersionDocumentCount;
+                    }
+                    catch
+                    {
+                        Interlocked.Increment(ref errors);
+                    }
+                }
+            }));
+        }
+
+        Task.WaitAll(tasks.ToArray());
+
+        Assert.AreEqual(0, errors, "Mixed concurrent operations should not produce errors");
+    }
+
+    #endregion
 }
