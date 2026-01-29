@@ -166,7 +166,7 @@ public class SecondaryIndexNodeTests
         rootNode.SerializeTo(rootBuffer);
         pageIO.WritePage(rootPageId, rootBuffer);
 
-        SecondaryIndexBTree tree = new SecondaryIndexBTree(pageIO, pageManager, rootPageId, pageSize, maxKeys);
+        SecondaryIndexBTree tree = new SecondaryIndexBTree(pageIO, pageManager, rootPageId, pageSize, pageSize, maxKeys);
 
         byte[] key = Encoding.UTF8.GetBytes("TestKey");
         byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(key, 1);
@@ -346,7 +346,7 @@ public class SecondaryIndexNodeTests
         pageIO.WritePage(rootPageId, rootBuffer);
         pageIO.Flush();
 
-        return new SecondaryIndexBTree(pageIO, pageManager, rootPageId, pageSize, maxKeys);
+        return new SecondaryIndexBTree(pageIO, pageManager, rootPageId, pageSize, pageSize, maxKeys);
     }
 
     [TestMethod]

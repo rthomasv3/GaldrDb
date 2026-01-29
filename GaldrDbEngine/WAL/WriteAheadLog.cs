@@ -21,6 +21,9 @@ internal class WriteAheadLog : IDisposable
     internal IWalStreamIO _testStreamIO;
     internal Func<uint> _testSaltGenerator;
 
+    // Encryption key (null when encryption is disabled)
+    internal byte[] _encryptionKey;
+
     public WriteAheadLog(string walPath, int pageSize)
     {
         _walPath = walPath;
@@ -46,7 +49,16 @@ internal class WriteAheadLog : IDisposable
                 throw new InvalidOperationException($"WAL file already exists: {_walPath}");
             }
 
-            _streamIO = new FileWalStreamIO(_walPath, createNew: true);
+            IWalStreamIO baseStream = new FileWalStreamIO(_walPath, createNew: true);
+
+            if (_encryptionKey != null)
+            {
+                _streamIO = new EncryptedWalStreamIO(baseStream, _encryptionKey, _pageSize);
+            }
+            else
+            {
+                _streamIO = baseStream;
+            }
         }
 
         _header = new WalHeader
@@ -74,7 +86,16 @@ internal class WriteAheadLog : IDisposable
                 throw new FileNotFoundException($"WAL file not found: {_walPath}");
             }
 
-            _streamIO = new FileWalStreamIO(_walPath, createNew: false);
+            IWalStreamIO baseStream = new FileWalStreamIO(_walPath, createNew: false);
+
+            if (_encryptionKey != null)
+            {
+                _streamIO = new EncryptedWalStreamIO(baseStream, _encryptionKey, _pageSize);
+            }
+            else
+            {
+                _streamIO = baseStream;
+            }
         }
 
         // Handle empty WAL file (can occur after truncation or crash during creation)

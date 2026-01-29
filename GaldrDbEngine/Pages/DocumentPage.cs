@@ -7,6 +7,7 @@ namespace GaldrDbEngine.Pages;
 internal class DocumentPage
 {
     private const int HEADER_SIZE = 13;
+    public const int DOCUMENT_PAGE_OVERHEAD = 100;
 
     public byte PageType { get; set; }
     public byte Flags { get; set; }
@@ -18,20 +19,24 @@ internal class DocumentPage
     public byte[] PageData { get; set; }
 
     private int _pageSize;
+    private int _usableSize;
 
-    public static DocumentPage CreateNew(int pageSize)
+    public static DocumentPage CreateNew(int pageSize, int usableSize = 0)
     {
+        int effectiveUsableSize = usableSize > 0 ? usableSize : pageSize;
+
         DocumentPage page = new DocumentPage
         {
             PageType = PageConstants.PAGE_TYPE_DOCUMENT,
             Flags = 0,
             SlotCount = 0,
             FreeSpaceOffset = (ushort)HEADER_SIZE,
-            FreeSpaceEnd = (ushort)pageSize,
+            FreeSpaceEnd = (ushort)effectiveUsableSize,
             Crc = 0,
             Slots = new List<SlotEntry>(),
             PageData = new byte[pageSize],
-            _pageSize = pageSize
+            _pageSize = pageSize,
+            _usableSize = effectiveUsableSize
         };
 
         DocumentPage result = page;
@@ -103,7 +108,8 @@ internal class DocumentPage
             }
         }
 
-        int dataRegionSize = _pageSize - FreeSpaceEnd;
+        int effectiveUsableSize = _usableSize > 0 ? _usableSize : _pageSize;
+        int dataRegionSize = effectiveUsableSize - FreeSpaceEnd;
         int holeSpace = dataRegionSize - usedByLiveData;
 
         return GetFreeSpaceBytes() + holeSpace;
@@ -132,7 +138,7 @@ internal class DocumentPage
             }
         }
 
-        int newOffset = _pageSize;
+        int newOffset = _usableSize > 0 ? _usableSize : _pageSize;
 
         foreach ((int slotIndex, byte[] data) in liveData)
         {
@@ -195,9 +201,12 @@ internal class DocumentPage
         }
     }
 
-    public static void DeserializeTo(byte[] buffer, DocumentPage page, int pageSize)
+    public static void DeserializeTo(byte[] buffer, DocumentPage page, int pageSize, int usableSize = 0)
     {
+        int effectiveUsableSize = usableSize > 0 ? usableSize : pageSize;
+
         page._pageSize = pageSize;
+        page._usableSize = effectiveUsableSize;
 
         // Ensure PageData is allocated and correct size
         if (page.PageData == null || page.PageData.Length < pageSize)
@@ -367,14 +376,17 @@ internal class DocumentPage
         return result;
     }
 
-    public void Reset(int pageSize)
+    public void Reset(int pageSize, int usableSize = 0)
     {
+        int effectiveUsableSize = usableSize > 0 ? usableSize : pageSize;
+
         _pageSize = pageSize;
+        _usableSize = effectiveUsableSize;
         PageType = PageConstants.PAGE_TYPE_DOCUMENT;
         Flags = 0;
         SlotCount = 0;
         FreeSpaceOffset = (ushort)HEADER_SIZE;
-        FreeSpaceEnd = (ushort)pageSize;
+        FreeSpaceEnd = (ushort)effectiveUsableSize;
         Crc = 0;
 
         if (Slots == null)

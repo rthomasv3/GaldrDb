@@ -13,25 +13,27 @@ internal class DocumentStorage : IDisposable
     private readonly PageManager _pageManager;
     private readonly PageLockManager _pageLockManager;
     private readonly int _pageSize;
+    private readonly int _usablePageSize;
     private bool _disposed;
 
-    public DocumentStorage(IPageIO pageIO, PageManager pageManager, int pageSize)
+    public DocumentStorage(IPageIO pageIO, PageManager pageManager, int pageSize, int usablePageSize = 0)
     {
         _pageIO = pageIO;
         _pageManager = pageManager;
         _pageLockManager = new PageLockManager();
         _pageSize = pageSize;
+        _usablePageSize = usablePageSize > 0 ? usablePageSize : pageSize;
     }
 
     public DocumentLocation WriteDocument(byte[] documentBytes)
     {
         int documentSize = documentBytes.Length;
-        int usablePageSize = _pageSize - 100;
+        int usablePageSizeForData = _usablePageSize - DocumentPage.DOCUMENT_PAGE_OVERHEAD;
         int pagesNeeded = 1;
 
-        if (documentSize > usablePageSize)
+        if (documentSize > usablePageSizeForData)
         {
-            pagesNeeded = (documentSize + usablePageSize - 1) / usablePageSize;
+            pagesNeeded = (documentSize + usablePageSizeForData - 1) / usablePageSizeForData;
         }
 
         int[] pageIds = IntArrayPool.Rent(pagesNeeded);
@@ -51,11 +53,11 @@ internal class DocumentStorage : IDisposable
 
                 if (IsPageInitialized(pageBuffer))
                 {
-                    DocumentPage.DeserializeTo(pageBuffer, page, _pageSize);
+                    DocumentPage.DeserializeTo(pageBuffer, page, _pageSize, _usablePageSize);
                 }
                 else
                 {
-                    page.Reset(_pageSize);
+                    page.Reset(_pageSize, _usablePageSize);
                 }
 
                 if (!page.CanFit(documentSize))
@@ -75,7 +77,7 @@ internal class DocumentStorage : IDisposable
                         pageId = _pageManager.AllocatePage();
                         pageIds[0] = pageId;
                         _pageLockManager.AcquireWriteLock(pageId);
-                        page.Reset(_pageSize);
+                        page.Reset(_pageSize, _usablePageSize);
                     }
                 }
 
@@ -101,7 +103,7 @@ internal class DocumentStorage : IDisposable
 
             int firstPageId = pageIds[0];
             int offset = 0;
-            int firstPageDataSize = Math.Min(documentSize, usablePageSize);
+            int firstPageDataSize = Math.Min(documentSize, usablePageSizeForData);
 
             // Acquire write locks on all pages (in order to avoid deadlocks)
             for (int i = 0; i < pagesNeeded; i++)
@@ -113,7 +115,7 @@ internal class DocumentStorage : IDisposable
             byte[] pageBuffer = BufferPool.Rent(_pageSize);
             try
             {
-                page.Reset(_pageSize);
+                page.Reset(_pageSize, _usablePageSize);
                 int slotIndexResult = page.AddDocument(documentBytes.AsSpan(0, firstPageDataSize), pageIds, pagesNeeded, documentSize);
 
                 page.SerializeTo(pageBuffer);
@@ -129,7 +131,7 @@ internal class DocumentStorage : IDisposable
                 {
                     int pageId = pageIds[i];
                     int remainingSize = documentSize - offset;
-                    int chunkSize = Math.Min(remainingSize, _pageSize);
+                    int chunkSize = Math.Min(remainingSize, _usablePageSize);
 
                     Array.Clear(pageBuffer, 0, _pageSize);
                     Array.Copy(documentBytes, offset, pageBuffer, 0, chunkSize);
@@ -204,7 +206,7 @@ internal class DocumentStorage : IDisposable
                     int continuationPageId = entry.PageIds[i];
                     _pageIO.ReadPage(continuationPageId, pageBuffer);
                     int remainingSize = entry.TotalSize - offset;
-                    int chunkSize = Math.Min(remainingSize, _pageSize);
+                    int chunkSize = Math.Min(remainingSize, _usablePageSize);
 
                     Array.Copy(pageBuffer, 0, fullDocument, offset, chunkSize);
                     offset += chunkSize;
@@ -247,7 +249,7 @@ internal class DocumentStorage : IDisposable
         try
         {
             _pageIO.ReadPage(pageId, pageBuffer);
-            DocumentPage.DeserializeTo(pageBuffer, page, _pageSize);
+            DocumentPage.DeserializeTo(pageBuffer, page, _pageSize, _usablePageSize);
 
             if (slotIndex < 0 || slotIndex >= page.SlotCount)
             {
@@ -294,9 +296,9 @@ internal class DocumentStorage : IDisposable
 
     private int FindOrAllocatePageForDocument(int documentSize)
     {
-        int slotOverhead = 100;
+        int slotOverhead = DocumentPage.DOCUMENT_PAGE_OVERHEAD;
         int requiredSpace = documentSize + slotOverhead;
-        double requiredPercentage = (double)requiredSpace / _pageSize;
+        double requiredPercentage = (double)requiredSpace / _usablePageSize;
         FreeSpaceLevel minLevel = FreeSpaceLevel.None;
 
         if (requiredPercentage <= 0.30)
@@ -341,7 +343,7 @@ internal class DocumentStorage : IDisposable
 
                         if (IsPageInitialized(pageBuffer))
                         {
-                            int logicalFreeSpace = DocumentPage.GetLogicalFreeSpaceFromBuffer(pageBuffer, _pageSize);
+                            int logicalFreeSpace = DocumentPage.GetLogicalFreeSpaceFromBuffer(pageBuffer, _usablePageSize);
 
                             if (logicalFreeSpace >= requiredSpace)
                             {
@@ -362,7 +364,7 @@ internal class DocumentStorage : IDisposable
 
     private void UpdateFSM(int pageId, int freeSpaceBytes)
     {
-        double freeSpacePercentage = (double)freeSpaceBytes / _pageSize;
+        double freeSpacePercentage = (double)freeSpaceBytes / _usablePageSize;
         FreeSpaceLevel level = FreeSpaceLevel.None;
 
         if (freeSpacePercentage >= 0.70)
@@ -388,7 +390,7 @@ internal class DocumentStorage : IDisposable
     private void UpdateFSMForDocumentPage(int pageId, DocumentPage page)
     {
         int logicalFreeSpace = page.GetLogicalFreeSpace();
-        double freeSpacePercentage = (double)logicalFreeSpace / _pageSize;
+        double freeSpacePercentage = (double)logicalFreeSpace / _usablePageSize;
         FreeSpaceLevel level = FreeSpaceLevel.None;
 
         if (freeSpacePercentage >= 0.70)
@@ -419,12 +421,12 @@ internal class DocumentStorage : IDisposable
     public async Task<DocumentLocation> WriteDocumentAsync(byte[] documentBytes, CancellationToken cancellationToken = default)
     {
         int documentSize = documentBytes.Length;
-        int usablePageSize = _pageSize - 100;
+        int usablePageSizeForData = _usablePageSize - DocumentPage.DOCUMENT_PAGE_OVERHEAD;
         int pagesNeeded = 1;
 
-        if (documentSize > usablePageSize)
+        if (documentSize > usablePageSizeForData)
         {
-            pagesNeeded = (documentSize + usablePageSize - 1) / usablePageSize;
+            pagesNeeded = (documentSize + usablePageSizeForData - 1) / usablePageSizeForData;
         }
 
         int[] pageIds = IntArrayPool.Rent(pagesNeeded);
@@ -444,11 +446,11 @@ internal class DocumentStorage : IDisposable
 
                 if (IsPageInitialized(pageBuffer))
                 {
-                    DocumentPage.DeserializeTo(pageBuffer, page, _pageSize);
+                    DocumentPage.DeserializeTo(pageBuffer, page, _pageSize, _usablePageSize);
                 }
                 else
                 {
-                    page.Reset(_pageSize);
+                    page.Reset(_pageSize, _usablePageSize);
                 }
 
                 if (!page.CanFit(documentSize))
@@ -467,7 +469,7 @@ internal class DocumentStorage : IDisposable
                         pageId = _pageManager.AllocatePage();
                         pageIds[0] = pageId;
                         await _pageLockManager.AcquireWriteLockAsync(pageId, cancellationToken).ConfigureAwait(false);
-                        page.Reset(_pageSize);
+                        page.Reset(_pageSize, _usablePageSize);
                     }
                 }
 
@@ -493,7 +495,7 @@ internal class DocumentStorage : IDisposable
 
             int firstPageId = pageIds[0];
             int offset = 0;
-            int firstPageDataSize = Math.Min(documentSize, usablePageSize);
+            int firstPageDataSize = Math.Min(documentSize, usablePageSizeForData);
 
             // Acquire write locks on all pages (in order to avoid deadlocks)
             for (int i = 0; i < pagesNeeded; i++)
@@ -505,7 +507,7 @@ internal class DocumentStorage : IDisposable
             byte[] pageBuffer = BufferPool.Rent(_pageSize);
             try
             {
-                page.Reset(_pageSize);
+                page.Reset(_pageSize, _usablePageSize);
                 int slotIndexResult = page.AddDocument(documentBytes.AsSpan(0, firstPageDataSize), pageIds, pagesNeeded, documentSize);
 
                 page.SerializeTo(pageBuffer);
@@ -521,7 +523,7 @@ internal class DocumentStorage : IDisposable
                 {
                     int pageId = pageIds[i];
                     int remainingSize = documentSize - offset;
-                    int chunkSize = Math.Min(remainingSize, _pageSize);
+                    int chunkSize = Math.Min(remainingSize, _usablePageSize);
 
                     Array.Clear(pageBuffer, 0, _pageSize);
                     Array.Copy(documentBytes, offset, pageBuffer, 0, chunkSize);
@@ -564,7 +566,7 @@ internal class DocumentStorage : IDisposable
         try
         {
             await _pageIO.ReadPageAsync(pageId, pageBuffer, cancellationToken).ConfigureAwait(false);
-            DocumentPage.DeserializeTo(pageBuffer, page, _pageSize);
+            DocumentPage.DeserializeTo(pageBuffer, page, _pageSize, _usablePageSize);
 
             if (slotIndex < 0 || slotIndex >= page.SlotCount)
             {
@@ -605,7 +607,7 @@ internal class DocumentStorage : IDisposable
                     int continuationPageId = entry.PageIds[i];
                     await _pageIO.ReadPageAsync(continuationPageId, pageBuffer, cancellationToken).ConfigureAwait(false);
                     int remainingSize = entry.TotalSize - offset;
-                    int chunkSize = Math.Min(remainingSize, _pageSize);
+                    int chunkSize = Math.Min(remainingSize, _usablePageSize);
 
                     Array.Copy(pageBuffer, 0, fullDocument, offset, chunkSize);
                     offset += chunkSize;

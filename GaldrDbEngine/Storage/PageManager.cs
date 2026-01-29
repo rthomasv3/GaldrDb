@@ -10,15 +10,17 @@ internal class PageManager
 {
     private IPageIO _pageIO;
     private readonly int _pageSize;
+    private readonly int _usablePageSize;
     private readonly int _expansionPageCount;
     private HeaderPage _header;
     private Bitmap _bitmap;
     private FreeSpaceMap _fsm;
 
-    public PageManager(IPageIO pageIO, int pageSize, int expansionPageCount = 256)
+    public PageManager(IPageIO pageIO, int pageSize, int expansionPageCount = 256, int usablePageSize = 0)
     {
         _pageIO = pageIO;
         _pageSize = pageSize;
+        _usablePageSize = usablePageSize > 0 ? usablePageSize : pageSize;
         _expansionPageCount = expansionPageCount;
     }
 
@@ -56,14 +58,14 @@ internal class PageManager
         byte[] headerBytes = _header.Serialize(_pageSize);
         _pageIO.WritePage(0, headerBytes);
 
-        _bitmap = new Bitmap(_pageIO, bitmapStartPage, bitmapPageCount, totalPages, _pageSize);
+        _bitmap = new Bitmap(_pageIO, bitmapStartPage, bitmapPageCount, totalPages, _pageSize, _usablePageSize);
         _bitmap.AllocatePage(0);
         _bitmap.AllocatePage(1);
         _bitmap.AllocatePage(2);
         _bitmap.AllocatePage(3);
         _bitmap.WriteToDisk();
 
-        _fsm = new FreeSpaceMap(_pageIO, fsmStartPage, fsmPageCount, totalPages, _pageSize);
+        _fsm = new FreeSpaceMap(_pageIO, fsmStartPage, fsmPageCount, totalPages, _pageSize, _usablePageSize);
         _fsm.SetFreeSpaceLevel(0, FreeSpaceLevel.None);
         _fsm.SetFreeSpaceLevel(1, FreeSpaceLevel.None);
         _fsm.SetFreeSpaceLevel(2, FreeSpaceLevel.None);
@@ -103,10 +105,10 @@ internal class PageManager
             throw new InvalidDataException($"Unsupported version: {_header.Version}");
         }
 
-        _bitmap = new Bitmap(_pageIO, _header.BitmapStartPage, _header.BitmapPageCount, _header.TotalPageCount, _header.PageSize);
+        _bitmap = new Bitmap(_pageIO, _header.BitmapStartPage, _header.BitmapPageCount, _header.TotalPageCount, _header.PageSize, _usablePageSize);
         _bitmap.LoadFromDisk();
 
-        _fsm = new FreeSpaceMap(_pageIO, _header.FsmStartPage, _header.FsmPageCount, _header.TotalPageCount, _header.PageSize);
+        _fsm = new FreeSpaceMap(_pageIO, _header.FsmStartPage, _header.FsmPageCount, _header.TotalPageCount, _header.PageSize, _usablePageSize);
         _fsm.LoadFromDisk();
 
         // Initialize hint if not set (old database format or first load)

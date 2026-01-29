@@ -46,6 +46,7 @@ public class GaldrDb : IDisposable
     private VersionIndex _versionIndex;
     private VersionGarbageCollector _garbageCollector;
     private long _lastGCCommitCount;
+    private byte[] _encryptionKey;
 
     #endregion
 
@@ -112,17 +113,37 @@ public class GaldrDb : IDisposable
     /// <param name="options">Optional configuration options. PageSize is always read from the file.</param>
     /// <returns>A GaldrDb instance for the existing database.</returns>
     /// <exception cref="FileNotFoundException">Thrown if the file does not exist.</exception>
+    /// <exception cref="InvalidPasswordException">Thrown if the database is encrypted and no password is provided, or password is incorrect.</exception>
+    /// <exception cref="InvalidOperationException">Thrown if a password is provided for an unencrypted database.</exception>
     public static GaldrDb Open(string filePath, GaldrDbOptions options = null)
     {
         // Always read page size from file header (skip only for custom page IO in simulation testing)
         if (options == null || options.CustomPageIO == null)
         {
-            byte[] peekBuffer = new byte[12];
-            using (FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            bool isEncrypted = EncryptedPageIO.IsEncryptedFile(filePath);
+            int filePageSize;
+
+            if (isEncrypted)
             {
-                fs.ReadExactly(peekBuffer, 0, 12);
+                if (options?.Encryption?.Password == null)
+                {
+                    throw new InvalidPasswordException("Database is encrypted but no password was provided.");
+                }
+                filePageSize = EncryptedPageIO.GetPageSize(filePath);
             }
-            int filePageSize = BinaryHelper.ReadInt32LE(peekBuffer, 8);
+            else
+            {
+                if (options?.Encryption?.Password != null)
+                {
+                    throw new InvalidOperationException("Password provided but database is not encrypted.");
+                }
+                byte[] peekBuffer = new byte[12];
+                using (FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    fs.ReadExactly(peekBuffer, 0, 12);
+                }
+                filePageSize = BinaryHelper.ReadInt32LE(peekBuffer, 8);
+            }
 
             if (options == null)
             {
@@ -210,6 +231,12 @@ public class GaldrDb : IDisposable
 
         _pageIO = null;
         _walPageIO = null;
+
+        if (_encryptionKey != null)
+        {
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(_encryptionKey);
+            _encryptionKey = null;
+        }
     }
 
     /// <summary>
@@ -547,7 +574,7 @@ public class GaldrDb : IDisposable
         {
             int rootPageId = _pageManager.AllocatePage();
 
-            int order = CalculateBTreeOrder(_options.PageSize);
+            int order = CalculateBTreeOrder(_options.UsablePageSize);
             BTreeNode rootNode = new BTreeNode(_options.PageSize, order, BTreeNodeType.Leaf);
             byte[] rootBuffer = BufferPool.Rent(_options.PageSize);
             try
@@ -709,8 +736,8 @@ public class GaldrDb : IDisposable
 
             try
             {
-                int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
-                SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexToRemove.RootPageId, _options.PageSize, maxKeys);
+                int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.UsablePageSize);
+                SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexToRemove.RootPageId, _options.PageSize, _options.UsablePageSize, maxKeys);
 
                 List<int> pageIds = indexTree.CollectAllPageIds();
                 for (int i = 0; i < pageIds.Count; i++)
@@ -762,8 +789,8 @@ public class GaldrDb : IDisposable
                 for (int i = 0; i < collection.Indexes.Count; i++)
                 {
                     IndexDefinition index = collection.Indexes[i];
-                    int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
-                    SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, index.RootPageId, _options.PageSize, maxKeys);
+                    int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.UsablePageSize);
+                    SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, index.RootPageId, _options.PageSize, _options.UsablePageSize, maxKeys);
 
                     List<int> indexPageIds = indexTree.CollectAllPageIds();
                     for (int j = 0; j < indexPageIds.Count; j++)
@@ -772,7 +799,7 @@ public class GaldrDb : IDisposable
                     }
                 }
 
-                int order = CalculateBTreeOrder(_options.PageSize);
+                int order = CalculateBTreeOrder(_options.UsablePageSize);
                 BTree primaryTree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
 
                 if (deleteDocuments)
@@ -1274,8 +1301,8 @@ public class GaldrDb : IDisposable
                 foreach (IndexDefinition newIndex in newIndexes)
                 {
                     int rootPageId = _pageManager.AllocatePage();
-                    int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
-                    SecondaryIndexNode rootNode = new SecondaryIndexNode(_options.PageSize, maxKeys, BTreeNodeType.Leaf);
+                    int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.UsablePageSize);
+                    SecondaryIndexNode rootNode = new SecondaryIndexNode(_options.UsablePageSize, maxKeys, BTreeNodeType.Leaf);
 
                     rootNode.SerializeTo(rootBuffer);
                     _pageIO.WritePage(rootPageId, rootBuffer);
@@ -1322,8 +1349,8 @@ public class GaldrDb : IDisposable
         try
         {
             int rootPageId = _pageManager.AllocatePage();
-            int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
-            SecondaryIndexNode rootNode = new SecondaryIndexNode(_options.PageSize, maxKeys, BTreeNodeType.Leaf);
+            int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.UsablePageSize);
+            SecondaryIndexNode rootNode = new SecondaryIndexNode(_options.UsablePageSize, maxKeys, BTreeNodeType.Leaf);
 
             rootNode.SerializeTo(rootBuffer);
             _pageIO.WritePage(rootPageId, rootBuffer);
@@ -1355,8 +1382,8 @@ public class GaldrDb : IDisposable
 
     private void CheckUniqueConstraint(IndexDefinition indexDef, string fieldName, byte[] keyBytes)
     {
-        int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
-        SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, maxKeys);
+        int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.UsablePageSize);
+        SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, _options.UsablePageSize, maxKeys);
 
         List<DocumentLocation> existingEntries = indexTree.SearchByFieldValue(keyBytes);
         if (existingEntries.Count > 0)
@@ -1409,11 +1436,11 @@ public class GaldrDb : IDisposable
         {
             JsonWriterPool.Warmup(_options.JsonWriterPoolWarmupCount);
 
-            int order = CalculateBTreeOrder(_options.PageSize);
-            int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
+            int order = CalculateBTreeOrder(_options.UsablePageSize);
+            int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.UsablePageSize);
 
             BTreeNodePool.Warmup(_options.PageSize, order, 8);
-            SecondaryIndexNodePool.Warmup(_options.PageSize, maxKeys, 8);
+            SecondaryIndexNodePool.Warmup(_options.UsablePageSize, maxKeys, 8);
             DocumentPagePool.Warmup(_options.PageSize, 8);
         }
     }
@@ -1428,7 +1455,7 @@ public class GaldrDb : IDisposable
         SetupIO();
         
         // always initialize the file with a valid header
-        _pageManager = new PageManager(_basePageIO, _options.PageSize, _options.ExpansionPageCount);
+        _pageManager = new PageManager(_basePageIO, _options.PageSize, _options.ExpansionPageCount, _options.UsablePageSize);
         _pageManager.Initialize();
         _pageManager.Flush();
 
@@ -1440,10 +1467,10 @@ public class GaldrDb : IDisposable
         // future page writes should go through WAL, if configured
         _pageManager.SetPageIO(_pageIO);
         
-        _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataStartPage, _pageManager.Header.CollectionsMetadataPageCount, _options.PageSize);
+        _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataStartPage, _pageManager.Header.CollectionsMetadataPageCount, _options.PageSize, _options.UsablePageSize);
         WriteCollectionsMetadataWithGrowth();
 
-        _documentStorage = new DocumentStorage(_pageIO, _pageManager, _options.PageSize);
+        _documentStorage = new DocumentStorage(_pageIO, _pageManager, _options.PageSize, _options.UsablePageSize);
 
         EnsureAllCollections();
     }
@@ -1472,7 +1499,7 @@ public class GaldrDb : IDisposable
             {
                 InitializeWalFile();
 
-                _pageManager = new PageManager(_pageIO, _options.PageSize, _options.ExpansionPageCount);
+                _pageManager = new PageManager(_pageIO, _options.PageSize, _options.ExpansionPageCount, _options.UsablePageSize);
                 _pageManager.Load();
 
                 if (_options.PageSize == 0 || _options.PageSize != _pageManager.Header.PageSize)
@@ -1480,9 +1507,9 @@ public class GaldrDb : IDisposable
                     _options.PageSize = _pageManager.Header.PageSize;
                 }
                 
-                _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize);
+                _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize, _options.UsablePageSize);
 
-                _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataStartPage, _pageManager.Header.CollectionsMetadataPageCount, _pageManager.Header.PageSize);
+                _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataStartPage, _pageManager.Header.CollectionsMetadataPageCount, _pageManager.Header.PageSize, _options.UsablePageSize);
                 _collectionsMetadata.LoadFromDisk();
 
                 // Rebuild VersionIndex from current database state
@@ -1491,7 +1518,7 @@ public class GaldrDb : IDisposable
         }
         else
         {
-            _pageManager = new PageManager(_pageIO, _options.PageSize, _options.ExpansionPageCount);
+            _pageManager = new PageManager(_pageIO, _options.PageSize, _options.ExpansionPageCount, _options.UsablePageSize);
             _pageManager.Load();
 
             if (_options.PageSize == 0 || _options.PageSize != _pageManager.Header.PageSize)
@@ -1499,9 +1526,9 @@ public class GaldrDb : IDisposable
                 _options.PageSize = _pageManager.Header.PageSize;
             }
 
-            _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize);
+            _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize, _options.UsablePageSize);
 
-            _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataStartPage, _pageManager.Header.CollectionsMetadataPageCount, _pageManager.Header.PageSize);
+            _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataStartPage, _pageManager.Header.CollectionsMetadataPageCount, _pageManager.Header.PageSize, _options.UsablePageSize);
             _collectionsMetadata.LoadFromDisk();
 
             // No WAL - still need to rebuild VersionIndex for MVCC reads to work
@@ -1516,6 +1543,22 @@ public class GaldrDb : IDisposable
         if (_options.CustomPageIO != null)
         {
             _basePageIO = _options.CustomPageIO;
+        }
+        else if (_options.Encryption?.Password != null)
+        {
+            bool createNew = !File.Exists(_filePath);
+            EncryptedPageIO encryptedIO;
+
+            if (createNew)
+            {
+                encryptedIO = EncryptedPageIO.Create(_filePath, _options.PageSize, _options.Encryption, out _encryptionKey);
+            }
+            else
+            {
+                encryptedIO = EncryptedPageIO.Open(_filePath, _options.PageSize, _options.Encryption, out _encryptionKey);
+            }
+
+            _basePageIO = encryptedIO;
         }
         else
         {
@@ -1562,6 +1605,10 @@ public class GaldrDb : IDisposable
         {
             _wal._testSaltGenerator = _options.CustomWalSaltGenerator;
         }
+        if (_encryptionKey != null)
+        {
+            _wal._encryptionKey = _encryptionKey;
+        }
 
         _wal.Create();
 
@@ -1581,6 +1628,10 @@ public class GaldrDb : IDisposable
         if (_options.CustomWalSaltGenerator != null)
         {
             _wal._testSaltGenerator = _options.CustomWalSaltGenerator;
+        }
+        if (_encryptionKey != null)
+        {
+            _wal._encryptionKey = _encryptionKey;
         }
 
         _wal.Open();
@@ -1623,7 +1674,7 @@ public class GaldrDb : IDisposable
         _walPageIO = new WalPageIO(innerIO, _wal, _options.PageSize);
         _pageIO = _walPageIO;
         
-        _pageManager = new PageManager(_pageIO, _options.PageSize, _options.ExpansionPageCount);
+        _pageManager = new PageManager(_pageIO, _options.PageSize, _options.ExpansionPageCount, _options.UsablePageSize);
         _pageManager.Load();
 
         if (_options.PageSize == 0 || _options.PageSize != _pageManager.Header.PageSize)
@@ -1631,10 +1682,10 @@ public class GaldrDb : IDisposable
             _options.PageSize = _pageManager.Header.PageSize;
         }
 
-        _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataStartPage, _pageManager.Header.CollectionsMetadataPageCount, _pageManager.Header.PageSize);
+        _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataStartPage, _pageManager.Header.CollectionsMetadataPageCount, _pageManager.Header.PageSize, _options.UsablePageSize);
         _collectionsMetadata.LoadFromDisk();
 
-        _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize);
+        _documentStorage = new DocumentStorage(_pageIO, _pageManager, _pageManager.Header.PageSize, _options.UsablePageSize);
 
         // Initialize TransactionManager with recovered TxId
         EnsureTransactionManager();
@@ -1656,7 +1707,7 @@ public class GaldrDb : IDisposable
         TxId baseTxId = new TxId(recoveredTxId > 0 ? recoveredTxId : 0);
 
         List<CollectionEntry> collections = _collectionsMetadata.GetAllCollections();
-        int order = CalculateBTreeOrder(_options.PageSize);
+        int order = CalculateBTreeOrder(_options.UsablePageSize);
 
         foreach (CollectionEntry collection in collections)
         {
@@ -1909,7 +1960,7 @@ public class GaldrDb : IDisposable
 
         DocumentLocation location = _documentStorage.WriteDocument(serializedData);
 
-        int order = CalculateBTreeOrder(_options.PageSize);
+        int order = CalculateBTreeOrder(_options.UsablePageSize);
         BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
         btree.Insert(docId, location);
 
@@ -1943,7 +1994,7 @@ public class GaldrDb : IDisposable
             throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
         }
 
-        int order = CalculateBTreeOrder(_options.PageSize);
+        int order = CalculateBTreeOrder(_options.UsablePageSize);
         BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
 
         if (oldIndexFields != null && oldIndexFields.Count > 0)
@@ -1988,7 +2039,7 @@ public class GaldrDb : IDisposable
         CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
         if (collection != null)
         {
-            int order = CalculateBTreeOrder(_options.PageSize);
+            int order = CalculateBTreeOrder(_options.UsablePageSize);
             BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
             List<BTreeEntry> entries = btree.SearchRange(startDocId, endDocId, includeStart, includeEnd);
 
@@ -2008,7 +2059,7 @@ public class GaldrDb : IDisposable
         CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
         if (collection != null)
         {
-            int order = CalculateBTreeOrder(_options.PageSize);
+            int order = CalculateBTreeOrder(_options.UsablePageSize);
             BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
             List<BTreeEntry> entries = await btree.SearchRangeAsync(startDocId, endDocId, includeStart, includeEnd, cancellationToken).ConfigureAwait(false);
 
@@ -2023,22 +2074,22 @@ public class GaldrDb : IDisposable
 
     internal List<SecondaryIndexEntry> SearchSecondaryIndex(IndexDefinition indexDef, byte[] keyBytes)
     {
-        int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
-        SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, maxKeys);
+        int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.UsablePageSize);
+        SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, _options.UsablePageSize, maxKeys);
         return indexTree.SearchByFieldValueWithDocIds(keyBytes);
     }
 
     internal List<SecondaryIndexEntry> SearchSecondaryIndexExact(IndexDefinition indexDef, byte[] keyBytes)
     {
-        int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
-        SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, maxKeys);
+        int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.UsablePageSize);
+        SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, _options.UsablePageSize, maxKeys);
         return indexTree.SearchByExactFieldValueWithDocIds(keyBytes);
     }
 
     internal List<SecondaryIndexEntry> SearchSecondaryIndexRange(IndexDefinition indexDef, byte[] startKeyBytes, byte[] endKeyBytes, bool includeStart, bool includeEnd)
     {
-        int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
-        SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, maxKeys);
+        int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.UsablePageSize);
+        SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, _options.UsablePageSize, maxKeys);
         return indexTree.SearchRangeWithDocIds(startKeyBytes, endKeyBytes, includeStart, includeEnd);
     }
 
@@ -2055,7 +2106,7 @@ public class GaldrDb : IDisposable
             DeleteFromIndexesInternal(collection, docId, oldIndexFields);
         }
 
-        int order = CalculateBTreeOrder(_options.PageSize);
+        int order = CalculateBTreeOrder(_options.UsablePageSize);
         BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
 
         // Note: We do NOT delete the document from storage for MVCC.
@@ -2093,8 +2144,8 @@ public class GaldrDb : IDisposable
             IndexDefinition indexDef = collection.FindIndex(field.FieldName);
             if (indexDef != null)
             {
-                int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
-                SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, maxKeys);
+                int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.UsablePageSize);
+                SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, _options.UsablePageSize, maxKeys);
 
                 byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(field.KeyBytes, docId);
                 indexTree.Insert(compositeKey, location);
@@ -2115,8 +2166,8 @@ public class GaldrDb : IDisposable
             IndexDefinition indexDef = collection.FindIndex(field.FieldName);
             if (indexDef != null)
             {
-                int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.PageSize);
-                SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, maxKeys);
+                int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.UsablePageSize);
+                SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, _options.UsablePageSize, maxKeys);
 
                 byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(field.KeyBytes, docId);
                 indexTree.Delete(compositeKey);
@@ -2144,7 +2195,7 @@ public class GaldrDb : IDisposable
 
         DocumentLocation location = await _documentStorage.WriteDocumentAsync(serializedData, cancellationToken).ConfigureAwait(false);
 
-        int order = CalculateBTreeOrder(_options.PageSize);
+        int order = CalculateBTreeOrder(_options.UsablePageSize);
         BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
         await btree.InsertAsync(docId, location, cancellationToken).ConfigureAwait(false);
 
@@ -2178,7 +2229,7 @@ public class GaldrDb : IDisposable
             throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
         }
 
-        int order = CalculateBTreeOrder(_options.PageSize);
+        int order = CalculateBTreeOrder(_options.UsablePageSize);
         BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
 
         if (oldIndexFields != null && oldIndexFields.Count > 0)
@@ -2229,7 +2280,7 @@ public class GaldrDb : IDisposable
             DeleteFromIndexesInternal(collection, docId, oldIndexFields);
         }
 
-        int order = CalculateBTreeOrder(_options.PageSize);
+        int order = CalculateBTreeOrder(_options.UsablePageSize);
         BTree btree = new BTree(_pageIO, _pageManager, collection.RootPage, _options.PageSize, order);
 
         // Note: We do NOT delete the document from storage for MVCC.
@@ -2259,7 +2310,7 @@ public class GaldrDb : IDisposable
 
         DocumentLocation location = targetDb._documentStorage.WriteDocument(docBytes);
 
-        int order = CalculateBTreeOrder(targetDb._options.PageSize);
+        int order = CalculateBTreeOrder(targetDb._options.UsablePageSize);
         BTree btree = new BTree(targetDb._pageIO, targetDb._pageManager, collection.RootPage, targetDb._options.PageSize, order);
         btree.Insert(docId, location);
 
@@ -2293,7 +2344,7 @@ public class GaldrDb : IDisposable
 
         DocumentLocation location = await targetDb._documentStorage.WriteDocumentAsync(docBytes, cancellationToken).ConfigureAwait(false);
 
-        int order = CalculateBTreeOrder(targetDb._options.PageSize);
+        int order = CalculateBTreeOrder(targetDb._options.UsablePageSize);
         BTree btree = new BTree(targetDb._pageIO, targetDb._pageManager, collection.RootPage, targetDb._options.PageSize, order);
         await btree.InsertAsync(docId, location, cancellationToken).ConfigureAwait(false);
 
@@ -2331,8 +2382,8 @@ public class GaldrDb : IDisposable
                 if (indexDef.RootPageId == -1)
                 {
                     int rootPageId = targetDb._pageManager.AllocatePage();
-                    int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(targetDb._options.PageSize);
-                    SecondaryIndexNode rootNode = new SecondaryIndexNode(targetDb._options.PageSize, maxKeys, BTreeNodeType.Leaf);
+                    int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(targetDb._options.UsablePageSize);
+                    SecondaryIndexNode rootNode = new SecondaryIndexNode(targetDb._options.UsablePageSize, maxKeys, BTreeNodeType.Leaf);
 
                     byte[] rootBuffer = BufferPool.Rent(targetDb._options.PageSize);
                     try
@@ -2348,8 +2399,8 @@ public class GaldrDb : IDisposable
                     indexDef.RootPageId = rootPageId;
                 }
 
-                int maxKeysForTree = SecondaryIndexBTree.CalculateMaxKeys(targetDb._options.PageSize);
-                SecondaryIndexBTree indexTree = new SecondaryIndexBTree(targetDb._pageIO, targetDb._pageManager, indexDef.RootPageId, targetDb._options.PageSize, maxKeysForTree);
+                int maxKeysForTree = SecondaryIndexBTree.CalculateMaxKeys(targetDb._options.UsablePageSize);
+                SecondaryIndexBTree indexTree = new SecondaryIndexBTree(targetDb._pageIO, targetDb._pageManager, indexDef.RootPageId, targetDb._options.PageSize, targetDb._options.UsablePageSize, maxKeysForTree);
 
                 byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(field.KeyBytes, docId);
                 indexTree.Insert(compositeKey, location);

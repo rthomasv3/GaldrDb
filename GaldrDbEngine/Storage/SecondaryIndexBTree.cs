@@ -13,15 +13,17 @@ internal class SecondaryIndexBTree
     private readonly IPageIO _pageIO;
     private readonly PageManager _pageManager;
     private readonly int _pageSize;
+    private readonly int _usablePageSize;
     private readonly int _maxKeys;
     private int _rootPageId;
 
-    public SecondaryIndexBTree(IPageIO pageIO, PageManager pageManager, int rootPageId, int pageSize, int maxKeys)
+    public SecondaryIndexBTree(IPageIO pageIO, PageManager pageManager, int rootPageId, int pageSize, int usablePageSize, int maxKeys)
     {
         _pageIO = pageIO;
         _pageManager = pageManager;
         _rootPageId = rootPageId;
         _pageSize = pageSize;
+        _usablePageSize = usablePageSize;
         _maxKeys = maxKeys;
     }
 
@@ -38,10 +40,10 @@ internal class SecondaryIndexBTree
         {
             _pageIO.ReadPage(_rootPageId, buffer);
 
-            if (SecondaryIndexNode.IsNodeFull(buffer, _maxKeys, _pageSize))
+            if (SecondaryIndexNode.IsNodeFull(buffer, _maxKeys, _usablePageSize))
             {
                 // Root is full - need to split it first
-                SecondaryIndexNode newRoot = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Internal);
+                SecondaryIndexNode newRoot = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Internal);
                 try
                 {
                     int newRootPageId = _pageManager.AllocatePage();
@@ -124,7 +126,7 @@ internal class SecondaryIndexBTree
     {
         List<int> pageIds = new List<int>();
         byte[] buffer = BufferPool.Rent(_pageSize);
-        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
         Stack<int> pageStack = new Stack<int>();
         pageStack.Push(_rootPageId);
 
@@ -161,7 +163,7 @@ internal class SecondaryIndexBTree
         DocumentLocation? result = null;
 
         byte[] buffer = BufferPool.Rent(_pageSize);
-        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
         try
         {
             _pageIO.ReadPage(pageId, buffer);
@@ -198,7 +200,7 @@ internal class SecondaryIndexBTree
     private void SearchByFieldValueNode(int pageId, byte[] fieldValueKey, List<DocumentLocation> results)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
-        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
         try
         {
             _pageIO.ReadPage(pageId, buffer);
@@ -249,7 +251,7 @@ internal class SecondaryIndexBTree
     private void SearchRangeNode(int pageId, byte[] startKey, byte[] endKey, bool includeStart, bool includeEnd, List<DocumentLocation> results)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
-        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
         try
         {
             _pageIO.ReadPage(pageId, buffer);
@@ -307,7 +309,7 @@ internal class SecondaryIndexBTree
     private void SearchByFieldValueNodeWithDocIds(int pageId, byte[] fieldValueKey, bool exactMatch, List<SecondaryIndexEntry> results)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
-        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
         int expectedKeyLength = fieldValueKey.Length + 4;
 
         try
@@ -368,7 +370,7 @@ internal class SecondaryIndexBTree
     private void SearchRangeNodeWithDocIds(int pageId, byte[] startKey, byte[] endKey, bool includeStart, bool includeEnd, List<SecondaryIndexEntry> results)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
-        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
         try
         {
             _pageIO.ReadPage(pageId, buffer);
@@ -467,7 +469,7 @@ internal class SecondaryIndexBTree
         bool result = false;
 
         byte[] buffer = BufferPool.Rent(_pageSize);
-        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
         List<DeletePathEntry> path = ListPool<DeletePathEntry>.Rent(MAX_TREE_DEPTH);
         try
         {
@@ -526,8 +528,8 @@ internal class SecondaryIndexBTree
     {
         byte[] parentBuffer = BufferPool.Rent(_pageSize);
         byte[] siblingBuffer = BufferPool.Rent(_pageSize);
-        SecondaryIndexNode parent = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Internal);
-        SecondaryIndexNode sibling = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
+        SecondaryIndexNode parent = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Internal);
+        SecondaryIndexNode sibling = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
 
         try
         {
@@ -659,7 +661,7 @@ internal class SecondaryIndexBTree
     private void PropagateMaxKeyUpdate(List<DeletePathEntry> path, int startPathIndex, KeyBuffer newMaxKey)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
-        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Internal);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Internal);
 
         try
         {
@@ -921,7 +923,7 @@ internal class SecondaryIndexBTree
 
                 // Read child and check if full
                 _pageIO.ReadPage(childPageId, childBuffer);
-                if (SecondaryIndexNode.IsNodeFull(childBuffer, _maxKeys, _pageSize))
+                if (SecondaryIndexNode.IsNodeFull(childBuffer, _maxKeys, _usablePageSize))
                 {
                     SplitChild(currentPageId, childIndex, childPageId);
 
@@ -968,8 +970,8 @@ internal class SecondaryIndexBTree
     {
         byte[] childBuffer = BufferPool.Rent(_pageSize);
         byte[] parentBuffer = BufferPool.Rent(_pageSize);
-        SecondaryIndexNode fullChild = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
-        SecondaryIndexNode parent = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, BTreeNodeType.Leaf);
+        SecondaryIndexNode fullChild = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
+        SecondaryIndexNode parent = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
         SecondaryIndexNode newChild = null;
         try
         {
@@ -980,7 +982,7 @@ internal class SecondaryIndexBTree
             SecondaryIndexNode.DeserializeTo(parentBuffer, parent);
 
             int newChildPageId = _pageManager.AllocatePage();
-            newChild = SecondaryIndexNodePool.Rent(_pageSize, _maxKeys, fullChild.NodeType);
+            newChild = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, fullChild.NodeType);
 
             int mid = Math.Min(_maxKeys / 2, fullChild.KeyCount / 2);
             if (mid >= fullChild.KeyCount)

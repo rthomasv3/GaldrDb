@@ -9,22 +9,24 @@ internal class CollectionsMetadata
 {
     private readonly IPageIO _pageIO;
     private readonly int _pageSize;
+    private readonly int _usablePageSize;
     private int _startPage;
     private int _pageCount;
     private readonly Dictionary<string, CollectionEntry> _collections;
 
-    public CollectionsMetadata(IPageIO pageIO, int startPage, int pageCount, int pageSize)
+    public CollectionsMetadata(IPageIO pageIO, int startPage, int pageCount, int pageSize, int usablePageSize = 0)
     {
         _pageIO = pageIO;
         _startPage = startPage;
         _pageCount = pageCount;
         _pageSize = pageSize;
+        _usablePageSize = usablePageSize > 0 ? usablePageSize : pageSize;
         _collections = new Dictionary<string, CollectionEntry>();
     }
 
     public void LoadFromDisk()
     {
-        int totalBufferSize = _pageCount * _pageSize;
+        int totalBufferSize = _pageCount * _usablePageSize;
         byte[] combinedBuffer = BufferPool.Rent(totalBufferSize);
         byte[] pageBuffer = BufferPool.Rent(_pageSize);
 
@@ -34,7 +36,7 @@ internal class CollectionsMetadata
             for (int i = 0; i < _pageCount; i++)
             {
                 _pageIO.ReadPage(_startPage + i, pageBuffer);
-                int bytesToCopy = Math.Min(_pageSize, totalBufferSize - bufferOffset);
+                int bytesToCopy = Math.Min(_usablePageSize, totalBufferSize - bufferOffset);
                 Array.Copy(pageBuffer, 0, combinedBuffer, bufferOffset, bytesToCopy);
                 bufferOffset += bytesToCopy;
             }
@@ -63,7 +65,7 @@ internal class CollectionsMetadata
     public void WriteToDisk()
     {
         int totalSize = CalculateSerializedSize();
-        int pagesNeeded = (totalSize + _pageSize - 1) / _pageSize;
+        int pagesNeeded = (totalSize + _usablePageSize - 1) / _usablePageSize;
 
         if (pagesNeeded > _pageCount)
         {
@@ -72,7 +74,7 @@ internal class CollectionsMetadata
                 "Call GrowCollectionsMetadata() first.");
         }
 
-        int totalBufferSize = _pageCount * _pageSize;
+        int totalBufferSize = _pageCount * _usablePageSize;
         byte[] combinedBuffer = BufferPool.Rent(totalBufferSize);
         byte[] pageBuffer = BufferPool.Rent(_pageSize);
 
@@ -93,7 +95,7 @@ internal class CollectionsMetadata
             for (int i = 0; i < _pageCount; i++)
             {
                 Array.Clear(pageBuffer, 0, _pageSize);
-                int bytesToCopy = Math.Min(_pageSize, totalBufferSize - bufferOffset);
+                int bytesToCopy = Math.Min(_usablePageSize, totalBufferSize - bufferOffset);
                 Array.Copy(combinedBuffer, bufferOffset, pageBuffer, 0, bytesToCopy);
                 _pageIO.WritePage(_startPage + i, pageBuffer);
                 bufferOffset += bytesToCopy;
@@ -178,7 +180,7 @@ internal class CollectionsMetadata
     public int GetPagesNeeded()
     {
         int totalSize = CalculateSerializedSize();
-        int pagesNeeded = (totalSize + _pageSize - 1) / _pageSize;
+        int pagesNeeded = (totalSize + _usablePageSize - 1) / _usablePageSize;
 
         return pagesNeeded;
     }

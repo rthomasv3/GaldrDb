@@ -12,16 +12,18 @@ internal class FreeSpaceMap
     private int _startPage;
     private int _pageCount;
     private readonly int _pageSize;
+    private readonly int _usablePageSize;
     private int _totalPages;
     private byte[] _fsm;
 
-    public FreeSpaceMap(IPageIO pageIO, int startPage, int pageCount, int totalPages, int pageSize)
+    public FreeSpaceMap(IPageIO pageIO, int startPage, int pageCount, int totalPages, int pageSize, int usablePageSize = 0)
     {
         _pageIO = pageIO;
         _startPage = startPage;
         _pageCount = pageCount;
         _totalPages = totalPages;
         _pageSize = pageSize;
+        _usablePageSize = usablePageSize > 0 ? usablePageSize : pageSize;
 
         int fsmSizeBytes = (totalPages * 2 + 7) / 8;
         _fsm = new byte[fsmSizeBytes];
@@ -173,7 +175,7 @@ internal class FreeSpaceMap
             for (int i = 0; i < _pageCount; i++)
             {
                 _pageIO.ReadPage(_startPage + i, buffer);
-                int bytesToCopy = Math.Min(_pageSize, fsmSizeBytes - offset);
+                int bytesToCopy = Math.Min(_usablePageSize, fsmSizeBytes - offset);
 
                 Array.Copy(buffer, 0, _fsm, offset, bytesToCopy);
                 offset += bytesToCopy;
@@ -196,7 +198,7 @@ internal class FreeSpaceMap
             for (int i = 0; i < _pageCount; i++)
             {
                 Array.Clear(buffer, 0, _pageSize);
-                int bytesToCopy = Math.Min(_pageSize, fsmSizeBytes - offset);
+                int bytesToCopy = Math.Min(_usablePageSize, fsmSizeBytes - offset);
 
                 Array.Copy(_fsm, offset, buffer, 0, bytesToCopy);
                 _pageIO.WritePage(_startPage + i, buffer);

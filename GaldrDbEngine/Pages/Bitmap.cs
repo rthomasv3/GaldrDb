@@ -12,16 +12,18 @@ internal class Bitmap
     private int _startPage;
     private int _pageCount;
     private readonly int _pageSize;
+    private readonly int _usablePageSize;
     private int _totalPages;
     private byte[] _bitmap;
 
-    public Bitmap(IPageIO pageIO, int startPage, int pageCount, int totalPages, int pageSize)
+    public Bitmap(IPageIO pageIO, int startPage, int pageCount, int totalPages, int pageSize, int usablePageSize = 0)
     {
         _pageIO = pageIO;
         _startPage = startPage;
         _pageCount = pageCount;
         _totalPages = totalPages;
         _pageSize = pageSize;
+        _usablePageSize = usablePageSize > 0 ? usablePageSize : pageSize;
 
         int bitmapSizeBytes = (totalPages + 7) / 8;
         _bitmap = new byte[bitmapSizeBytes];
@@ -178,7 +180,7 @@ internal class Bitmap
             for (int i = 0; i < _pageCount; i++)
             {
                 _pageIO.ReadPage(_startPage + i, buffer);
-                int bytesToCopy = Math.Min(_pageSize, bitmapSizeBytes - offset);
+                int bytesToCopy = Math.Min(_usablePageSize, bitmapSizeBytes - offset);
 
                 Array.Copy(buffer, 0, _bitmap, offset, bytesToCopy);
                 offset += bytesToCopy;
@@ -201,7 +203,7 @@ internal class Bitmap
             for (int i = 0; i < _pageCount; i++)
             {
                 Array.Clear(buffer, 0, _pageSize);
-                int bytesToCopy = Math.Min(_pageSize, bitmapSizeBytes - offset);
+                int bytesToCopy = Math.Min(_usablePageSize, bitmapSizeBytes - offset);
 
                 Array.Copy(_bitmap, offset, buffer, 0, bytesToCopy);
                 _pageIO.WritePage(_startPage + i, buffer);

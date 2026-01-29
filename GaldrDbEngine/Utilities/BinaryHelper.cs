@@ -32,6 +32,14 @@ internal static class BinaryHelper
                (buffer[offset + 3] << 24);
     }
 
+    public static int ReadInt32LE(ReadOnlySpan<byte> buffer, int offset)
+    {
+        return buffer[offset] |
+               (buffer[offset + 1] << 8) |
+               (buffer[offset + 2] << 16) |
+               (buffer[offset + 3] << 24);
+    }
+
     public static void WriteUInt32LE(byte[] buffer, int offset, uint value)
     {
         buffer[offset] = (byte)(value & 0xFF);
@@ -49,6 +57,14 @@ internal static class BinaryHelper
     }
 
     public static uint ReadUInt32LE(byte[] buffer, int offset)
+    {
+        return buffer[offset] |
+               ((uint)buffer[offset + 1] << 8) |
+               ((uint)buffer[offset + 2] << 16) |
+               ((uint)buffer[offset + 3] << 24);
+    }
+
+    public static uint ReadUInt32LE(ReadOnlySpan<byte> buffer, int offset)
     {
         return buffer[offset] |
                ((uint)buffer[offset + 1] << 8) |

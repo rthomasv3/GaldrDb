@@ -10,4 +10,8 @@ internal static class PageConstants
 
     // Pages 0-3 are reserved: Header (0), Bitmap (1), FSM (2), Collections Metadata (3)
     public const int FIRST_DATA_PAGE_ID = 4;
+
+    // Encryption constants
+    public const int ENCRYPTION_RESERVE_SIZE = 32;  // 12 nonce + 16 tag + 4 padding
+    public const uint ENCRYPTION_MAGIC = 0x47454E43; // "GENC"
 }

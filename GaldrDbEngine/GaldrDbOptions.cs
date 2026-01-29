@@ -1,5 +1,6 @@
 using System;
 using GaldrDbEngine.IO;
+using GaldrDbEngine.Pages;
 using GaldrDbEngine.WAL;
 
 namespace GaldrDbEngine;
@@ -13,6 +14,13 @@ public class GaldrDbOptions
     /// Page size in bytes. Must be a power of 2. Default is 8192.
     /// </summary>
     public int PageSize { get; set; } = 8192;
+
+    /// <summary>
+    /// Gets the usable page size after accounting for encryption overhead.
+    /// When encryption is disabled, this equals PageSize.
+    /// When encryption is enabled, this is PageSize minus the encryption reserve (32 bytes).
+    /// </summary>
+    public int UsablePageSize => Encryption?.Password != null ? PageSize - PageConstants.ENCRYPTION_RESERVE_SIZE : PageSize;
 
     /// <summary>
     /// Enable write-ahead logging for durability. Default is true.
@@ -77,6 +85,12 @@ public class GaldrDbOptions
     /// Set to 0 to disable the page cache.
     /// </summary>
     public int PageCacheSize { get; set; } = 2000;
+
+    /// <summary>
+    /// Encryption options for the database. Set to enable AES-256-GCM encryption.
+    /// When null, the database is not encrypted.
+    /// </summary>
+    public EncryptionOptions Encryption { get; set; }
 
     // Internal: for simulation testing only (null in production)
     internal IPageIO CustomPageIO { get; set; }
