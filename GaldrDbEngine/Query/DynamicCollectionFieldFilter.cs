@@ -1,19 +1,22 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Nodes;
 using GaldrDbEngine.Json;
 
 namespace GaldrDbEngine.Query;
 
 /// <summary>
-/// A filter that compares a document field against a value using runtime field access.
+/// A filter that matches documents where any element in a collection field satisfies the condition,
+/// using runtime field access on JSON documents.
 /// </summary>
-internal sealed class DynamicFieldFilter : IFieldFilter
+internal sealed class DynamicCollectionFieldFilter : IFieldFilter
 {
     private readonly string _fieldName;
+    private readonly string _collectionPath;
+    private readonly string _elementFieldName;
     private readonly GaldrFieldType _fieldType;
     private readonly FieldOp _op;
     private readonly object _value;
-    private readonly bool _isIndexed;
 
     public string FieldName
     {
@@ -27,7 +30,7 @@ internal sealed class DynamicFieldFilter : IFieldFilter
 
     public bool IsIndexed
     {
-        get { return _isIndexed; }
+        get { return false; }
     }
 
     public FieldOp Operation
@@ -45,14 +48,25 @@ internal sealed class DynamicFieldFilter : IFieldFilter
         get { return _value; }
     }
 
-    public DynamicFieldFilter(string fieldName, GaldrFieldType fieldType, FieldOp op, object value, bool isIndexed)
+    public DynamicCollectionFieldFilter(string fieldName, GaldrFieldType fieldType, FieldOp op, object value)
     {
         ValidateOperation(fieldType, op);
         _fieldName = fieldName;
         _fieldType = fieldType;
         _op = op;
         _value = value;
-        _isIndexed = isIndexed;
+
+        int lastDotIndex = fieldName.LastIndexOf('.');
+        if (lastDotIndex > 0)
+        {
+            _collectionPath = fieldName.Substring(0, lastDotIndex);
+            _elementFieldName = fieldName.Substring(lastDotIndex + 1);
+        }
+        else
+        {
+            _collectionPath = fieldName;
+            _elementFieldName = null;
+        }
     }
 
     private static void ValidateOperation(GaldrFieldType fieldType, FieldOp op)
@@ -67,7 +81,7 @@ internal sealed class DynamicFieldFilter : IFieldFilter
 
         if (op == FieldOp.Between || op == FieldOp.In || op == FieldOp.NotIn)
         {
-            throw new ArgumentException($"Operation '{op}' is not supported in Where(). Use WhereBetween(), WhereIn(), or WhereNotIn() instead.");
+            throw new ArgumentException($"Operation '{op}' is not supported in WhereAny(). Use WhereAnyBetween(), WhereAnyIn(), or WhereAnyNotIn() instead.");
         }
     }
 
@@ -78,33 +92,49 @@ internal sealed class DynamicFieldFilter : IFieldFilter
 
     public bool EvaluateDocument(JsonDocument doc)
     {
-        bool result;
-        bool hasValue;
-        System.Text.Json.Nodes.JsonNode node;
+        bool result = false;
+        JsonNode collectionNode;
+        bool hasCollection = doc.TryGetNestedValue(_collectionPath, out collectionNode);
 
-        if (_fieldName.Contains('.'))
+        if (hasCollection && collectionNode is JsonArray array)
         {
-            hasValue = doc.TryGetNestedValue(_fieldName, out node);
+            foreach (JsonNode element in array)
+            {
+                if (element != null && EvaluateElement(element))
+                {
+                    result = true;
+                    break;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private bool EvaluateElement(JsonNode element)
+    {
+        bool result = false;
+        JsonNode valueNode = null;
+
+        if (_elementFieldName != null && element is JsonObject obj)
+        {
+            obj.TryGetPropertyValue(_elementFieldName, out valueNode);
         }
         else
         {
-            hasValue = doc.TryGetValue(_fieldName, out node);
+            valueNode = element;
         }
 
-        if (!hasValue || node == null)
+        if (valueNode != null)
         {
-            result = _op == FieldOp.Equals && _value == null;
-        }
-        else
-        {
-            object fieldValue = ExtractValue(node);
+            object fieldValue = ExtractValue(valueNode);
             result = EvaluateComparison(fieldValue, _value, _op);
         }
 
         return result;
     }
 
-    private object ExtractValue(System.Text.Json.Nodes.JsonNode node)
+    private object ExtractValue(JsonNode node)
     {
         return _fieldType switch
         {
@@ -195,19 +225,12 @@ internal sealed class DynamicFieldFilter : IFieldFilter
 
     public byte[] GetIndexKeyBytes()
     {
-        return IndexKeyEncoder.Encode(_value, _fieldType);
+        return null;
     }
 
     public byte[] GetIndexKeyEndBytes()
     {
-        byte[] result = null;
-
-        if (_op == FieldOp.StartsWith && _value is string s)
-        {
-            result = IndexKeyEncoder.EncodePrefixEnd(s);
-        }
-
-        return result;
+        return null;
     }
 
     public IEnumerable<byte[]> GetAllIndexKeyBytes()

@@ -202,13 +202,35 @@ namespace GaldrDbSourceGenerators
                 }
 
                 GaldrFieldTypeInfo fieldType = GetFieldType(prop.Type);
+                bool isNestedObject = IsNestedObjectType(prop.Type);
+                bool isCollection = IsCollectionType(prop.Type, out ITypeSymbol elementType);
+                string collectionElementTypeName = null;
+                ImmutableArray<PropertyInfo> nestedProps = ImmutableArray<PropertyInfo>.Empty;
+
+                if (isNestedObject)
+                {
+                    nestedProps = GetNestedProperties(prop.Type, 1, new HashSet<string>());
+                }
+                else if (isCollection && elementType != null && IsNestedObjectType(elementType))
+                {
+                    collectionElementTypeName = GetFullyQualifiedTypeName(elementType);
+                    nestedProps = GetNestedProperties(elementType, 1, new HashSet<string>());
+                }
+                else if (isCollection && elementType != null)
+                {
+                    collectionElementTypeName = GetFullyQualifiedTypeName(elementType);
+                }
 
                 properties.Add(new PropertyInfo(
                     prop.Name,
                     GetFullyQualifiedTypeName(prop.Type),
                     fieldType,
                     isIndexed,
-                    isUniqueIndex));
+                    isUniqueIndex,
+                    isNestedObject,
+                    isCollection,
+                    collectionElementTypeName,
+                    nestedProps));
             }
 
             return new ClassInfo(
@@ -429,6 +451,180 @@ namespace GaldrDbSourceGenerators
 
             // Non-indexable complex type
             return new GaldrFieldTypeInfo("GaldrFieldType.Complex", null, isNullable);
+        }
+
+        private static bool IsCollectionType(ITypeSymbol type, out ITypeSymbol elementType)
+        {
+            elementType = null;
+
+            // Skip string (which implements IEnumerable<char>)
+            if (type.SpecialType == SpecialType.System_String)
+            {
+                return false;
+            }
+
+            // Check for arrays
+            if (type is IArrayTypeSymbol arrayType)
+            {
+                elementType = arrayType.ElementType;
+                return true;
+            }
+
+            // Check for List<T>, IList<T>, ICollection<T>, IEnumerable<T>
+            if (type is INamedTypeSymbol namedType)
+            {
+                // Check if it's a generic type with one type argument
+                if (namedType.IsGenericType && namedType.TypeArguments.Length == 1)
+                {
+                    string typeName = namedType.ConstructedFrom?.ToDisplayString() ?? "";
+                    if (typeName.StartsWith("System.Collections.Generic.List<") ||
+                        typeName.StartsWith("System.Collections.Generic.IList<") ||
+                        typeName.StartsWith("System.Collections.Generic.ICollection<") ||
+                        typeName.StartsWith("System.Collections.Generic.IEnumerable<") ||
+                        typeName.StartsWith("System.Collections.Generic.IReadOnlyList<") ||
+                        typeName.StartsWith("System.Collections.Generic.IReadOnlyCollection<"))
+                    {
+                        elementType = namedType.TypeArguments[0];
+                        return true;
+                    }
+
+                    // Also check the original definition name
+                    string defName = namedType.OriginalDefinition?.Name ?? "";
+                    if (defName == "List" || defName == "IList" || defName == "ICollection" ||
+                        defName == "IEnumerable" || defName == "IReadOnlyList" || defName == "IReadOnlyCollection")
+                    {
+                        elementType = namedType.TypeArguments[0];
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsNestedObjectType(ITypeSymbol type)
+        {
+            // Skip primitives and well-known types
+            if (type.SpecialType != SpecialType.None)
+            {
+                return false;
+            }
+
+            // Skip string
+            if (type.Name == "String" || type.ToDisplayString() == "string")
+            {
+                return false;
+            }
+
+            // Skip nullable value types (handled separately)
+            if (type.NullableAnnotation == NullableAnnotation.Annotated && type.IsValueType)
+            {
+                return false;
+            }
+
+            // Skip enums
+            if (type.TypeKind == TypeKind.Enum)
+            {
+                return false;
+            }
+
+            // Skip well-known struct types
+            string typeName = type.Name;
+            if (typeName == "DateTime" || typeName == "DateTimeOffset" || typeName == "Guid" ||
+                typeName == "TimeSpan" || typeName == "DateOnly" || typeName == "TimeOnly" ||
+                typeName == "Decimal")
+            {
+                return false;
+            }
+
+            // Skip collections
+            if (IsCollectionType(type, out _))
+            {
+                return false;
+            }
+
+            // Must be a class with public properties
+            if (type.TypeKind != TypeKind.Class)
+            {
+                return false;
+            }
+
+            // Check if it has any public properties with getters
+            foreach (ISymbol member in type.GetMembers())
+            {
+                if (member is IPropertySymbol prop &&
+                    prop.DeclaredAccessibility == Accessibility.Public &&
+                    prop.GetMethod != null)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static ImmutableArray<PropertyInfo> GetNestedProperties(
+            ITypeSymbol type,
+            int depth,
+            HashSet<string> visited)
+        {
+            // Limit depth to 3 levels
+            if (depth > 3)
+            {
+                return ImmutableArray<PropertyInfo>.Empty;
+            }
+
+            // Prevent infinite recursion for circular references
+            string typeKey = type.ToDisplayString();
+            if (visited.Contains(typeKey))
+            {
+                return ImmutableArray<PropertyInfo>.Empty;
+            }
+            visited.Add(typeKey);
+
+            ImmutableArray<PropertyInfo>.Builder properties = ImmutableArray.CreateBuilder<PropertyInfo>();
+
+            foreach (ISymbol member in type.GetMembers())
+            {
+                if (member is IPropertySymbol prop &&
+                    prop.DeclaredAccessibility == Accessibility.Public &&
+                    prop.GetMethod != null)
+                {
+                    GaldrFieldTypeInfo fieldType = GetFieldType(prop.Type);
+                    bool isNestedObject = IsNestedObjectType(prop.Type);
+                    bool isCollection = IsCollectionType(prop.Type, out ITypeSymbol elementType);
+                    string collectionElementTypeName = null;
+                    ImmutableArray<PropertyInfo> nestedProps = ImmutableArray<PropertyInfo>.Empty;
+
+                    if (isNestedObject)
+                    {
+                        nestedProps = GetNestedProperties(prop.Type, depth + 1, new HashSet<string>(visited));
+                    }
+                    else if (isCollection && elementType != null && IsNestedObjectType(elementType))
+                    {
+                        collectionElementTypeName = GetFullyQualifiedTypeName(elementType);
+                        nestedProps = GetNestedProperties(elementType, depth + 1, new HashSet<string>(visited));
+                    }
+                    else if (isCollection && elementType != null)
+                    {
+                        collectionElementTypeName = GetFullyQualifiedTypeName(elementType);
+                    }
+
+                    properties.Add(new PropertyInfo(
+                        prop.Name,
+                        GetFullyQualifiedTypeName(prop.Type),
+                        fieldType,
+                        false,
+                        false,
+                        isNestedObject,
+                        isCollection,
+                        collectionElementTypeName,
+                        nestedProps));
+                }
+            }
+
+            visited.Remove(typeKey);
+            return properties.ToImmutable();
         }
 
         private static GaldrFieldTypeInfo GetEnumFieldType(INamedTypeSymbol underlyingType, bool isNullable)
@@ -766,15 +962,51 @@ namespace GaldrDbSourceGenerators
             // GaldrField properties for each property
             foreach (PropertyInfo prop in classInfo.Properties)
             {
-                string indexedStr = prop.IsIndexed ? "true" : "false";
-                string indexComment = prop.IsIndexed ? " This field is indexed." : "";
+                if (prop.IsNestedObject && !prop.NestedProperties.IsDefaultOrEmpty)
+                {
+                    // Generate accessor property for nested object
+                    string accessorClassName = $"{classInfo.ClassName}{prop.Name}Accessor";
+                    sb.AppendLine($"        /// <summary>");
+                    sb.AppendLine($"        /// Accessor for nested {prop.Name} properties.");
+                    sb.AppendLine($"        /// </summary>");
+                    sb.AppendLine($"        public static {accessorClassName} {prop.Name} {{ get; }} = new {accessorClassName}();");
+                    sb.AppendLine();
+                }
+                else if (prop.IsCollection && !prop.NestedProperties.IsDefaultOrEmpty)
+                {
+                    // Generate collection accessor property
+                    string accessorClassName = $"{classInfo.ClassName}{prop.Name}Accessor";
+                    sb.AppendLine($"        /// <summary>");
+                    sb.AppendLine($"        /// Accessor for collection {prop.Name} element properties.");
+                    sb.AppendLine($"        /// </summary>");
+                    sb.AppendLine($"        public static {accessorClassName} {prop.Name} {{ get; }} = new {accessorClassName}();");
+                    sb.AppendLine();
+                }
+                else
+                {
+                    string indexedStr = prop.IsIndexed ? "true" : "false";
+                    string indexComment = prop.IsIndexed ? " This field is indexed." : "";
 
-                sb.AppendLine($"        /// <summary>");
-                sb.AppendLine($"        /// Field accessor for {prop.Name}.{indexComment}");
-                sb.AppendLine($"        /// </summary>");
-                sb.AppendLine($"        public static GaldrField<{classInfo.FullyQualifiedName}, {prop.TypeName}> {prop.Name} {{ get; }} =");
-                sb.AppendLine($"            new GaldrField<{classInfo.FullyQualifiedName}, {prop.TypeName}>(\"{prop.Name}\", {prop.FieldType.FieldTypeEnum}, {indexedStr}, static p => p.{prop.Name});");
-                sb.AppendLine();
+                    sb.AppendLine($"        /// <summary>");
+                    sb.AppendLine($"        /// Field accessor for {prop.Name}.{indexComment}");
+                    sb.AppendLine($"        /// </summary>");
+                    sb.AppendLine($"        public static GaldrField<{classInfo.FullyQualifiedName}, {prop.TypeName}> {prop.Name} {{ get; }} =");
+                    sb.AppendLine($"            new GaldrField<{classInfo.FullyQualifiedName}, {prop.TypeName}>(\"{prop.Name}\", {prop.FieldType.FieldTypeEnum}, {indexedStr}, static p => p.{prop.Name});");
+                    sb.AppendLine();
+                }
+            }
+
+            // Generate nested accessor classes
+            foreach (PropertyInfo prop in classInfo.Properties)
+            {
+                if (prop.IsNestedObject && !prop.NestedProperties.IsDefaultOrEmpty)
+                {
+                    GenerateNestedAccessorClass(sb, classInfo, prop, prop.Name);
+                }
+                else if (prop.IsCollection && !prop.NestedProperties.IsDefaultOrEmpty)
+                {
+                    GenerateCollectionAccessorClass(sb, classInfo, prop, prop.Name);
+                }
             }
 
             // SetId method
@@ -839,6 +1071,162 @@ namespace GaldrDbSourceGenerators
             sb.AppendLine("}");
 
             return sb.ToString();
+        }
+
+        private static void GenerateNestedAccessorClass(
+            StringBuilder sb,
+            ClassInfo classInfo,
+            PropertyInfo prop,
+            string pathPrefix)
+        {
+            string accessorClassName = $"{classInfo.ClassName}{prop.Name}Accessor";
+            IndentedStringBuilder isb = new IndentedStringBuilder();
+            isb.IncreaseIndent();
+            isb.IncreaseIndent();
+
+            isb.AppendLine();
+            isb.AppendLine("/// <summary>");
+            isb.AppendLine($"/// Provides access to nested properties of {prop.Name}.");
+            isb.AppendLine("/// </summary>");
+            using (isb.Block($"public sealed class {accessorClassName}"))
+            {
+                foreach (PropertyInfo nestedProp in prop.NestedProperties)
+                {
+                    string fullPath = $"{pathPrefix}.{nestedProp.Name}";
+
+                    if (nestedProp.IsNestedObject && !nestedProp.NestedProperties.IsDefaultOrEmpty)
+                    {
+                        string nestedAccessorClassName = $"{classInfo.ClassName}{prop.Name}{nestedProp.Name}Accessor";
+                        isb.AppendLine("/// <summary>");
+                        isb.AppendLine($"/// Accessor for nested {nestedProp.Name} properties.");
+                        isb.AppendLine("/// </summary>");
+                        isb.AppendLine($"public {nestedAccessorClassName} {nestedProp.Name} {{ get; }} = new {nestedAccessorClassName}();");
+                        isb.AppendLine();
+                    }
+                    else
+                    {
+                        isb.AppendLine("/// <summary>");
+                        isb.AppendLine($"/// Field accessor for {fullPath}.");
+                        isb.AppendLine("/// </summary>");
+                        isb.AppendLine($"public GaldrField<{classInfo.FullyQualifiedName}, {nestedProp.TypeName}> {nestedProp.Name} {{ get; }} =");
+                        isb.IncreaseIndent();
+                        string accessorSuffix = IsValueTypeField(nestedProp.FieldType) ? " ?? default" : "";
+                        isb.AppendLine($"new GaldrField<{classInfo.FullyQualifiedName}, {nestedProp.TypeName}>(\"{fullPath}\", {nestedProp.FieldType.FieldTypeEnum}, false, static p => p.{pathPrefix}?.{nestedProp.Name}{accessorSuffix});");
+                        isb.DecreaseIndent();
+                        isb.AppendLine();
+                    }
+                }
+            }
+
+            sb.Append(isb.ToString());
+
+            foreach (PropertyInfo nestedProp in prop.NestedProperties)
+            {
+                if (nestedProp.IsNestedObject && !nestedProp.NestedProperties.IsDefaultOrEmpty)
+                {
+                    GenerateDeepNestedAccessorClass(sb, classInfo, prop.Name, nestedProp, $"{pathPrefix}.{nestedProp.Name}");
+                }
+            }
+        }
+
+        private static bool IsValueTypeField(GaldrFieldTypeInfo fieldType)
+        {
+            string enumType = fieldType.FieldTypeEnum;
+            return enumType == "GaldrFieldType.Int32" ||
+                   enumType == "GaldrFieldType.Int64" ||
+                   enumType == "GaldrFieldType.Int16" ||
+                   enumType == "GaldrFieldType.Byte" ||
+                   enumType == "GaldrFieldType.SByte" ||
+                   enumType == "GaldrFieldType.UInt16" ||
+                   enumType == "GaldrFieldType.UInt32" ||
+                   enumType == "GaldrFieldType.UInt64" ||
+                   enumType == "GaldrFieldType.Single" ||
+                   enumType == "GaldrFieldType.Double" ||
+                   enumType == "GaldrFieldType.Decimal" ||
+                   enumType == "GaldrFieldType.Boolean" ||
+                   enumType == "GaldrFieldType.DateTime" ||
+                   enumType == "GaldrFieldType.DateTimeOffset" ||
+                   enumType == "GaldrFieldType.DateOnly" ||
+                   enumType == "GaldrFieldType.TimeOnly" ||
+                   enumType == "GaldrFieldType.TimeSpan" ||
+                   enumType == "GaldrFieldType.Guid" ||
+                   enumType == "GaldrFieldType.Char" ||
+                   fieldType.IsEnum;
+        }
+
+        private static void GenerateDeepNestedAccessorClass(
+            StringBuilder sb,
+            ClassInfo classInfo,
+            string parentName,
+            PropertyInfo prop,
+            string pathPrefix)
+        {
+            string accessorClassName = $"{classInfo.ClassName}{parentName}{prop.Name}Accessor";
+            IndentedStringBuilder isb = new IndentedStringBuilder();
+            isb.IncreaseIndent();
+            isb.IncreaseIndent();
+
+            isb.AppendLine();
+            isb.AppendLine("/// <summary>");
+            isb.AppendLine($"/// Provides access to deeply nested properties of {pathPrefix}.");
+            isb.AppendLine("/// </summary>");
+            using (isb.Block($"public sealed class {accessorClassName}"))
+            {
+                foreach (PropertyInfo nestedProp in prop.NestedProperties)
+                {
+                    string fullPath = $"{pathPrefix}.{nestedProp.Name}";
+
+                    isb.AppendLine("/// <summary>");
+                    isb.AppendLine($"/// Field accessor for {fullPath}.");
+                    isb.AppendLine("/// </summary>");
+                    isb.AppendLine($"public GaldrField<{classInfo.FullyQualifiedName}, {nestedProp.TypeName}> {nestedProp.Name} {{ get; }} =");
+                    isb.IncreaseIndent();
+                    string accessorSuffix = IsValueTypeField(nestedProp.FieldType) ? " ?? default" : "";
+                    isb.AppendLine($"new GaldrField<{classInfo.FullyQualifiedName}, {nestedProp.TypeName}>(\"{fullPath}\", {nestedProp.FieldType.FieldTypeEnum}, false, static p => p.{pathPrefix}?.{nestedProp.Name}{accessorSuffix});");
+                    isb.DecreaseIndent();
+                    isb.AppendLine();
+                }
+            }
+
+            sb.Append(isb.ToString());
+        }
+
+        private static void GenerateCollectionAccessorClass(
+            StringBuilder sb,
+            ClassInfo classInfo,
+            PropertyInfo prop,
+            string pathPrefix)
+        {
+            string accessorClassName = $"{classInfo.ClassName}{prop.Name}Accessor";
+            string elementTypeName = prop.CollectionElementTypeName;
+            IndentedStringBuilder isb = new IndentedStringBuilder();
+            isb.IncreaseIndent();
+            isb.IncreaseIndent();
+
+            isb.AppendLine();
+            isb.AppendLine("/// <summary>");
+            isb.AppendLine($"/// Provides access to element properties of {prop.Name} collection for any-match queries.");
+            isb.AppendLine("/// </summary>");
+            using (isb.Block($"public sealed class {accessorClassName}"))
+            {
+                foreach (PropertyInfo nestedProp in prop.NestedProperties)
+                {
+                    string fullPath = $"{pathPrefix}.{nestedProp.Name}";
+
+                    isb.AppendLine("/// <summary>");
+                    isb.AppendLine($"/// Collection field accessor for {fullPath}.");
+                    isb.AppendLine("/// </summary>");
+                    isb.AppendLine($"public GaldrCollectionField<{classInfo.FullyQualifiedName}, {elementTypeName}, {nestedProp.TypeName}> {nestedProp.Name} {{ get; }} =");
+                    isb.IncreaseIndent();
+                    isb.AppendLine($"new GaldrCollectionField<{classInfo.FullyQualifiedName}, {elementTypeName}, {nestedProp.TypeName}>(\"{fullPath}\", {nestedProp.FieldType.FieldTypeEnum}, false,");
+                    isb.AppendLine($"static p => p.{pathPrefix} ?? System.Linq.Enumerable.Empty<{elementTypeName}>(),");
+                    isb.AppendLine($"static e => e.{nestedProp.Name});");
+                    isb.DecreaseIndent();
+                    isb.AppendLine();
+                }
+            }
+
+            sb.Append(isb.ToString());
         }
 
         private static Dictionary<string, string> ResolveProjectionCollisions(List<ProjectionInfo> projections)
@@ -1116,6 +1504,10 @@ namespace GaldrDbSourceGenerators
         public GaldrFieldTypeInfo FieldType { get; }
         public bool IsIndexed { get; }
         public bool IsUniqueIndex { get; }
+        public bool IsNestedObject { get; }
+        public bool IsCollection { get; }
+        public string CollectionElementTypeName { get; }
+        public ImmutableArray<PropertyInfo> NestedProperties { get; }
 
         public PropertyInfo(string name, string typeName, GaldrFieldTypeInfo fieldType, bool isIndexed, bool isUniqueIndex)
         {
@@ -1124,6 +1516,32 @@ namespace GaldrDbSourceGenerators
             FieldType = fieldType;
             IsIndexed = isIndexed;
             IsUniqueIndex = isUniqueIndex;
+            IsNestedObject = false;
+            IsCollection = false;
+            CollectionElementTypeName = null;
+            NestedProperties = ImmutableArray<PropertyInfo>.Empty;
+        }
+
+        public PropertyInfo(
+            string name,
+            string typeName,
+            GaldrFieldTypeInfo fieldType,
+            bool isIndexed,
+            bool isUniqueIndex,
+            bool isNestedObject,
+            bool isCollection,
+            string collectionElementTypeName,
+            ImmutableArray<PropertyInfo> nestedProperties)
+        {
+            Name = name;
+            TypeName = typeName;
+            FieldType = fieldType;
+            IsIndexed = isIndexed;
+            IsUniqueIndex = isUniqueIndex;
+            IsNestedObject = isNestedObject;
+            IsCollection = isCollection;
+            CollectionElementTypeName = collectionElementTypeName;
+            NestedProperties = nestedProperties;
         }
     }
 

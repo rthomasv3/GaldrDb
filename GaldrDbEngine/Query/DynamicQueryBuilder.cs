@@ -94,6 +94,21 @@ public sealed class DynamicQueryBuilder
     }
 
     /// <summary>
+    /// Adds a filter that matches documents where any element in a collection field satisfies the condition.
+    /// Use dot notation for nested collection paths (e.g., "Addresses.City").
+    /// </summary>
+    /// <param name="fieldName">The collection field path (e.g., "Addresses.City").</param>
+    /// <param name="op">The comparison operation.</param>
+    /// <param name="value">The value to compare against.</param>
+    /// <returns>This query builder for chaining.</returns>
+    public DynamicQueryBuilder WhereAny(string fieldName, FieldOp op, object value)
+    {
+        GaldrFieldType fieldType = InferTypeFromValue(value);
+        _filters.Add(new DynamicCollectionFieldFilter(fieldName, fieldType, op, value));
+        return this;
+    }
+
+    /// <summary>
     /// Limits the number of results returned.
     /// </summary>
     /// <param name="count">Maximum number of documents to return.</param>

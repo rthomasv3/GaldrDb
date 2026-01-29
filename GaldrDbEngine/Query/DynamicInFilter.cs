@@ -62,8 +62,19 @@ internal sealed class DynamicInFilter : IFieldFilter
     public bool EvaluateDocument(JsonDocument doc)
     {
         bool result;
+        bool hasValue;
+        System.Text.Json.Nodes.JsonNode node;
 
-        if (!doc.TryGetValue(_fieldName, out System.Text.Json.Nodes.JsonNode node) || node == null)
+        if (_fieldName.Contains('.'))
+        {
+            hasValue = doc.TryGetNestedValue(_fieldName, out node);
+        }
+        else
+        {
+            hasValue = doc.TryGetValue(_fieldName, out node);
+        }
+
+        if (!hasValue || node == null)
         {
             result = _valuesSet.Contains(null);
         }

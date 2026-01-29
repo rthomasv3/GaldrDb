@@ -100,6 +100,40 @@ public sealed class JsonDocument
     }
 
     /// <summary>
+    /// Tries to get a nested field's JsonNode using dot notation (e.g., "Address.City").
+    /// </summary>
+    public bool TryGetNestedValue(string path, out JsonNode value)
+    {
+        value = null;
+        string[] segments = path.Split('.');
+        JsonNode current = _node;
+        bool success = true;
+
+        for (int i = 0; i < segments.Length && success; i++)
+        {
+            if (current == null || current is not JsonObject obj)
+            {
+                success = false;
+            }
+            else if (!obj.TryGetPropertyValue(segments[i], out current))
+            {
+                success = false;
+            }
+        }
+
+        if (success && current != null)
+        {
+            value = current;
+        }
+        else
+        {
+            success = false;
+        }
+
+        return success;
+    }
+
+    /// <summary>
     /// Gets a field as an int.
     /// </summary>
     public int GetInt32(string fieldName)

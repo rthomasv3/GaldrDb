@@ -4,13 +4,15 @@ using System.Collections.Generic;
 namespace GaldrDbEngine.Query;
 
 /// <summary>
-/// A filter that compares a document field against a single value.
+/// A filter that compares elements in a collection field against a single value,
+/// matching if any element satisfies the condition.
 /// </summary>
 /// <typeparam name="TDocument">The document type.</typeparam>
-/// <typeparam name="TField">The field type.</typeparam>
-public sealed class FieldFilter<TDocument, TField> : IFieldFilter
+/// <typeparam name="TElement">The collection element type.</typeparam>
+/// <typeparam name="TField">The field type within elements.</typeparam>
+public sealed class CollectionFieldFilter<TDocument, TElement, TField> : IFieldFilter
 {
-    private readonly GaldrField<TDocument, TField> _field;
+    private readonly GaldrCollectionField<TDocument, TElement, TField> _field;
     private readonly FieldOp _op;
     private readonly TField _value;
 
@@ -29,7 +31,7 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
     /// <inheritdoc/>
     public bool IsIndexed
     {
-        get { return _field.IsIndexed; }
+        get { return false; }
     }
 
     /// <inheritdoc/>
@@ -51,13 +53,13 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
     }
 
     /// <summary>
-    /// Creates a new field filter.
+    /// Creates a new collection field filter.
     /// </summary>
-    /// <param name="field">The field to filter on.</param>
+    /// <param name="field">The collection field to filter on.</param>
     /// <param name="op">The comparison operation.</param>
     /// <param name="value">The value to compare against.</param>
     /// <exception cref="ArgumentException">Thrown if the operation is invalid for the field type.</exception>
-    public FieldFilter(GaldrField<TDocument, TField> field, FieldOp op, TField value)
+    public CollectionFieldFilter(GaldrCollectionField<TDocument, TElement, TField> field, FieldOp op, TField value)
     {
         ValidateOperation(field, op);
         _field = field;
@@ -65,7 +67,7 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
         _value = value;
     }
 
-    private static void ValidateOperation(GaldrField<TDocument, TField> field, FieldOp op)
+    private static void ValidateOperation(GaldrCollectionField<TDocument, TElement, TField> field, FieldOp op)
     {
         bool isStringField = field.FieldType == GaldrFieldType.String;
         bool isStringOperation = op == FieldOp.StartsWith || op == FieldOp.EndsWith || op == FieldOp.Contains;
@@ -77,7 +79,7 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
 
         if (op == FieldOp.Between || op == FieldOp.In || op == FieldOp.NotIn)
         {
-            throw new ArgumentException($"Operation '{op}' is not supported in Where(). Use WhereBetween(), WhereIn(), or WhereNotIn() instead.");
+            throw new ArgumentException($"Operation '{op}' is not supported in WhereAny(). Use WhereAnyBetween(), WhereAnyIn(), or WhereAnyNotIn() instead.");
         }
     }
 
@@ -85,8 +87,27 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
     public bool Evaluate(object document)
     {
         TDocument doc = (TDocument)document;
-        TField fieldValue = _field.Accessor(doc);
+        IEnumerable<TElement> collection = _field.CollectionAccessor(doc);
+        bool result = false;
 
+        if (collection != null)
+        {
+            foreach (TElement element in collection)
+            {
+                if (element != null && EvaluateElement(element))
+                {
+                    result = true;
+                    break;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private bool EvaluateElement(TElement element)
+    {
+        TField fieldValue = _field.ElementAccessor(element);
         bool result;
 
         switch (_op)
@@ -128,7 +149,7 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
                 break;
 
             default:
-                throw new NotSupportedException($"Operation {_op} not supported for FieldFilter. Use specialized filter classes for Between/In operations.");
+                throw new NotSupportedException($"Operation {_op} not supported for CollectionFieldFilter.");
         }
 
         return result;
@@ -141,14 +162,6 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
         {
             result = s.StartsWith(v, StringComparison.Ordinal);
         }
-        else if (fieldValue == null)
-        {
-            result = false;
-        }
-        else
-        {
-            throw new NotSupportedException($"StartsWith operation is only supported for string fields");
-        }
         return result;
     }
 
@@ -158,14 +171,6 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
         if (fieldValue is string s && _value is string v)
         {
             result = s.EndsWith(v, StringComparison.Ordinal);
-        }
-        else if (fieldValue == null)
-        {
-            result = false;
-        }
-        else
-        {
-            throw new NotSupportedException($"EndsWith operation is only supported for string fields");
         }
         return result;
     }
@@ -177,34 +182,19 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
         {
             result = s.Contains(v, StringComparison.Ordinal);
         }
-        else if (fieldValue == null)
-        {
-            result = false;
-        }
-        else
-        {
-            throw new NotSupportedException($"Contains operation is only supported for string fields");
-        }
         return result;
     }
 
     /// <inheritdoc/>
     public byte[] GetIndexKeyBytes()
     {
-        return IndexKeyEncoder.Encode(_value, _field.FieldType);
+        return null;
     }
 
     /// <inheritdoc/>
     public byte[] GetIndexKeyEndBytes()
     {
-        byte[] result = null;
-
-        if (_op == FieldOp.StartsWith && _value is string s)
-        {
-            result = IndexKeyEncoder.EncodePrefixEnd(s);
-        }
-
-        return result;
+        return null;
     }
 
     /// <inheritdoc/>
