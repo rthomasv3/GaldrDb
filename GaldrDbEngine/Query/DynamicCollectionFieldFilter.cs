@@ -257,4 +257,34 @@ internal sealed class DynamicCollectionFieldFilter : IFieldFilter
     {
         return null;
     }
+
+    public int GetCompoundEncodedSize()
+    {
+        return IndexKeyEncoder.GetCompoundEncodedSizeBoxed(_value, _fieldType);
+    }
+
+    public int EncodeCompoundFieldTo(byte[] buffer, int offset)
+    {
+        return IndexKeyEncoder.EncodeCompoundFieldToBoxed(buffer, offset, _value, _fieldType);
+    }
+
+    public int GetCompoundEncodedSizeMax()
+    {
+        return GetCompoundEncodedSize();
+    }
+
+    public int EncodeCompoundFieldToMax(byte[] buffer, int offset)
+    {
+        return EncodeCompoundFieldTo(buffer, offset);
+    }
+
+    public int GetCompoundEncodedSizeForPrefix()
+    {
+        return GetCompoundEncodedSize();
+    }
+
+    public int EncodeCompoundFieldToForPrefix(byte[] buffer, int offset)
+    {
+        return EncodeCompoundFieldTo(buffer, offset);
+    }
 }

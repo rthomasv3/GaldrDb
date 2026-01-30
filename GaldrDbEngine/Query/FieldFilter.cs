@@ -191,7 +191,16 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
     /// <inheritdoc/>
     public byte[] GetIndexKeyBytes()
     {
-        return IndexKeyEncoder.Encode(_value, _field.FieldType);
+        byte[] result;
+        if (_op == FieldOp.StartsWith && _value is string s)
+        {
+            result = IndexKeyEncoder.EncodePrefix(s);
+        }
+        else
+        {
+            result = IndexKeyEncoder.Encode(_value, _field.FieldType);
+        }
+        return result;
     }
 
     /// <inheritdoc/>
@@ -235,5 +244,59 @@ public sealed class FieldFilter<TDocument, TField> : IFieldFilter
     public IReadOnlyList<int> GetInValuesAsInt32()
     {
         return null;
+    }
+
+    /// <inheritdoc/>
+    public int GetCompoundEncodedSize()
+    {
+        return IndexKeyEncoder.GetCompoundEncodedSize(_value);
+    }
+
+    /// <inheritdoc/>
+    public int EncodeCompoundFieldTo(byte[] buffer, int offset)
+    {
+        return IndexKeyEncoder.EncodeCompoundFieldTo(buffer, offset, _value);
+    }
+
+    /// <inheritdoc/>
+    public int GetCompoundEncodedSizeMax()
+    {
+        return GetCompoundEncodedSize();
+    }
+
+    /// <inheritdoc/>
+    public int EncodeCompoundFieldToMax(byte[] buffer, int offset)
+    {
+        return EncodeCompoundFieldTo(buffer, offset);
+    }
+
+    /// <inheritdoc/>
+    public int GetCompoundEncodedSizeForPrefix()
+    {
+        int result;
+        if (_op == FieldOp.StartsWith && _value is string s)
+        {
+            result = IndexKeyEncoder.GetCompoundPrefixSize(s);
+        }
+        else
+        {
+            result = GetCompoundEncodedSize();
+        }
+        return result;
+    }
+
+    /// <inheritdoc/>
+    public int EncodeCompoundFieldToForPrefix(byte[] buffer, int offset)
+    {
+        int result;
+        if (_op == FieldOp.StartsWith && _value is string s)
+        {
+            result = IndexKeyEncoder.EncodeCompoundPrefix(buffer, offset, s);
+        }
+        else
+        {
+            result = EncodeCompoundFieldTo(buffer, offset);
+        }
+        return result;
     }
 }

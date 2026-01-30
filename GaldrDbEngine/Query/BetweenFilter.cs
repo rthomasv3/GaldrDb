@@ -125,4 +125,40 @@ public sealed class BetweenFilter<TDocument, TField> : IFieldFilter where TField
     {
         return null;
     }
+
+    /// <inheritdoc/>
+    public int GetCompoundEncodedSize()
+    {
+        return IndexKeyEncoder.GetCompoundEncodedSize(_minValue);
+    }
+
+    /// <inheritdoc/>
+    public int EncodeCompoundFieldTo(byte[] buffer, int offset)
+    {
+        return IndexKeyEncoder.EncodeCompoundFieldTo(buffer, offset, _minValue);
+    }
+
+    /// <inheritdoc/>
+    public int GetCompoundEncodedSizeMax()
+    {
+        return IndexKeyEncoder.GetCompoundEncodedSize(_maxValue);
+    }
+
+    /// <inheritdoc/>
+    public int EncodeCompoundFieldToMax(byte[] buffer, int offset)
+    {
+        return IndexKeyEncoder.EncodeCompoundFieldTo(buffer, offset, _maxValue);
+    }
+
+    /// <inheritdoc/>
+    public int GetCompoundEncodedSizeForPrefix()
+    {
+        return GetCompoundEncodedSize();
+    }
+
+    /// <inheritdoc/>
+    public int EncodeCompoundFieldToForPrefix(byte[] buffer, int offset)
+    {
+        return EncodeCompoundFieldTo(buffer, offset);
+    }
 }

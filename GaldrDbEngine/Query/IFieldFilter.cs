@@ -71,4 +71,53 @@ public interface IFieldFilter
     /// </summary>
     /// <returns>The int values, or null for non-In filters or non-Int32 fields.</returns>
     IReadOnlyList<int> GetInValuesAsInt32();
+
+    /// <summary>
+    /// Gets the size needed to encode this filter's value in compound key format.
+    /// </summary>
+    /// <returns>The number of bytes required.</returns>
+    int GetCompoundEncodedSize();
+
+    /// <summary>
+    /// Encodes this filter's value directly to a buffer in compound key format.
+    /// This method avoids boxing by using type-specific encoding.
+    /// </summary>
+    /// <param name="buffer">The buffer to write to.</param>
+    /// <param name="offset">The offset to start writing at.</param>
+    /// <returns>The number of bytes written.</returns>
+    int EncodeCompoundFieldTo(byte[] buffer, int offset);
+
+    /// <summary>
+    /// Gets the size needed to encode this filter's max value in compound key format.
+    /// For Between filters, this is the max value. For other filters, same as GetCompoundEncodedSize.
+    /// </summary>
+    /// <returns>The number of bytes required.</returns>
+    int GetCompoundEncodedSizeMax();
+
+    /// <summary>
+    /// Encodes this filter's max value directly to a buffer in compound key format.
+    /// For Between filters, this encodes the max value. For other filters, same as EncodeCompoundFieldTo.
+    /// </summary>
+    /// <param name="buffer">The buffer to write to.</param>
+    /// <param name="offset">The offset to start writing at.</param>
+    /// <returns>The number of bytes written.</returns>
+    int EncodeCompoundFieldToMax(byte[] buffer, int offset);
+
+    /// <summary>
+    /// Gets the size needed to encode this filter's value as a prefix in compound key format.
+    /// For StartsWith filters on strings, this excludes the null terminator.
+    /// For other filters, same as GetCompoundEncodedSize.
+    /// </summary>
+    /// <returns>The number of bytes required.</returns>
+    int GetCompoundEncodedSizeForPrefix();
+
+    /// <summary>
+    /// Encodes this filter's value as a prefix directly to a buffer in compound key format.
+    /// For StartsWith filters on strings, this excludes the null terminator.
+    /// For other filters, same as EncodeCompoundFieldTo.
+    /// </summary>
+    /// <param name="buffer">The buffer to write to.</param>
+    /// <param name="offset">The offset to start writing at.</param>
+    /// <returns>The number of bytes written.</returns>
+    int EncodeCompoundFieldToForPrefix(byte[] buffer, int offset);
 }

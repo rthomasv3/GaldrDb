@@ -738,4 +738,202 @@ public class CompoundIndexQueryTests
             Assert.HasCount(1, activeOrders);
         }
     }
+
+    [TestMethod]
+    public void CompoundIndex_StartsWithOnSecondField_ReturnsMatchingDocuments()
+    {
+        using (GaldrDbInstance db = CreateDatabase("startswith_second_field.db"))
+        {
+            db.Insert(new Order { Status = "Pending", CreatedDate = DateTime.Now, Category = "Electronics", Priority = 1, Amount = 100, CustomerName = "C1" });
+            db.Insert(new Order { Status = "Pending", CreatedDate = DateTime.Now, Category = "Electrical", Priority = 2, Amount = 200, CustomerName = "C2" });
+            db.Insert(new Order { Status = "Pending", CreatedDate = DateTime.Now, Category = "Food", Priority = 3, Amount = 300, CustomerName = "C3" });
+            db.Insert(new Order { Status = "Shipped", CreatedDate = DateTime.Now, Category = "Electronics", Priority = 1, Amount = 400, CustomerName = "C4" });
+            db.Insert(new Order { Status = "Pending", CreatedDate = DateTime.Now, Category = "Clothing", Priority = 2, Amount = 500, CustomerName = "C5" });
+
+            List<Order> results = db.Query<Order>()
+                .Where(TestModelsOrderMeta.Status, FieldOp.Equals, "Pending")
+                .Where(TestModelsOrderMeta.Category, FieldOp.StartsWith, "Elec")
+                .ToList();
+
+            Assert.HasCount(2, results);
+            foreach (Order order in results)
+            {
+                Assert.AreEqual("Pending", order.Status);
+                Assert.StartsWith("Elec", order.Category);
+            }
+        }
+    }
+
+    [TestMethod]
+    public void CompoundIndex_StartsWithOnSecondField_NoMatches_ReturnsEmpty()
+    {
+        using (GaldrDbInstance db = CreateDatabase("startswith_no_match.db"))
+        {
+            db.Insert(new Order { Status = "Pending", CreatedDate = DateTime.Now, Category = "Electronics", Priority = 1, Amount = 100, CustomerName = "C1" });
+            db.Insert(new Order { Status = "Pending", CreatedDate = DateTime.Now, Category = "Food", Priority = 2, Amount = 200, CustomerName = "C2" });
+
+            List<Order> results = db.Query<Order>()
+                .Where(TestModelsOrderMeta.Status, FieldOp.Equals, "Pending")
+                .Where(TestModelsOrderMeta.Category, FieldOp.StartsWith, "Cloth")
+                .ToList();
+
+            Assert.IsEmpty(results);
+        }
+    }
+
+    [TestMethod]
+    public void CompoundIndex_StartsWithEmptyPrefix_ReturnsAllMatchingFirstField()
+    {
+        using (GaldrDbInstance db = CreateDatabase("startswith_empty.db"))
+        {
+            db.Insert(new Order { Status = "Pending", CreatedDate = DateTime.Now, Category = "Electronics", Priority = 1, Amount = 100, CustomerName = "C1" });
+            db.Insert(new Order { Status = "Pending", CreatedDate = DateTime.Now, Category = "Food", Priority = 2, Amount = 200, CustomerName = "C2" });
+            db.Insert(new Order { Status = "Shipped", CreatedDate = DateTime.Now, Category = "Electronics", Priority = 1, Amount = 300, CustomerName = "C3" });
+
+            List<Order> results = db.Query<Order>()
+                .Where(TestModelsOrderMeta.Status, FieldOp.Equals, "Pending")
+                .Where(TestModelsOrderMeta.Category, FieldOp.StartsWith, "")
+                .ToList();
+
+            Assert.HasCount(2, results);
+            foreach (Order order in results)
+            {
+                Assert.AreEqual("Pending", order.Status);
+            }
+        }
+    }
+
+    [TestMethod]
+    public void CompoundIndex_StartsWithPrefixMatchesMultiple_ReturnsAll()
+    {
+        using (GaldrDbInstance db = CreateDatabase("startswith_multiple.db"))
+        {
+            db.Insert(new Order { Status = "Active", CreatedDate = DateTime.Now, Category = "Books", Priority = 1, Amount = 100, CustomerName = "C1" });
+            db.Insert(new Order { Status = "Active", CreatedDate = DateTime.Now, Category = "BookStore", Priority = 2, Amount = 200, CustomerName = "C2" });
+            db.Insert(new Order { Status = "Active", CreatedDate = DateTime.Now, Category = "Bookmarks", Priority = 3, Amount = 300, CustomerName = "C3" });
+            db.Insert(new Order { Status = "Active", CreatedDate = DateTime.Now, Category = "Bottles", Priority = 4, Amount = 400, CustomerName = "C4" });
+            db.Insert(new Order { Status = "Active", CreatedDate = DateTime.Now, Category = "Art", Priority = 5, Amount = 500, CustomerName = "C5" });
+
+            List<Order> results = db.Query<Order>()
+                .Where(TestModelsOrderMeta.Status, FieldOp.Equals, "Active")
+                .Where(TestModelsOrderMeta.Category, FieldOp.StartsWith, "Book")
+                .ToList();
+
+            Assert.HasCount(3, results);
+            foreach (Order order in results)
+            {
+                Assert.AreEqual("Active", order.Status);
+                Assert.StartsWith("Book", order.Category);
+            }
+        }
+    }
+
+    [TestMethod]
+    public void Explain_CompoundIndex_StartsWith_ShowsCorrectInfo()
+    {
+        using (GaldrDbInstance db = CreateDatabase("explain_startswith.db"))
+        {
+            db.Insert(new Order { Status = "Pending", CreatedDate = DateTime.Now, Category = "Electronics", Priority = 1, Amount = 100, CustomerName = "C1" });
+
+            QueryExplanation explanation = db.Query<Order>()
+                .Where(TestModelsOrderMeta.Status, FieldOp.Equals, "Pending")
+                .Where(TestModelsOrderMeta.Category, FieldOp.StartsWith, "Elec")
+                .Explain();
+
+            Assert.AreEqual(QueryScanType.SecondaryIndex, explanation.ScanType);
+            Assert.AreEqual("Status_Category_Priority", explanation.IndexedField);
+            Assert.AreEqual(2, explanation.FiltersUsedByIndex);
+            Assert.AreEqual(0, explanation.FiltersAppliedAfterScan);
+            Assert.Contains("Compound index scan", explanation.ScanDescription);
+            Assert.Contains("Status Equals", explanation.ScanDescription);
+            Assert.Contains("Category StartsWith", explanation.ScanDescription);
+        }
+    }
+
+    [TestMethod]
+    public void Explain_CompoundIndex_StartsWithOnly_ShowsCorrectInfo()
+    {
+        using (GaldrDbInstance db = CreateDatabase("explain_startswith_only.db"))
+        {
+            db.Insert(new Order { Status = "Pending", CreatedDate = DateTime.Now, Category = "Electronics", Priority = 1, Amount = 100, CustomerName = "C1" });
+
+            QueryExplanation explanation = db.Query<Order>()
+                .Where(TestModelsOrderMeta.Status, FieldOp.StartsWith, "Pend")
+                .Explain();
+
+            Assert.AreEqual(QueryScanType.SecondaryIndex, explanation.ScanType);
+            Assert.AreEqual(1, explanation.FiltersUsedByIndex);
+            Assert.AreEqual(0, explanation.FiltersAppliedAfterScan);
+        }
+    }
+
+    [TestMethod]
+    public void CompoundIndex_StartsWithOnThirdField_UsesIndexForFirstTwo()
+    {
+        using (GaldrDbInstance db = CreateDatabase("startswith_third_field.db"))
+        {
+            db.Insert(new Order { Status = "Pending", CreatedDate = DateTime.Now, Category = "Electronics", Priority = 1, Amount = 100, CustomerName = "C1" });
+            db.Insert(new Order { Status = "Pending", CreatedDate = DateTime.Now, Category = "Electronics", Priority = 10, Amount = 200, CustomerName = "C2" });
+            db.Insert(new Order { Status = "Pending", CreatedDate = DateTime.Now, Category = "Electronics", Priority = 15, Amount = 300, CustomerName = "C3" });
+            db.Insert(new Order { Status = "Pending", CreatedDate = DateTime.Now, Category = "Electronics", Priority = 2, Amount = 400, CustomerName = "C4" });
+            db.Insert(new Order { Status = "Pending", CreatedDate = DateTime.Now, Category = "Food", Priority = 1, Amount = 500, CustomerName = "C5" });
+
+            // Note: Priority is int so StartsWith doesn't apply directly
+            // This test verifies equality + equality + additional filter pattern
+            List<Order> results = db.Query<Order>()
+                .Where(TestModelsOrderMeta.Status, FieldOp.Equals, "Pending")
+                .Where(TestModelsOrderMeta.Category, FieldOp.Equals, "Electronics")
+                .Where(TestModelsOrderMeta.Priority, FieldOp.GreaterThan, 5)
+                .ToList();
+
+            Assert.HasCount(2, results);
+            foreach (Order order in results)
+            {
+                Assert.AreEqual("Pending", order.Status);
+                Assert.AreEqual("Electronics", order.Category);
+                Assert.IsGreaterThan(5, order.Priority);
+            }
+        }
+    }
+
+    [TestMethod]
+    public void CompoundIndex_StartsWithCaseSensitive_MatchesCorrectCase()
+    {
+        using (GaldrDbInstance db = CreateDatabase("startswith_case.db"))
+        {
+            db.Insert(new Order { Status = "Pending", CreatedDate = DateTime.Now, Category = "Electronics", Priority = 1, Amount = 100, CustomerName = "C1" });
+            db.Insert(new Order { Status = "Pending", CreatedDate = DateTime.Now, Category = "electronics", Priority = 2, Amount = 200, CustomerName = "C2" });
+            db.Insert(new Order { Status = "Pending", CreatedDate = DateTime.Now, Category = "ELECTRONICS", Priority = 3, Amount = 300, CustomerName = "C3" });
+
+            List<Order> results = db.Query<Order>()
+                .Where(TestModelsOrderMeta.Status, FieldOp.Equals, "Pending")
+                .Where(TestModelsOrderMeta.Category, FieldOp.StartsWith, "Elec")
+                .ToList();
+
+            Assert.HasCount(1, results);
+            Assert.AreEqual("Electronics", results[0].Category);
+        }
+    }
+
+    [TestMethod]
+    public void CompoundIndex_StartsWithSpecialCharacters_Works()
+    {
+        using (GaldrDbInstance db = CreateDatabase("startswith_special.db"))
+        {
+            db.Insert(new Order { Status = "Active", CreatedDate = DateTime.Now, Category = "A-B-C", Priority = 1, Amount = 100, CustomerName = "C1" });
+            db.Insert(new Order { Status = "Active", CreatedDate = DateTime.Now, Category = "A-B-D", Priority = 2, Amount = 200, CustomerName = "C2" });
+            db.Insert(new Order { Status = "Active", CreatedDate = DateTime.Now, Category = "A-C", Priority = 3, Amount = 300, CustomerName = "C3" });
+
+            List<Order> results = db.Query<Order>()
+                .Where(TestModelsOrderMeta.Status, FieldOp.Equals, "Active")
+                .Where(TestModelsOrderMeta.Category, FieldOp.StartsWith, "A-B")
+                .ToList();
+
+            Assert.HasCount(2, results);
+            foreach (Order order in results)
+            {
+                Assert.StartsWith("A-B", order.Category);
+            }
+        }
+    }
 }

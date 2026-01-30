@@ -344,7 +344,7 @@ internal sealed class QueryPlanner
                 {
                     equalityCount++;
                 }
-                else if (IsRangeOperation(filter.Operation))
+                else if (IsRangeOperation(filter.Operation) || filter.Operation == FieldOp.StartsWith)
                 {
                     hasRange = true;
                     break;
@@ -649,86 +649,52 @@ internal sealed class QueryPlanner
 
     private static CompoundScanKeys BuildCompoundScanKeys(IndexedFilterResult indexResult)
     {
-        IndexDefinition indexDef = indexResult.IndexDefinition;
         IReadOnlyList<IFieldFilter> matchedFilters = indexResult.MatchedFilters;
         int equalityCount = indexResult.EqualityFieldCount;
         bool hasRange = indexResult.HasRangeField;
         int matchedCount = matchedFilters.Count;
 
-        object[] startValues = new object[matchedCount];
-        object[] endValues = new object[matchedCount];
-        GaldrFieldType[] fieldTypes = new GaldrFieldType[matchedCount];
-
-        for (int i = 0; i < matchedCount; i++)
-        {
-            fieldTypes[i] = indexDef.Fields[i].FieldType;
-        }
-
-        bool isExactMatch = !hasRange && matchedCount == indexDef.Fields.Count;
-        bool isPrefixOnly = !hasRange && matchedCount < indexDef.Fields.Count;
+        bool isExactMatch = !hasRange && matchedCount == indexResult.IndexDefinition.Fields.Count;
+        bool isPrefixOnly = !hasRange && matchedCount < indexResult.IndexDefinition.Fields.Count;
         SecondaryIndexOperation operation;
         byte[] startKey;
         byte[] endKey = null;
         byte[] prefixKey = null;
 
-        if (isExactMatch)
+        if (isExactMatch || isPrefixOnly)
         {
-            for (int i = 0; i < matchedCount; i++)
-            {
-                startValues[i] = matchedFilters[i].GetFilterValue();
-            }
-            startKey = IndexKeyEncoder.EncodeCompound(startValues, fieldTypes);
-            operation = SecondaryIndexOperation.ExactMatch;
-        }
-        else if (isPrefixOnly)
-        {
-            for (int i = 0; i < matchedCount; i++)
-            {
-                startValues[i] = matchedFilters[i].GetFilterValue();
-            }
-            startKey = IndexKeyEncoder.EncodeCompound(startValues, fieldTypes);
-            operation = SecondaryIndexOperation.PrefixMatch;
+            startKey = EncodeFiltersToCompoundKey(matchedFilters, matchedCount);
+            operation = isExactMatch ? SecondaryIndexOperation.ExactMatch : SecondaryIndexOperation.PrefixMatch;
         }
         else
         {
-            for (int i = 0; i < equalityCount; i++)
-            {
-                startValues[i] = matchedFilters[i].GetFilterValue();
-            }
-
+            byte[] equalityPrefix = EncodeFiltersToCompoundKey(matchedFilters, equalityCount);
             IFieldFilter rangeFilter = matchedFilters[matchedCount - 1];
             FieldOp rangeOp = rangeFilter.Operation;
-            byte[] equalityPrefix = IndexKeyEncoder.EncodeCompound(startValues, fieldTypes, equalityCount);
 
             if (rangeOp == FieldOp.GreaterThan || rangeOp == FieldOp.GreaterThanOrEqual)
             {
-                startValues[equalityCount] = rangeFilter.GetFilterValue();
-                startKey = IndexKeyEncoder.EncodeCompound(startValues, fieldTypes, equalityCount + 1);
+                startKey = EncodeFiltersToCompoundKey(matchedFilters, equalityCount + 1);
                 prefixKey = equalityPrefix;
                 operation = SecondaryIndexOperation.PrefixRangeScan;
             }
             else if (rangeOp == FieldOp.LessThan || rangeOp == FieldOp.LessThanOrEqual)
             {
                 startKey = equalityPrefix;
-                for (int i = 0; i < equalityCount; i++)
-                {
-                    endValues[i] = startValues[i];
-                }
-                endValues[equalityCount] = rangeFilter.GetFilterValue();
-                endKey = IndexKeyEncoder.EncodeCompound(endValues, fieldTypes, equalityCount + 1);
+                endKey = EncodeFiltersToCompoundKey(matchedFilters, equalityCount + 1);
                 operation = SecondaryIndexOperation.RangeScan;
             }
             else if (rangeOp == FieldOp.Between)
             {
-                startValues[equalityCount] = rangeFilter.GetRangeMinValue();
-                startKey = IndexKeyEncoder.EncodeCompound(startValues, fieldTypes, equalityCount + 1);
-                for (int i = 0; i < equalityCount; i++)
-                {
-                    endValues[i] = startValues[i];
-                }
-                endValues[equalityCount] = rangeFilter.GetRangeMaxValue();
-                endKey = IndexKeyEncoder.EncodeCompound(endValues, fieldTypes, equalityCount + 1);
+                startKey = EncodeFiltersToCompoundKey(matchedFilters, equalityCount + 1);
+                endKey = EncodeFiltersToCompoundKeyMax(matchedFilters, equalityCount, rangeFilter);
                 operation = SecondaryIndexOperation.RangeScan;
+            }
+            else if (rangeOp == FieldOp.StartsWith)
+            {
+                startKey = EncodeFiltersToCompoundKeyForPrefix(matchedFilters, equalityCount + 1);
+                prefixKey = equalityPrefix;
+                operation = SecondaryIndexOperation.PrefixMatch;
             }
             else
             {
@@ -738,6 +704,67 @@ internal sealed class QueryPlanner
         }
 
         return new CompoundScanKeys(startKey, endKey, prefixKey, operation);
+    }
+
+    private static byte[] EncodeFiltersToCompoundKey(IReadOnlyList<IFieldFilter> filters, int count)
+    {
+        int totalSize = 0;
+        for (int i = 0; i < count; i++)
+        {
+            totalSize += filters[i].GetCompoundEncodedSize();
+        }
+
+        byte[] buffer = new byte[totalSize];
+        int offset = 0;
+        for (int i = 0; i < count; i++)
+        {
+            offset += filters[i].EncodeCompoundFieldTo(buffer, offset);
+        }
+
+        return buffer;
+    }
+
+    private static byte[] EncodeFiltersToCompoundKeyMax(
+        IReadOnlyList<IFieldFilter> filters,
+        int equalityCount,
+        IFieldFilter rangeFilter)
+    {
+        int totalSize = 0;
+        for (int i = 0; i < equalityCount; i++)
+        {
+            totalSize += filters[i].GetCompoundEncodedSize();
+        }
+        totalSize += rangeFilter.GetCompoundEncodedSizeMax();
+
+        byte[] buffer = new byte[totalSize];
+        int offset = 0;
+        for (int i = 0; i < equalityCount; i++)
+        {
+            offset += filters[i].EncodeCompoundFieldTo(buffer, offset);
+        }
+        offset += rangeFilter.EncodeCompoundFieldToMax(buffer, offset);
+
+        return buffer;
+    }
+
+    private static byte[] EncodeFiltersToCompoundKeyForPrefix(IReadOnlyList<IFieldFilter> filters, int count)
+    {
+        int totalSize = 0;
+        for (int i = 0; i < count - 1; i++)
+        {
+            totalSize += filters[i].GetCompoundEncodedSize();
+        }
+        totalSize += filters[count - 1].GetCompoundEncodedSizeForPrefix();
+
+        byte[] buffer = new byte[totalSize];
+        int offset = 0;
+        for (int i = 0; i < count - 1; i++)
+        {
+            offset += filters[i].EncodeCompoundFieldTo(buffer, offset);
+        }
+        filters[count - 1].EncodeCompoundFieldToForPrefix(buffer, offset);
+
+        return buffer;
     }
 
     private static SecondaryIndexOperation GetSecondaryIndexOperation(FieldOp op)

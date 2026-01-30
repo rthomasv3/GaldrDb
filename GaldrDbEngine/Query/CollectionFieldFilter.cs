@@ -226,4 +226,40 @@ public sealed class CollectionFieldFilter<TDocument, TElement, TField> : IFieldF
     {
         return null;
     }
+
+    /// <inheritdoc/>
+    public int GetCompoundEncodedSize()
+    {
+        return IndexKeyEncoder.GetCompoundEncodedSize(_value);
+    }
+
+    /// <inheritdoc/>
+    public int EncodeCompoundFieldTo(byte[] buffer, int offset)
+    {
+        return IndexKeyEncoder.EncodeCompoundFieldTo(buffer, offset, _value);
+    }
+
+    /// <inheritdoc/>
+    public int GetCompoundEncodedSizeMax()
+    {
+        return GetCompoundEncodedSize();
+    }
+
+    /// <inheritdoc/>
+    public int EncodeCompoundFieldToMax(byte[] buffer, int offset)
+    {
+        return EncodeCompoundFieldTo(buffer, offset);
+    }
+
+    /// <inheritdoc/>
+    public int GetCompoundEncodedSizeForPrefix()
+    {
+        return GetCompoundEncodedSize();
+    }
+
+    /// <inheritdoc/>
+    public int EncodeCompoundFieldToForPrefix(byte[] buffer, int offset)
+    {
+        return EncodeCompoundFieldTo(buffer, offset);
+    }
 }

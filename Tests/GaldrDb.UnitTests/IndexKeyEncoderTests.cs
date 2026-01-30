@@ -165,8 +165,10 @@ public class IndexKeyEncoderTests
     {
         byte[] encoded = IndexKeyEncoder.Encode("", GaldrFieldType.String);
 
-        Assert.HasCount(1, encoded);
+        // Empty string: [VALUE_PREFIX][STRING_TERMINATOR] = [0x01][0x00]
+        Assert.HasCount(2, encoded);
         Assert.AreEqual(0x01, encoded[0]);
+        Assert.AreEqual(0x00, encoded[1]);
     }
 
     [TestMethod]
@@ -176,6 +178,81 @@ public class IndexKeyEncoderTests
         byte[] encodedUpper = IndexKeyEncoder.Encode("Apple", GaldrFieldType.String);
 
         Assert.AreNotEqual(0, CompareBytes(encodedLower, encodedUpper));
+    }
+
+    [TestMethod]
+    public void EncodeString_WithEmbeddedNullByte_EscapesCorrectly()
+    {
+        string valueWithNull = "foo\0bar";
+        byte[] encoded = IndexKeyEncoder.Encode(valueWithNull, GaldrFieldType.String);
+
+        // Expected: [0x01][f][o][o][0x00][0xFF][b][a][r][0x00]
+        // VALUE_PREFIX + "foo" + escaped null (0x00 0xFF) + "bar" + terminator = 10 bytes
+        Assert.HasCount(10, encoded);
+        Assert.AreEqual(0x01, encoded[0]);  // VALUE_PREFIX
+        Assert.AreEqual((byte)'f', encoded[1]);
+        Assert.AreEqual((byte)'o', encoded[2]);
+        Assert.AreEqual((byte)'o', encoded[3]);
+        Assert.AreEqual(0x00, encoded[4]);  // Escaped null byte
+        Assert.AreEqual(0xFF, encoded[5]);  // Escape marker
+        Assert.AreEqual((byte)'b', encoded[6]);
+        Assert.AreEqual((byte)'a', encoded[7]);
+        Assert.AreEqual((byte)'r', encoded[8]);
+        Assert.AreEqual(0x00, encoded[9]);  // Terminator
+    }
+
+    [TestMethod]
+    public void EncodeString_WithEmbeddedNullByte_MaintainsSortOrder()
+    {
+        // "foo" < "foo\0bar" < "foobar" < "fop" in lexicographic order
+        byte[] encodedFoo = IndexKeyEncoder.Encode("foo", GaldrFieldType.String);
+        byte[] encodedFooNullBar = IndexKeyEncoder.Encode("foo\0bar", GaldrFieldType.String);
+        byte[] encodedFoobar = IndexKeyEncoder.Encode("foobar", GaldrFieldType.String);
+        byte[] encodedFop = IndexKeyEncoder.Encode("fop", GaldrFieldType.String);
+
+        Assert.IsLessThan(0, CompareBytes(encodedFoo, encodedFooNullBar));
+        Assert.IsLessThan(0, CompareBytes(encodedFooNullBar, encodedFoobar));
+        Assert.IsLessThan(0, CompareBytes(encodedFoobar, encodedFop));
+    }
+
+    [TestMethod]
+    public void EncodeString_PrefixShorterThanExtension_SortsCorrectly()
+    {
+        // Verify "foo" < "foobar" (prefix comes before extended string)
+        byte[] encodedFoo = IndexKeyEncoder.Encode("foo", GaldrFieldType.String);
+        byte[] encodedFoobar = IndexKeyEncoder.Encode("foobar", GaldrFieldType.String);
+
+        Assert.IsLessThan(0, CompareBytes(encodedFoo, encodedFoobar));
+    }
+
+    [TestMethod]
+    public void EncodeString_NullSortsBeforeEmptyString()
+    {
+        byte[] encodedNull = IndexKeyEncoder.Encode(null, GaldrFieldType.String);
+        byte[] encodedEmpty = IndexKeyEncoder.Encode("", GaldrFieldType.String);
+        byte[] encodedA = IndexKeyEncoder.Encode("a", GaldrFieldType.String);
+
+        Assert.IsLessThan(0, CompareBytes(encodedNull, encodedEmpty));
+        Assert.IsLessThan(0, CompareBytes(encodedEmpty, encodedA));
+    }
+
+    [TestMethod]
+    public void EncodeString_MultipleEmbeddedNulls_EscapesAll()
+    {
+        string valueWithNulls = "a\0b\0c";
+        byte[] encoded = IndexKeyEncoder.Encode(valueWithNulls, GaldrFieldType.String);
+
+        // Expected: [0x01][a][0x00][0xFF][b][0x00][0xFF][c][0x00] = 9 bytes
+        Assert.HasCount(9, encoded);
+        Assert.AreEqual(0x01, encoded[0]);  // VALUE_PREFIX
+        Assert.AreEqual((byte)'a', encoded[1]);
+        Assert.AreEqual(0x00, encoded[2]);  // First escaped null
+        Assert.AreEqual(0xFF, encoded[3]);
+        Assert.AreEqual((byte)'b', encoded[4]);
+        Assert.AreEqual(0x00, encoded[5]);  // Second escaped null
+        Assert.AreEqual(0xFF, encoded[6]);
+        Assert.AreEqual((byte)'c', encoded[7]);
+        Assert.AreEqual(0x00, encoded[8]);  // Terminator
     }
 
     [TestMethod]
@@ -306,8 +383,13 @@ public class IndexKeyEncoderTests
         byte[] prefixEnd = IndexKeyEncoder.EncodePrefixEnd("test");
         byte[] prefix = IndexKeyEncoder.Encode("test", GaldrFieldType.String);
 
+        // New format: [VALUE_PREFIX][escaped string][TERMINATOR]
+        // "test" = [0x01][t][e][s][t][0x00] = 6 bytes
+        // "tesu" = [0x01][t][e][s][u][0x00] = 6 bytes
+        // Last byte is terminator (0x00), second-to-last is the incremented char
         Assert.HasCount(prefix.Length, prefixEnd);
-        Assert.AreEqual(prefix[prefix.Length - 1] + 1, prefixEnd[prefixEnd.Length - 1]);
+        Assert.AreEqual(0x00, prefixEnd[prefixEnd.Length - 1]);
+        Assert.AreEqual(prefix[prefix.Length - 2] + 1, prefixEnd[prefixEnd.Length - 2]);
     }
 
     [TestMethod]

@@ -195,7 +195,16 @@ internal sealed class DynamicFieldFilter : IFieldFilter
 
     public byte[] GetIndexKeyBytes()
     {
-        return IndexKeyEncoder.Encode(_value, _fieldType);
+        byte[] result;
+        if (_op == FieldOp.StartsWith && _value is string s)
+        {
+            result = IndexKeyEncoder.EncodePrefix(s);
+        }
+        else
+        {
+            result = IndexKeyEncoder.Encode(_value, _fieldType);
+        }
+        return result;
     }
 
     public byte[] GetIndexKeyEndBytes()
@@ -233,5 +242,53 @@ internal sealed class DynamicFieldFilter : IFieldFilter
     public IReadOnlyList<int> GetInValuesAsInt32()
     {
         return null;
+    }
+
+    public int GetCompoundEncodedSize()
+    {
+        return IndexKeyEncoder.GetCompoundEncodedSizeBoxed(_value, _fieldType);
+    }
+
+    public int EncodeCompoundFieldTo(byte[] buffer, int offset)
+    {
+        return IndexKeyEncoder.EncodeCompoundFieldToBoxed(buffer, offset, _value, _fieldType);
+    }
+
+    public int GetCompoundEncodedSizeMax()
+    {
+        return GetCompoundEncodedSize();
+    }
+
+    public int EncodeCompoundFieldToMax(byte[] buffer, int offset)
+    {
+        return EncodeCompoundFieldTo(buffer, offset);
+    }
+
+    public int GetCompoundEncodedSizeForPrefix()
+    {
+        int result;
+        if (_op == FieldOp.StartsWith && _value is string s)
+        {
+            result = IndexKeyEncoder.GetCompoundPrefixSize(s);
+        }
+        else
+        {
+            result = GetCompoundEncodedSize();
+        }
+        return result;
+    }
+
+    public int EncodeCompoundFieldToForPrefix(byte[] buffer, int offset)
+    {
+        int result;
+        if (_op == FieldOp.StartsWith && _value is string s)
+        {
+            result = IndexKeyEncoder.EncodeCompoundPrefix(buffer, offset, s);
+        }
+        else
+        {
+            result = EncodeCompoundFieldTo(buffer, offset);
+        }
+        return result;
     }
 }

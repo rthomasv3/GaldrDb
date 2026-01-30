@@ -164,4 +164,34 @@ internal sealed class DynamicBetweenFilter : IFieldFilter
     {
         return null;
     }
+
+    public int GetCompoundEncodedSize()
+    {
+        return IndexKeyEncoder.GetCompoundEncodedSizeBoxed(_minValue, _fieldType);
+    }
+
+    public int EncodeCompoundFieldTo(byte[] buffer, int offset)
+    {
+        return IndexKeyEncoder.EncodeCompoundFieldToBoxed(buffer, offset, _minValue, _fieldType);
+    }
+
+    public int GetCompoundEncodedSizeMax()
+    {
+        return IndexKeyEncoder.GetCompoundEncodedSizeBoxed(_maxValue, _fieldType);
+    }
+
+    public int EncodeCompoundFieldToMax(byte[] buffer, int offset)
+    {
+        return IndexKeyEncoder.EncodeCompoundFieldToBoxed(buffer, offset, _maxValue, _fieldType);
+    }
+
+    public int GetCompoundEncodedSizeForPrefix()
+    {
+        return GetCompoundEncodedSize();
+    }
+
+    public int EncodeCompoundFieldToForPrefix(byte[] buffer, int offset)
+    {
+        return EncodeCompoundFieldTo(buffer, offset);
+    }
 }

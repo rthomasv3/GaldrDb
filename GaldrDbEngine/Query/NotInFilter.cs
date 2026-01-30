@@ -112,4 +112,58 @@ public sealed class NotInFilter<TDocument, TField> : IFieldFilter
     {
         return null;
     }
+
+    /// <inheritdoc/>
+    public int GetCompoundEncodedSize()
+    {
+        int result;
+        if (_valuesArray.Length > 0)
+        {
+            result = IndexKeyEncoder.GetCompoundEncodedSize(_valuesArray[0]);
+        }
+        else
+        {
+            result = IndexKeyEncoder.COMPOUND_NULL_SIZE;
+        }
+        return result;
+    }
+
+    /// <inheritdoc/>
+    public int EncodeCompoundFieldTo(byte[] buffer, int offset)
+    {
+        int result;
+        if (_valuesArray.Length > 0)
+        {
+            result = IndexKeyEncoder.EncodeCompoundFieldTo(buffer, offset, _valuesArray[0]);
+        }
+        else
+        {
+            result = IndexKeyEncoder.EncodeCompoundNull(buffer, offset);
+        }
+        return result;
+    }
+
+    /// <inheritdoc/>
+    public int GetCompoundEncodedSizeMax()
+    {
+        return GetCompoundEncodedSize();
+    }
+
+    /// <inheritdoc/>
+    public int EncodeCompoundFieldToMax(byte[] buffer, int offset)
+    {
+        return EncodeCompoundFieldTo(buffer, offset);
+    }
+
+    /// <inheritdoc/>
+    public int GetCompoundEncodedSizeForPrefix()
+    {
+        return GetCompoundEncodedSize();
+    }
+
+    /// <inheritdoc/>
+    public int EncodeCompoundFieldToForPrefix(byte[] buffer, int offset)
+    {
+        return EncodeCompoundFieldTo(buffer, offset);
+    }
 }

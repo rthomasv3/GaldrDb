@@ -404,9 +404,9 @@ GaldrDb is designed for Native AOT compatibility:
 
 ## Testing
 
-- **1015 unit and integration tests** covering CRUD, transactions, queries, ACID properties, and recovery scenarios
+- **1029 unit and integration tests** covering CRUD, transactions, queries, ACID properties, and recovery scenarios
 - **63 deterministic simulation tests** for concurrent operations, conflict resolution, and edge cases
-- **1078 total tests** across the test suite
+- **1092 total tests** across the test suite
 - **Performance benchmarks** for single operations, bulk inserts, and query performance
 - Test coverage includes: ACID compliance, WAL recovery, MVCC isolation, query planning, schema management
 
