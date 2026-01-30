@@ -231,6 +231,57 @@ var results = db.Query<Person>()
     .ToList();
 ```
 
+#### Indexed Nested Properties
+
+Add `[GaldrDbIndex]` to nested class properties to create secondary indexes on nested paths:
+
+```csharp
+public class Address
+{
+    [GaldrDbIndex]
+    public string City { get; set; }
+
+    [GaldrDbIndex(Unique = true)]
+    public string ZipCode { get; set; }
+
+    public string State { get; set; }  // Not indexed
+}
+
+[GaldrDbCollection]
+public class Person
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public Address Address { get; set; }  // City and ZipCode are auto-indexed
+}
+
+// Uses secondary index on Address.City
+var results = db.Query<Person>()
+    .Where(PersonMeta.Address.City, FieldOp.Equals, "Seattle")
+    .ToList();
+```
+
+Compound indexes can also include nested paths using dot notation:
+
+```csharp
+[GaldrDbCollection]
+[GaldrDbCompoundIndex("Status", "Address.City")]  // Mix top-level and nested fields
+public class Person
+{
+    public int Id { get; set; }
+    public string Status { get; set; }
+    public Address Address { get; set; }
+}
+
+// Uses compound index
+var results = db.Query<Person>()
+    .Where(PersonMeta.Status, FieldOp.Equals, "Active")
+    .Where(PersonMeta.Address.City, FieldOp.Equals, "Seattle")
+    .ToList();
+```
+
+Null handling follows standard database semantics: null nested values are excluded from equality queries, and multiple null values are allowed for unique indexes (NULL != NULL).
+
 ### Collection Field Queries
 
 Query documents based on elements within arrays or lists:
@@ -404,9 +455,9 @@ GaldrDb is designed for Native AOT compatibility:
 
 ## Testing
 
-- **1029 unit and integration tests** covering CRUD, transactions, queries, ACID properties, and recovery scenarios
+- **1047 unit and integration tests** covering CRUD, transactions, queries, ACID properties, and recovery scenarios
 - **63 deterministic simulation tests** for concurrent operations, conflict resolution, and edge cases
-- **1092 total tests** across the test suite
+- **1110 total tests** across the test suite
 - **Performance benchmarks** for single operations, bulk inserts, and query performance
 - Test coverage includes: ACID compliance, WAL recovery, MVCC isolation, query planning, schema management
 
