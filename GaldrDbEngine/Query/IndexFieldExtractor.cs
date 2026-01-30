@@ -31,7 +31,8 @@ internal static class IndexFieldExtractor
         {
             List<IndexDefinition> singleFieldIndexes = new List<IndexDefinition>();
             List<IndexDefinition> compoundIndexes = new List<IndexDefinition>();
-            HashSet<string> neededFields = new HashSet<string>();
+            HashSet<string> neededFlatFields = new HashSet<string>();
+            HashSet<string> neededNestedFields = new HashSet<string>();
 
             foreach (IndexDefinition index in indexes)
             {
@@ -40,37 +41,66 @@ internal static class IndexFieldExtractor
                     compoundIndexes.Add(index);
                     foreach (IndexField field in index.Fields)
                     {
-                        neededFields.Add(field.FieldName);
+                        if (field.FieldName.Contains('.'))
+                        {
+                            neededNestedFields.Add(field.FieldName);
+                        }
+                        else
+                        {
+                            neededFlatFields.Add(field.FieldName);
+                        }
                     }
                 }
                 else
                 {
                     singleFieldIndexes.Add(index);
-                    neededFields.Add(index.FieldName);
+                    if (index.FieldName.Contains('.'))
+                    {
+                        neededNestedFields.Add(index.FieldName);
+                    }
+                    else
+                    {
+                        neededFlatFields.Add(index.FieldName);
+                    }
                 }
             }
 
             Dictionary<string, byte[]> encodedFields = new Dictionary<string, byte[]>();
-            Utf8JsonReader reader = new Utf8JsonReader(jsonBytes);
 
-            if (reader.Read() && reader.TokenType == JsonTokenType.StartObject)
+            // Extract flat fields with single-pass logic
+            if (neededFlatFields.Count > 0)
             {
-                while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName && encodedFields.Count < neededFields.Count)
-                {
-                    string propertyName = reader.GetString();
-                    reader.Read();
+                Utf8JsonReader reader = new Utf8JsonReader(jsonBytes);
 
-                    if (neededFields.Contains(propertyName))
+                if (reader.Read() && reader.TokenType == JsonTokenType.StartObject)
+                {
+                    int foundCount = 0;
+                    while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName && foundCount < neededFlatFields.Count)
                     {
-                        GaldrFieldType fieldType = GetFieldTypeFor(propertyName, indexes);
-                        byte[] encoded = EncodeValueDirect(ref reader, fieldType);
-                        encodedFields[propertyName] = encoded;
-                    }
-                    else
-                    {
-                        reader.Skip();
+                        string propertyName = reader.GetString();
+                        reader.Read();
+
+                        if (neededFlatFields.Contains(propertyName))
+                        {
+                            GaldrFieldType fieldType = GetFieldTypeFor(propertyName, indexes);
+                            byte[] encoded = EncodeValueDirect(ref reader, fieldType);
+                            encodedFields[propertyName] = encoded;
+                            foundCount++;
+                        }
+                        else
+                        {
+                            reader.Skip();
+                        }
                     }
                 }
+            }
+
+            // Extract nested fields (one navigation per nested field)
+            foreach (string nestedPath in neededNestedFields)
+            {
+                GaldrFieldType fieldType = GetFieldTypeFor(nestedPath, indexes);
+                byte[] encoded = ExtractNestedValue(jsonBytes, nestedPath, fieldType);
+                encodedFields[nestedPath] = encoded;
             }
 
             foreach (IndexDefinition index in singleFieldIndexes)
@@ -95,6 +125,83 @@ internal static class IndexFieldExtractor
         }
 
         return fields;
+    }
+
+    /// <summary>
+    /// Extracts a value from a nested path (e.g., "Address.City") in JSON.
+    /// </summary>
+    private static byte[] ExtractNestedValue(byte[] jsonBytes, string path, GaldrFieldType fieldType)
+    {
+        byte[] result = _nullEncodedBytes;
+        string[] segments = path.Split('.');
+        Utf8JsonReader reader = new Utf8JsonReader(jsonBytes);
+
+        bool valid = reader.Read() && reader.TokenType == JsonTokenType.StartObject;
+
+        // Navigate to each segment
+        int segmentIndex = 0;
+        while (valid && segmentIndex < segments.Length)
+        {
+            valid = NavigateToProperty(ref reader, segments[segmentIndex]);
+
+            if (valid && reader.TokenType == JsonTokenType.Null)
+            {
+                valid = false;
+            }
+
+            // If not the last segment, we should be at a StartObject
+            if (valid && segmentIndex < segments.Length - 1)
+            {
+                valid = reader.TokenType == JsonTokenType.StartObject;
+            }
+
+            segmentIndex++;
+        }
+
+        if (valid)
+        {
+            result = EncodeValueDirect(ref reader, fieldType);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Navigates to a property within the current JSON object.
+    /// After this call, the reader is positioned at the property's value.
+    /// </summary>
+    private static bool NavigateToProperty(ref Utf8JsonReader reader, string propertyName)
+    {
+        bool found = false;
+
+        if (reader.TokenType == JsonTokenType.StartObject)
+        {
+            bool searching = true;
+            while (searching && reader.Read())
+            {
+                if (reader.TokenType == JsonTokenType.EndObject)
+                {
+                    searching = false;
+                }
+                else if (reader.TokenType == JsonTokenType.PropertyName)
+                {
+                    string currentProperty = reader.GetString();
+                    reader.Read(); // Move to value
+
+                    if (currentProperty == propertyName)
+                    {
+                        found = true;
+                        searching = false;
+                    }
+                    else
+                    {
+                        reader.Skip(); // Skip this property's value
+                    }
+                }
+            }
+        }
+
+        return found;
     }
 
     private static GaldrFieldType GetFieldTypeFor(string fieldName, IReadOnlyList<IndexDefinition> indexes)

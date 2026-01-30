@@ -1707,7 +1707,37 @@ public class Transaction : IDisposable
 
     private static object ExtractValueFromDocument<T>(T document, string fieldName)
     {
-        return typeof(T).GetProperty(fieldName)?.GetValue(document);
+        object result;
+
+        if (fieldName.Contains('.'))
+        {
+            // Handle nested path like "Address.City"
+            string[] segments = fieldName.Split('.');
+            object current = document;
+            bool valid = true;
+
+            for (int i = 0; i < segments.Length && valid && current != null; i++)
+            {
+                System.Reflection.PropertyInfo prop = current.GetType().GetProperty(segments[i]);
+                if (prop != null)
+                {
+                    current = prop.GetValue(current);
+                }
+                else
+                {
+                    valid = false;
+                    current = null;
+                }
+            }
+
+            result = current;
+        }
+        else
+        {
+            result = typeof(T).GetProperty(fieldName)?.GetValue(document);
+        }
+
+        return result;
     }
 
     internal bool ExecutePartialUpdate<T>(

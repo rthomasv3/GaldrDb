@@ -679,6 +679,24 @@ namespace GaldrDbSourceGenerators
                     prop.DeclaredAccessibility == Accessibility.Public &&
                     prop.GetMethod != null)
                 {
+                    // Check if property has [GaldrDbIndex] attribute
+                    bool isIndexed = false;
+                    bool isUniqueIndex = false;
+                    AttributeData indexAttr = prop.GetAttributes()
+                        .FirstOrDefault(a => a.AttributeClass?.Name == "GaldrDbIndexAttribute");
+
+                    if (indexAttr != null)
+                    {
+                        isIndexed = true;
+                        foreach (KeyValuePair<string, TypedConstant> namedArg in indexAttr.NamedArguments)
+                        {
+                            if (namedArg.Key == "Unique" && namedArg.Value.Value is bool uniqueValue)
+                            {
+                                isUniqueIndex = uniqueValue;
+                            }
+                        }
+                    }
+
                     GaldrFieldTypeInfo fieldType = GetFieldType(prop.Type);
                     bool isNestedObject = IsNestedObjectType(prop.Type);
                     bool isCollection = IsCollectionType(prop.Type, out ITypeSymbol elementType);
@@ -703,8 +721,8 @@ namespace GaldrDbSourceGenerators
                         prop.Name,
                         GetFullyQualifiedTypeName(prop.Type),
                         fieldType,
-                        false,
-                        false,
+                        isIndexed,
+                        isUniqueIndex,
                         isNestedObject,
                         isCollection,
                         collectionElementTypeName,
@@ -714,6 +732,179 @@ namespace GaldrDbSourceGenerators
 
             visited.Remove(typeKey);
             return properties.ToImmutable();
+        }
+
+        /// <summary>
+        /// Collects all nested indexed properties with their full paths.
+        /// </summary>
+        private static List<NestedIndexedProperty> CollectNestedIndexedProperties(ClassInfo classInfo)
+        {
+            List<NestedIndexedProperty> result = new List<NestedIndexedProperty>();
+
+            foreach (PropertyInfo prop in classInfo.Properties)
+            {
+                if (prop.IsNestedObject && !prop.NestedProperties.IsDefaultOrEmpty)
+                {
+                    CollectNestedIndexedPropertiesRecursive(prop.NestedProperties, prop.Name, result);
+                }
+            }
+
+            return result;
+        }
+
+        private static void CollectNestedIndexedPropertiesRecursive(
+            ImmutableArray<PropertyInfo> properties,
+            string pathPrefix,
+            List<NestedIndexedProperty> result)
+        {
+            foreach (PropertyInfo prop in properties)
+            {
+                string fullPath = $"{pathPrefix}.{prop.Name}";
+
+                if (prop.IsIndexed)
+                {
+                    result.Add(new NestedIndexedProperty(
+                        fullPath,
+                        prop.FieldType,
+                        prop.IsUniqueIndex));
+                }
+
+                if (prop.IsNestedObject && !prop.NestedProperties.IsDefaultOrEmpty)
+                {
+                    CollectNestedIndexedPropertiesRecursive(prop.NestedProperties, fullPath, result);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Resolves a nested path (e.g., "Address.City") to its PropertyInfo and field type.
+        /// Returns null if the path is invalid.
+        /// </summary>
+        private static NestedPathResolution ResolveNestedPath(ClassInfo classInfo, string path)
+        {
+            string[] segments = path.Split('.');
+
+            if (segments.Length < 2)
+            {
+                return null;
+            }
+
+            ImmutableArray<PropertyInfo> currentProperties = classInfo.Properties;
+            PropertyInfo lastProperty = null;
+
+            for (int i = 0; i < segments.Length; i++)
+            {
+                string segment = segments[i];
+                PropertyInfo foundProperty = null;
+
+                foreach (PropertyInfo prop in currentProperties)
+                {
+                    if (prop.Name == segment)
+                    {
+                        foundProperty = prop;
+                        break;
+                    }
+                }
+
+                if (foundProperty == null)
+                {
+                    return null;
+                }
+
+                lastProperty = foundProperty;
+
+                if (i < segments.Length - 1)
+                {
+                    if (!foundProperty.IsNestedObject || foundProperty.NestedProperties.IsDefaultOrEmpty)
+                    {
+                        return null;
+                    }
+                    currentProperties = foundProperty.NestedProperties;
+                }
+            }
+
+            if (lastProperty == null)
+            {
+                return null;
+            }
+
+            return new NestedPathResolution(lastProperty, lastProperty.FieldType);
+        }
+
+        /// <summary>
+        /// Generates code to extract nested indexed fields with null-safe access.
+        /// Groups nested indexed properties by their parent path to generate efficient null checks.
+        /// </summary>
+        private static void GenerateNestedIndexedFieldExtractions(
+            IndentedStringBuilder isb,
+            ImmutableArray<PropertyInfo> topLevelProperties,
+            string rootAccessor,
+            List<NestedIndexedProperty> nestedIndexedProps)
+        {
+            if (nestedIndexedProps.Count == 0)
+            {
+                return;
+            }
+
+            // Group by first-level parent property
+            Dictionary<string, List<NestedIndexedProperty>> byParent = new Dictionary<string, List<NestedIndexedProperty>>();
+
+            foreach (NestedIndexedProperty prop in nestedIndexedProps)
+            {
+                string[] segments = prop.Path.Split('.');
+                string parentName = segments[0];
+
+                if (!byParent.TryGetValue(parentName, out List<NestedIndexedProperty> list))
+                {
+                    list = new List<NestedIndexedProperty>();
+                    byParent[parentName] = list;
+                }
+                list.Add(prop);
+            }
+
+            // Generate null-safe extraction for each parent
+            foreach (KeyValuePair<string, List<NestedIndexedProperty>> kvp in byParent)
+            {
+                string parentName = kvp.Key;
+                List<NestedIndexedProperty> props = kvp.Value;
+
+                using (isb.Block($"if ({rootAccessor}.{parentName} != null)"))
+                {
+                    foreach (NestedIndexedProperty prop in props)
+                    {
+                        if (prop.FieldType.WriteMethod != null)
+                        {
+                            if (prop.FieldType.IsEnum)
+                            {
+                                if (prop.FieldType.IsNullable)
+                                {
+                                    string accessPath = rootAccessor + "." + prop.Path.Replace(".", "?.");
+                                    isb.AppendLine($"writer.{prop.FieldType.WriteMethod}(\"{prop.Path}\", {accessPath}.HasValue ? ({prop.FieldType.EnumCastType}?){accessPath}.Value : null);");
+                                }
+                                else
+                                {
+                                    isb.AppendLine($"writer.{prop.FieldType.WriteMethod}(\"{prop.Path}\", ({prop.FieldType.EnumCastType}){rootAccessor}.{prop.Path});");
+                                }
+                            }
+                            else
+                            {
+                                isb.AppendLine($"writer.{prop.FieldType.WriteMethod}(\"{prop.Path}\", {rootAccessor}.{prop.Path});");
+                            }
+                        }
+                    }
+                }
+
+                using (isb.Block("else"))
+                {
+                    foreach (NestedIndexedProperty prop in props)
+                    {
+                        if (prop.FieldType.WriteMethod != null)
+                        {
+                            isb.AppendLine($"writer.WriteNull(\"{prop.Path}\");");
+                        }
+                    }
+                }
+            }
         }
 
         private static GaldrFieldTypeInfo GetEnumFieldType(INamedTypeSymbol underlyingType, bool isNullable)
@@ -1012,11 +1203,19 @@ namespace GaldrDbSourceGenerators
                     isb.AppendLine($"public static string CollectionName => \"{collectionName}\";");
                     isb.AppendLine();
 
-                    // IndexedFieldNames property
+                    // Collect nested indexed properties
+                    List<NestedIndexedProperty> nestedIndexedProps = CollectNestedIndexedProperties(classInfo);
+
+                    // IndexedFieldNames property - includes both flat and nested indexed fields
                     List<string> indexedFields = classInfo.Properties
                         .Where(p => p.IsIndexed)
                         .Select(p => $"\"{p.Name}\"")
                         .ToList();
+
+                    foreach (NestedIndexedProperty nestedProp in nestedIndexedProps)
+                    {
+                        indexedFields.Add($"\"{nestedProp.Path}\"");
+                    }
 
                     isb.AppendLine("/// <summary>");
                     isb.AppendLine("/// List of indexed field names for query optimization.");
@@ -1031,11 +1230,19 @@ namespace GaldrDbSourceGenerators
                     }
                     isb.AppendLine();
 
-                    // UniqueIndexFieldNames property
+                    // UniqueIndexFieldNames property - includes both flat and nested unique indexed fields
                     List<string> uniqueIndexedFields = classInfo.Properties
                         .Where(p => p.IsIndexed && p.IsUniqueIndex)
                         .Select(p => $"\"{p.Name}\"")
                         .ToList();
+
+                    foreach (NestedIndexedProperty nestedProp in nestedIndexedProps)
+                    {
+                        if (nestedProp.IsUnique)
+                        {
+                            uniqueIndexedFields.Add($"\"{nestedProp.Path}\"");
+                        }
+                    }
 
                     isb.AppendLine("/// <summary>");
                     isb.AppendLine("/// List of unique index field names for constraint enforcement.");
@@ -1076,8 +1283,23 @@ namespace GaldrDbSourceGenerators
                                 {
                                     foreach (string fieldName in compound.FieldNames)
                                     {
-                                        PropertyInfo prop = classInfo.Properties.FirstOrDefault(p => p.Name == fieldName);
-                                        string fieldTypeEnum = prop != null ? prop.FieldType.FieldTypeEnum : "GaldrFieldType.String";
+                                        string fieldTypeEnum = "GaldrFieldType.String";
+                                        if (fieldName.Contains("."))
+                                        {
+                                            NestedPathResolution resolution = ResolveNestedPath(classInfo, fieldName);
+                                            if (resolution != null)
+                                            {
+                                                fieldTypeEnum = resolution.FieldType.FieldTypeEnum;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            PropertyInfo prop = classInfo.Properties.FirstOrDefault(p => p.Name == fieldName);
+                                            if (prop != null)
+                                            {
+                                                fieldTypeEnum = prop.FieldType.FieldTypeEnum;
+                                            }
+                                        }
                                         isb.AppendLine($"new CompoundIndexField(\"{fieldName}\", {fieldTypeEnum}),");
                                     }
                                 }
@@ -1162,6 +1384,7 @@ namespace GaldrDbSourceGenerators
                     isb.AppendLine("/// </summary>");
                     using (isb.Block($"internal static void ExtractIndexedFields({classInfo.FullyQualifiedName} document, IndexFieldWriter writer)"))
                     {
+                        // Flat indexed fields
                         foreach (PropertyInfo prop in classInfo.Properties.Where(p => p.IsIndexed))
                         {
                             if (prop.FieldType.WriteMethod != null)
@@ -1183,6 +1406,9 @@ namespace GaldrDbSourceGenerators
                                 }
                             }
                         }
+
+                        // Nested indexed fields with null safety
+                        GenerateNestedIndexedFieldExtractions(isb, classInfo.Properties, "document", nestedIndexedProps);
                     }
                     isb.AppendLine();
 
@@ -1236,14 +1462,16 @@ namespace GaldrDbSourceGenerators
                     }
                     else
                     {
+                        string indexedStr = nestedProp.IsIndexed ? "true" : "false";
+                        string indexComment = nestedProp.IsIndexed ? " This field is indexed." : "";
                         isb.AppendLine("/// <summary>");
-                        isb.AppendLine($"/// Field accessor for {fullPath}.");
+                        isb.AppendLine($"/// Field accessor for {fullPath}.{indexComment}");
                         isb.AppendLine("/// </summary>");
                         isb.AppendLine($"public GaldrField<{classInfo.FullyQualifiedName}, {nestedProp.TypeName}> {nestedProp.Name} {{ get; }} =");
                         using (isb.Indent())
                         {
                             string accessorSuffix = IsValueTypeField(nestedProp.FieldType) ? " ?? default" : "";
-                            isb.AppendLine($"new GaldrField<{classInfo.FullyQualifiedName}, {nestedProp.TypeName}>(\"{fullPath}\", {nestedProp.FieldType.FieldTypeEnum}, false, static p => p.{pathPrefix}?.{nestedProp.Name}{accessorSuffix});");
+                            isb.AppendLine($"new GaldrField<{classInfo.FullyQualifiedName}, {nestedProp.TypeName}>(\"{fullPath}\", {nestedProp.FieldType.FieldTypeEnum}, {indexedStr}, static p => p.{pathPrefix}?.{nestedProp.Name}{accessorSuffix});");
                         }
                         isb.AppendLine();
                     }
@@ -1302,15 +1530,17 @@ namespace GaldrDbSourceGenerators
                 foreach (PropertyInfo nestedProp in prop.NestedProperties)
                 {
                     string fullPath = $"{pathPrefix}.{nestedProp.Name}";
+                    string indexedStr = nestedProp.IsIndexed ? "true" : "false";
+                    string indexComment = nestedProp.IsIndexed ? " This field is indexed." : "";
 
                     isb.AppendLine("/// <summary>");
-                    isb.AppendLine($"/// Field accessor for {fullPath}.");
+                    isb.AppendLine($"/// Field accessor for {fullPath}.{indexComment}");
                     isb.AppendLine("/// </summary>");
                     isb.AppendLine($"public GaldrField<{classInfo.FullyQualifiedName}, {nestedProp.TypeName}> {nestedProp.Name} {{ get; }} =");
                     using (isb.Indent())
                     {
                         string accessorSuffix = IsValueTypeField(nestedProp.FieldType) ? " ?? default" : "";
-                        isb.AppendLine($"new GaldrField<{classInfo.FullyQualifiedName}, {nestedProp.TypeName}>(\"{fullPath}\", {nestedProp.FieldType.FieldTypeEnum}, false, static p => p.{pathPrefix}?.{nestedProp.Name}{accessorSuffix});");
+                        isb.AppendLine($"new GaldrField<{classInfo.FullyQualifiedName}, {nestedProp.TypeName}>(\"{fullPath}\", {nestedProp.FieldType.FieldTypeEnum}, {indexedStr}, static p => p.{pathPrefix}?.{nestedProp.Name}{accessorSuffix});");
                     }
                     isb.AppendLine();
                 }
@@ -1644,24 +1874,51 @@ namespace GaldrDbSourceGenerators
                         continue;
                     }
 
-                    // Check field exists
-                    if (!propertyMap.TryGetValue(fieldName, out PropertyInfo prop))
+                    // Check if it's a nested path (contains dot)
+                    if (fieldName.Contains("."))
                     {
-                        context.ReportDiagnostic(Diagnostic.Create(
-                            CompoundIndexFieldNotFound,
-                            compoundIndex.Location,
-                            fieldName,
-                            classInfo.ClassName));
-                        continue;
-                    }
+                        // Validate nested path
+                        NestedPathResolution resolution = ResolveNestedPath(classInfo, fieldName);
+                        if (resolution == null)
+                        {
+                            context.ReportDiagnostic(Diagnostic.Create(
+                                CompoundIndexFieldNotFound,
+                                compoundIndex.Location,
+                                fieldName,
+                                classInfo.ClassName));
+                            continue;
+                        }
 
-                    // Check field is indexable
-                    if (prop.FieldType.FieldTypeEnum == "GaldrFieldType.Complex")
+                        // Check field is indexable
+                        if (resolution.FieldType.FieldTypeEnum == "GaldrFieldType.Complex")
+                        {
+                            context.ReportDiagnostic(Diagnostic.Create(
+                                CompoundIndexFieldNotIndexable,
+                                compoundIndex.Location,
+                                fieldName));
+                        }
+                    }
+                    else
                     {
-                        context.ReportDiagnostic(Diagnostic.Create(
-                            CompoundIndexFieldNotIndexable,
-                            compoundIndex.Location,
-                            fieldName));
+                        // Check flat field exists
+                        if (!propertyMap.TryGetValue(fieldName, out PropertyInfo prop))
+                        {
+                            context.ReportDiagnostic(Diagnostic.Create(
+                                CompoundIndexFieldNotFound,
+                                compoundIndex.Location,
+                                fieldName,
+                                classInfo.ClassName));
+                            continue;
+                        }
+
+                        // Check field is indexable
+                        if (prop.FieldType.FieldTypeEnum == "GaldrFieldType.Complex")
+                        {
+                            context.ReportDiagnostic(Diagnostic.Create(
+                                CompoundIndexFieldNotIndexable,
+                                compoundIndex.Location,
+                                fieldName));
+                        }
                     }
                 }
             }

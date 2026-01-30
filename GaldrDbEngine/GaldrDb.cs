@@ -1378,13 +1378,17 @@ public class GaldrDb : IDisposable
 
     private void CheckUniqueConstraint(IndexDefinition indexDef, string fieldName, byte[] keyBytes)
     {
-        int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.UsablePageSize);
-        SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, _options.UsablePageSize, maxKeys);
-
-        List<DocumentLocation> existingEntries = indexTree.SearchByFieldValue(keyBytes);
-        if (existingEntries.Count > 0)
+        // Skip unique constraint check for null values (NULL != NULL in database semantics)
+        if (!(keyBytes.Length == 1 && keyBytes[0] == 0x00))
         {
-            throw new InvalidOperationException($"Unique constraint violation: A document with {fieldName} = '{GetFieldValueString(keyBytes)}' already exists.");
+            int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.UsablePageSize);
+            SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, _options.UsablePageSize, maxKeys);
+
+            List<DocumentLocation> existingEntries = indexTree.SearchByFieldValue(keyBytes);
+            if (existingEntries.Count > 0)
+            {
+                throw new InvalidOperationException($"Unique constraint violation: A document with {fieldName} = '{GetFieldValueString(keyBytes)}' already exists.");
+            }
         }
     }
 

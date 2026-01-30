@@ -9,6 +9,7 @@ namespace GaldrDbEngine.Query;
 /// </summary>
 public sealed class IndexFieldWriter
 {
+    private static readonly byte[] _nullEncodedBytes = new byte[] { 0x00 };
     private readonly List<IndexFieldEntry> _fields = new List<IndexFieldEntry>();
 
     /// <summary>Writes a string field value.</summary>
@@ -378,6 +379,13 @@ public sealed class IndexFieldWriter
             ? IndexKeyEncoder.Encode(value.Value, GaldrFieldType.TimeOnly)
             : IndexKeyEncoder.Encode(null, GaldrFieldType.TimeOnly);
         _fields.Add(new IndexFieldEntry(fieldName, encoded));
+    }
+
+    /// <summary>Writes a null value for a field (used when parent object is null).</summary>
+    /// <param name="fieldName">The field name.</param>
+    public void WriteNull(string fieldName)
+    {
+        _fields.Add(new IndexFieldEntry(fieldName, _nullEncodedBytes));
     }
 
     /// <summary>Gets all written field entries.</summary>
