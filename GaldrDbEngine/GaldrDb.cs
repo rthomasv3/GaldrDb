@@ -381,13 +381,7 @@ public class GaldrDb : IDisposable
 
                 foreach (IndexDefinition sourceIndex in sourceCollection.Indexes)
                 {
-                    IndexDefinition newIndex = new IndexDefinition
-                    {
-                        FieldName = sourceIndex.FieldName,
-                        FieldType = sourceIndex.FieldType,
-                        RootPageId = -1,
-                        IsUnique = sourceIndex.IsUnique
-                    };
+                    IndexDefinition newIndex = new IndexDefinition(sourceIndex.Fields, -1, sourceIndex.IsUnique);
                     targetCollection.Indexes.Add(newIndex);
                 }
 
@@ -473,13 +467,7 @@ public class GaldrDb : IDisposable
 
                 foreach (IndexDefinition sourceIndex in sourceCollection.Indexes)
                 {
-                    IndexDefinition newIndex = new IndexDefinition
-                    {
-                        FieldName = sourceIndex.FieldName,
-                        FieldType = sourceIndex.FieldType,
-                        RootPageId = -1,
-                        IsUnique = sourceIndex.IsUnique
-                    };
+                    IndexDefinition newIndex = new IndexDefinition(sourceIndex.Fields, -1, sourceIndex.IsUnique);
                     targetCollection.Indexes.Add(newIndex);
                 }
 
@@ -861,6 +849,10 @@ public class GaldrDb : IDisposable
                 {
                     indexedFields.Add(typeInfo.IndexedFieldNames[i]);
                 }
+                for (int i = 0; i < typeInfo.CompoundIndexes.Count; i++)
+                {
+                    indexedFields.Add(typeInfo.CompoundIndexes[i].IndexName);
+                }
                 registeredIndexesByCollection[typeInfo.CollectionName] = indexedFields;
             }
         }
@@ -882,9 +874,10 @@ public class GaldrDb : IDisposable
                 for (int j = 0; j < collection.Indexes.Count; j++)
                 {
                     IndexDefinition index = collection.Indexes[j];
-                    if (!registeredIndexes.Contains(index.FieldName))
+                    string indexKey = index.IsCompound ? index.IndexName : index.FieldName;
+                    if (!registeredIndexes.Contains(indexKey))
                     {
-                        orphanedIndexes.Add(new OrphanedIndexInfo(collection.Name, index.FieldName));
+                        orphanedIndexes.Add(new OrphanedIndexInfo(collection.Name, indexKey));
                     }
                 }
             }
@@ -1268,6 +1261,7 @@ public class GaldrDb : IDisposable
     {
         IReadOnlyList<string> indexedFieldNames = typeInfo.IndexedFieldNames;
         IReadOnlyList<string> uniqueIndexFieldNames = typeInfo.UniqueIndexFieldNames;
+        IReadOnlyList<CompoundIndexInfo> compoundIndexes = typeInfo.CompoundIndexes;
         List<IndexDefinition> newIndexes = new List<IndexDefinition>();
 
         foreach (string fieldName in indexedFieldNames)
@@ -1277,14 +1271,23 @@ public class GaldrDb : IDisposable
             {
                 bool isUnique = ContainsFieldName(uniqueIndexFieldNames, fieldName);
 
-                IndexDefinition newIndex = new IndexDefinition
-                {
-                    FieldName = fieldName,
-                    FieldType = GaldrFieldType.String,
-                    RootPageId = -1,
-                    IsUnique = isUnique
-                };
+                IndexDefinition newIndex = new IndexDefinition(fieldName, GaldrFieldType.String, -1, isUnique);
+                newIndexes.Add(newIndex);
+            }
+        }
 
+        foreach (CompoundIndexInfo compoundInfo in compoundIndexes)
+        {
+            IndexDefinition existingIndex = collection.FindIndexByName(compoundInfo.IndexName);
+            if (existingIndex == null)
+            {
+                List<IndexField> fields = new List<IndexField>(compoundInfo.Fields.Count);
+                foreach (CompoundIndexField field in compoundInfo.Fields)
+                {
+                    fields.Add(new IndexField(field.FieldName, field.FieldType));
+                }
+
+                IndexDefinition newIndex = new IndexDefinition(fields, -1, compoundInfo.IsUnique);
                 newIndexes.Add(newIndex);
             }
         }
@@ -1355,14 +1358,7 @@ public class GaldrDb : IDisposable
             rootNode.SerializeTo(rootBuffer);
             _pageIO.WritePage(rootPageId, rootBuffer);
 
-            IndexDefinition newIndex = new IndexDefinition
-            {
-                FieldName = fieldName,
-                FieldType = GaldrFieldType.String,
-                RootPageId = rootPageId,
-                IsUnique = false
-            };
-
+            IndexDefinition newIndex = new IndexDefinition(fieldName, GaldrFieldType.String, rootPageId, false);
             collection.Indexes.Add(newIndex);
             _collectionsMetadata.UpdateCollection(collection);
             WriteCollectionsMetadataWithGrowth();
@@ -2093,6 +2089,13 @@ public class GaldrDb : IDisposable
         return indexTree.SearchRangeWithDocIds(startKeyBytes, endKeyBytes, includeStart, includeEnd);
     }
 
+    internal List<SecondaryIndexEntry> SearchSecondaryIndexPrefixRange(IndexDefinition indexDef, byte[] startKeyBytes, byte[] prefixKeyBytes, bool includeStart)
+    {
+        int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.UsablePageSize);
+        SecondaryIndexBTree indexTree = new SecondaryIndexBTree(_pageIO, _pageManager, indexDef.RootPageId, _options.PageSize, _options.UsablePageSize, maxKeys);
+        return indexTree.SearchPrefixRangeWithDocIds(startKeyBytes, prefixKeyBytes, includeStart);
+    }
+
     internal void CommitDelete(string collectionName, int docId, IReadOnlyList<IndexFieldEntry> oldIndexFields)
     {
         CollectionEntry collection = _collectionsMetadata.FindCollection(collectionName);
@@ -2131,7 +2134,7 @@ public class GaldrDb : IDisposable
         // First pass: check unique constraints
         foreach (IndexFieldEntry field in indexFields)
         {
-            IndexDefinition indexDef = collection.FindIndex(field.FieldName);
+            IndexDefinition indexDef = FindIndexDefinition(collection, field.FieldName);
             if (indexDef != null && indexDef.IsUnique)
             {
                 CheckUniqueConstraint(indexDef, field.FieldName, field.KeyBytes);
@@ -2141,7 +2144,7 @@ public class GaldrDb : IDisposable
         // Second pass: insert into all indexes
         foreach (IndexFieldEntry field in indexFields)
         {
-            IndexDefinition indexDef = collection.FindIndex(field.FieldName);
+            IndexDefinition indexDef = FindIndexDefinition(collection, field.FieldName);
             if (indexDef != null)
             {
                 int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.UsablePageSize);
@@ -2159,11 +2162,21 @@ public class GaldrDb : IDisposable
         }
     }
 
+    private static IndexDefinition FindIndexDefinition(CollectionEntry collection, string indexNameOrFieldName)
+    {
+        IndexDefinition result = collection.FindIndex(indexNameOrFieldName);
+        if (result == null)
+        {
+            result = collection.FindIndexByName(indexNameOrFieldName);
+        }
+        return result;
+    }
+
     private void DeleteFromIndexesInternal(CollectionEntry collection, int docId, IReadOnlyList<IndexFieldEntry> indexFields)
     {
         foreach (IndexFieldEntry field in indexFields)
         {
-            IndexDefinition indexDef = collection.FindIndex(field.FieldName);
+            IndexDefinition indexDef = FindIndexDefinition(collection, field.FieldName);
             if (indexDef != null)
             {
                 int maxKeys = SecondaryIndexBTree.CalculateMaxKeys(_options.UsablePageSize);
@@ -2376,7 +2389,7 @@ public class GaldrDb : IDisposable
     {
         foreach (IndexFieldEntry field in indexFields)
         {
-            IndexDefinition indexDef = collection.FindIndex(field.FieldName);
+            IndexDefinition indexDef = FindIndexDefinition(collection, field.FieldName);
             if (indexDef != null)
             {
                 if (indexDef.RootPageId == -1)

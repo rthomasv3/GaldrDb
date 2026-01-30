@@ -119,6 +119,17 @@ internal static class BinaryHelper
         return (ushort)(buffer[offset] | (buffer[offset + 1] << 8));
     }
 
+    public static void WriteUInt16BE(byte[] buffer, int offset, ushort value)
+    {
+        buffer[offset] = (byte)((value >> 8) & 0xFF);
+        buffer[offset + 1] = (byte)(value & 0xFF);
+    }
+
+    public static ushort ReadUInt16BE(byte[] buffer, int offset)
+    {
+        return (ushort)((buffer[offset] << 8) | buffer[offset + 1]);
+    }
+
     public static int WriteString(byte[] buffer, int offset, string value)
     {
         byte[] stringBytes = Encoding.UTF8.GetBytes(value);

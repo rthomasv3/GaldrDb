@@ -341,7 +341,7 @@ public class Transaction : IDisposable
                 }
 
                 // Only read document if there are indexes to clean up
-                if (typeInfo.IndexedFieldNames.Count > 0)
+                if (typeInfo.IndexedFieldNames.Count > 0 || typeInfo.CompoundIndexes.Count > 0)
                 {
                     byte[] docBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
                     CollectionEntry collection = _db.GetCollection(collectionName);
@@ -478,7 +478,7 @@ public class Transaction : IDisposable
                 }
 
                 // Only read document if there are indexes to clean up
-                if (typeInfo.IndexedFieldNames.Count > 0)
+                if (typeInfo.IndexedFieldNames.Count > 0 || typeInfo.CompoundIndexes.Count > 0)
                 {
                     byte[] docBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
                     CollectionEntry collection = _db.GetCollection(collectionName);
@@ -1354,7 +1354,7 @@ public class Transaction : IDisposable
                 }
 
                 // Only read document if there are indexes to clean up
-                if (typeInfo.IndexedFieldNames.Count > 0)
+                if (typeInfo.IndexedFieldNames.Count > 0 || typeInfo.CompoundIndexes.Count > 0)
                 {
                     byte[] docBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
                     CollectionEntry collection = _db.GetCollection(collectionName);
@@ -1461,7 +1461,7 @@ public class Transaction : IDisposable
                 }
 
                 // Only read document if there are indexes to clean up
-                if (typeInfo.IndexedFieldNames.Count > 0)
+                if (typeInfo.IndexedFieldNames.Count > 0 || typeInfo.CompoundIndexes.Count > 0)
                 {
                     byte[] docBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
                     CollectionEntry collection = _db.GetCollection(collectionName);
@@ -1666,7 +1666,48 @@ public class Transaction : IDisposable
     {
         IndexFieldWriter writer = new IndexFieldWriter();
         typeInfo.ExtractIndexedFields(document, writer);
-        return writer.GetFields();
+        IReadOnlyList<IndexFieldEntry> singleFieldEntries = writer.GetFields();
+
+        IReadOnlyList<IndexFieldEntry> result;
+        IReadOnlyList<CompoundIndexInfo> compoundIndexes = typeInfo.CompoundIndexes;
+
+        if (compoundIndexes.Count == 0)
+        {
+            result = singleFieldEntries;
+        }
+        else
+        {
+            List<IndexFieldEntry> allEntries = new List<IndexFieldEntry>(singleFieldEntries.Count + compoundIndexes.Count);
+            foreach (IndexFieldEntry entry in singleFieldEntries)
+            {
+                allEntries.Add(entry);
+            }
+
+            foreach (CompoundIndexInfo compoundInfo in compoundIndexes)
+            {
+                object[] values = new object[compoundInfo.Fields.Count];
+                GaldrFieldType[] fieldTypes = new GaldrFieldType[compoundInfo.Fields.Count];
+
+                for (int i = 0; i < compoundInfo.Fields.Count; i++)
+                {
+                    CompoundIndexField field = compoundInfo.Fields[i];
+                    fieldTypes[i] = field.FieldType;
+                    values[i] = ExtractValueFromDocument(document, field.FieldName);
+                }
+
+                byte[] compoundKey = IndexKeyEncoder.EncodeCompound(values, fieldTypes);
+                allEntries.Add(new IndexFieldEntry(compoundInfo.IndexName, compoundKey));
+            }
+
+            result = allEntries;
+        }
+
+        return result;
+    }
+
+    private static object ExtractValueFromDocument<T>(T document, string fieldName)
+    {
+        return typeof(T).GetProperty(fieldName)?.GetValue(document);
     }
 
     internal bool ExecutePartialUpdate<T>(
@@ -1727,10 +1768,12 @@ public class Transaction : IDisposable
         if (exists)
         {
             // Check if any indexed fields are being modified
-            bool hasIndexedFieldModifications = HasIndexedFieldModifications(modifications, typeInfo.IndexedFieldNames);
+            bool hasIndexedFieldModifications = HasIndexedFieldModifications(
+                modifications, typeInfo.IndexedFieldNames, typeInfo.CompoundIndexes);
 
             // Extract old index fields if needed
-            if (hasIndexedFieldModifications && oldIndexFields == null && typeInfo.IndexedFieldNames.Count > 0)
+            if (hasIndexedFieldModifications && oldIndexFields == null &&
+                (typeInfo.IndexedFieldNames.Count > 0 || typeInfo.CompoundIndexes.Count > 0))
             {
                 CollectionEntry collection = _db.GetCollection(collectionName);
                 oldIndexFields = IndexFieldExtractor.ExtractFromBytes(existingBytes, collection.Indexes);
@@ -1832,10 +1875,12 @@ public class Transaction : IDisposable
         if (exists)
         {
             // Check if any indexed fields are being modified
-            bool hasIndexedFieldModifications = HasIndexedFieldModifications(modifications, typeInfo.IndexedFieldNames);
+            bool hasIndexedFieldModifications = HasIndexedFieldModifications(
+                modifications, typeInfo.IndexedFieldNames, typeInfo.CompoundIndexes);
 
             // Extract old index fields if needed
-            if (hasIndexedFieldModifications && oldIndexFields == null && typeInfo.IndexedFieldNames.Count > 0)
+            if (hasIndexedFieldModifications && oldIndexFields == null &&
+                (typeInfo.IndexedFieldNames.Count > 0 || typeInfo.CompoundIndexes.Count > 0))
             {
                 CollectionEntry collection = _db.GetCollection(collectionName);
                 oldIndexFields = IndexFieldExtractor.ExtractFromBytes(existingBytes, collection.Indexes);
@@ -1892,6 +1937,41 @@ public class Transaction : IDisposable
                 if (modifiedField == indexedFieldNames[j])
                 {
                     result = true;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private bool HasIndexedFieldModifications(
+        List<FieldModification> modifications,
+        IReadOnlyList<string> singleFieldIndexNames,
+        IReadOnlyList<CompoundIndexInfo> compoundIndexes)
+    {
+        bool result = false;
+
+        for (int i = 0; i < modifications.Count && !result; i++)
+        {
+            string modifiedField = modifications[i].FieldName;
+
+            for (int j = 0; j < singleFieldIndexNames.Count && !result; j++)
+            {
+                if (modifiedField == singleFieldIndexNames[j])
+                {
+                    result = true;
+                }
+            }
+
+            for (int j = 0; j < compoundIndexes.Count && !result; j++)
+            {
+                IReadOnlyList<CompoundIndexField> fields = compoundIndexes[j].Fields;
+                for (int k = 0; k < fields.Count && !result; k++)
+                {
+                    if (modifiedField == fields[k].FieldName)
+                    {
+                        result = true;
+                    }
                 }
             }
         }
@@ -2149,7 +2229,20 @@ public class Transaction : IDisposable
         List<string> fieldNames = new List<string>(collection.Indexes.Count);
         foreach (IndexDefinition index in collection.Indexes)
         {
-            fieldNames.Add(index.FieldName);
+            if (index.IsCompound)
+            {
+                foreach (IndexField field in index.Fields)
+                {
+                    if (!fieldNames.Contains(field.FieldName))
+                    {
+                        fieldNames.Add(field.FieldName);
+                    }
+                }
+            }
+            else
+            {
+                fieldNames.Add(index.FieldName);
+            }
         }
         return fieldNames;
     }

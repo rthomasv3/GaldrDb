@@ -23,136 +23,198 @@ internal static class IndexFieldExtractor
         byte[] jsonBytes,
         IReadOnlyList<IndexDefinition> indexes)
     {
-        List<IndexFieldEntry> fields = new List<IndexFieldEntry>(indexes.Count);
-        Utf8JsonReader reader = new Utf8JsonReader(jsonBytes);
+        List<IndexFieldEntry> fields = new List<IndexFieldEntry>();
 
-        // Move to start of object
-        if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+        if (indexes.Count > 0)
         {
-            return fields;
-        }
+            List<IndexDefinition> singleFieldIndexes = new List<IndexDefinition>();
+            List<IndexDefinition> compoundIndexes = new List<IndexDefinition>();
+            HashSet<string> neededFields = new HashSet<string>();
 
-        int foundCount = 0;
-        int indexCount = indexes.Count;
-
-        while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
-        {
-            // Check if this property is one of our indexed fields
-            IndexDefinition matchedIndex = null;
-            for (int i = 0; i < indexCount; i++)
+            foreach (IndexDefinition index in indexes)
             {
-                if (reader.ValueTextEquals(indexes[i].FieldName))
+                if (index.IsCompound)
                 {
-                    matchedIndex = indexes[i];
-                    break;
-                }
-            }
-
-            // Move to the value
-            reader.Read();
-
-            if (matchedIndex != null)
-            {
-                byte[] keyBytes;
-                if (reader.TokenType == JsonTokenType.Null)
-                {
-                    keyBytes = IndexKeyEncoder.Encode(null, matchedIndex.FieldType);
+                    compoundIndexes.Add(index);
+                    foreach (IndexField field in index.Fields)
+                    {
+                        neededFields.Add(field.FieldName);
+                    }
                 }
                 else
                 {
-                    keyBytes = ExtractAndEncode(ref reader, matchedIndex.FieldType);
+                    singleFieldIndexes.Add(index);
+                    neededFields.Add(index.FieldName);
                 }
+            }
 
-                if (keyBytes != null)
+            Dictionary<string, ExtractedValue> extractedValues = new Dictionary<string, ExtractedValue>();
+            Utf8JsonReader reader = new Utf8JsonReader(jsonBytes);
+
+            if (reader.Read() && reader.TokenType == JsonTokenType.StartObject)
+            {
+                while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName && extractedValues.Count < neededFields.Count)
                 {
-                    fields.Add(new IndexFieldEntry(matchedIndex.FieldName, keyBytes));
-                    foundCount++;
+                    string propertyName = reader.GetString();
+                    reader.Read();
 
-                    // Early exit if we found all indexed fields
-                    if (foundCount == indexCount)
+                    if (neededFields.Contains(propertyName))
                     {
-                        break;
+                        GaldrFieldType fieldType = GetFieldTypeFor(propertyName, indexes);
+                        ExtractedValue extracted = ExtractValue(ref reader, fieldType);
+                        extractedValues[propertyName] = extracted;
+                    }
+                    else
+                    {
+                        reader.Skip();
                     }
                 }
             }
-            else
+
+            foreach (IndexDefinition index in singleFieldIndexes)
             {
-                // Skip the value we don't need
-                reader.Skip();
+                byte[] keyBytes;
+                if (extractedValues.TryGetValue(index.FieldName, out ExtractedValue value))
+                {
+                    keyBytes = IndexKeyEncoder.Encode(value.Value, index.FieldType);
+                }
+                else
+                {
+                    keyBytes = IndexKeyEncoder.Encode(null, index.FieldType);
+                }
+                fields.Add(new IndexFieldEntry(index.FieldName, keyBytes));
+            }
+
+            foreach (IndexDefinition index in compoundIndexes)
+            {
+                object[] values = new object[index.Fields.Count];
+                GaldrFieldType[] fieldTypes = new GaldrFieldType[index.Fields.Count];
+
+                for (int i = 0; i < index.Fields.Count; i++)
+                {
+                    IndexField indexField = index.Fields[i];
+                    fieldTypes[i] = indexField.FieldType;
+
+                    if (extractedValues.TryGetValue(indexField.FieldName, out ExtractedValue value))
+                    {
+                        values[i] = value.Value;
+                    }
+                    else
+                    {
+                        values[i] = null;
+                    }
+                }
+
+                byte[] keyBytes = IndexKeyEncoder.EncodeCompound(values, fieldTypes);
+                fields.Add(new IndexFieldEntry(index.IndexName, keyBytes));
             }
         }
 
         return fields;
     }
 
-    /// <summary>
-    /// Extracts a value from the reader and encodes it as index key bytes.
-    /// </summary>
-    private static byte[] ExtractAndEncode(ref Utf8JsonReader reader, GaldrFieldType fieldType)
+    private static GaldrFieldType GetFieldTypeFor(string fieldName, IReadOnlyList<IndexDefinition> indexes)
     {
-        return fieldType switch
+        GaldrFieldType result = GaldrFieldType.String;
+        bool found = false;
+
+        for (int i = 0; i < indexes.Count && !found; i++)
         {
-            GaldrFieldType.String => reader.TokenType == JsonTokenType.String
-                ? IndexKeyEncoder.Encode(reader.GetString(), fieldType)
-                : null,
-            GaldrFieldType.Int32 => reader.TokenType == JsonTokenType.Number
-                ? IndexKeyEncoder.Encode(reader.GetInt32(), fieldType)
-                : null,
-            GaldrFieldType.Int64 => reader.TokenType == JsonTokenType.Number
-                ? IndexKeyEncoder.Encode(reader.GetInt64(), fieldType)
-                : null,
-            GaldrFieldType.Double => reader.TokenType == JsonTokenType.Number
-                ? IndexKeyEncoder.Encode(reader.GetDouble(), fieldType)
-                : null,
-            GaldrFieldType.Decimal => reader.TokenType == JsonTokenType.Number
-                ? IndexKeyEncoder.Encode(reader.GetDecimal(), fieldType)
-                : null,
-            GaldrFieldType.Boolean => reader.TokenType == JsonTokenType.True || reader.TokenType == JsonTokenType.False
-                ? IndexKeyEncoder.Encode(reader.GetBoolean(), fieldType)
-                : null,
-            GaldrFieldType.DateTime => reader.TokenType == JsonTokenType.String
-                ? IndexKeyEncoder.Encode(reader.GetDateTime(), fieldType)
-                : null,
-            GaldrFieldType.DateTimeOffset => reader.TokenType == JsonTokenType.String
-                ? IndexKeyEncoder.Encode(reader.GetDateTimeOffset(), fieldType)
-                : null,
-            GaldrFieldType.Guid => reader.TokenType == JsonTokenType.String
-                ? IndexKeyEncoder.Encode(reader.GetGuid(), fieldType)
-                : null,
-            GaldrFieldType.Byte => reader.TokenType == JsonTokenType.Number
-                ? IndexKeyEncoder.Encode(reader.GetByte(), fieldType)
-                : null,
-            GaldrFieldType.SByte => reader.TokenType == JsonTokenType.Number
-                ? IndexKeyEncoder.Encode(reader.GetSByte(), fieldType)
-                : null,
-            GaldrFieldType.Int16 => reader.TokenType == JsonTokenType.Number
-                ? IndexKeyEncoder.Encode(reader.GetInt16(), fieldType)
-                : null,
-            GaldrFieldType.UInt16 => reader.TokenType == JsonTokenType.Number
-                ? IndexKeyEncoder.Encode(reader.GetUInt16(), fieldType)
-                : null,
-            GaldrFieldType.UInt32 => reader.TokenType == JsonTokenType.Number
-                ? IndexKeyEncoder.Encode(reader.GetUInt32(), fieldType)
-                : null,
-            GaldrFieldType.UInt64 => reader.TokenType == JsonTokenType.Number
-                ? IndexKeyEncoder.Encode(reader.GetUInt64(), fieldType)
-                : null,
-            GaldrFieldType.Single => reader.TokenType == JsonTokenType.Number
-                ? IndexKeyEncoder.Encode(reader.GetSingle(), fieldType)
-                : null,
-            GaldrFieldType.Char => reader.TokenType == JsonTokenType.String
-                ? IndexKeyEncoder.Encode(reader.GetString()[0], fieldType)
-                : null,
-            GaldrFieldType.TimeSpan => reader.TokenType == JsonTokenType.String
-                ? IndexKeyEncoder.Encode(TimeSpan.Parse(reader.GetString()), fieldType)
-                : null,
-            GaldrFieldType.DateOnly => reader.TokenType == JsonTokenType.String
-                ? IndexKeyEncoder.Encode(DateOnly.Parse(reader.GetString()), fieldType)
-                : null,
-            GaldrFieldType.TimeOnly => reader.TokenType == JsonTokenType.String
-                ? IndexKeyEncoder.Encode(TimeOnly.Parse(reader.GetString()), fieldType)
-                : null,
-            _ => null
-        };
+            IndexDefinition index = indexes[i];
+            if (index.IsCompound)
+            {
+                foreach (IndexField field in index.Fields)
+                {
+                    if (field.FieldName == fieldName)
+                    {
+                        result = field.FieldType;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            else if (index.FieldName == fieldName)
+            {
+                result = index.FieldType;
+                found = true;
+            }
+        }
+
+        return result;
+    }
+
+    private static ExtractedValue ExtractValue(ref Utf8JsonReader reader, GaldrFieldType fieldType)
+    {
+        object value = null;
+
+        if (reader.TokenType != JsonTokenType.Null)
+        {
+            value = fieldType switch
+            {
+                GaldrFieldType.String => reader.TokenType == JsonTokenType.String
+                    ? reader.GetString()
+                    : null,
+                GaldrFieldType.Int32 => reader.TokenType == JsonTokenType.Number
+                    ? reader.GetInt32()
+                    : null,
+                GaldrFieldType.Int64 => reader.TokenType == JsonTokenType.Number
+                    ? reader.GetInt64()
+                    : null,
+                GaldrFieldType.Double => reader.TokenType == JsonTokenType.Number
+                    ? reader.GetDouble()
+                    : null,
+                GaldrFieldType.Decimal => reader.TokenType == JsonTokenType.Number
+                    ? reader.GetDecimal()
+                    : null,
+                GaldrFieldType.Boolean => reader.TokenType == JsonTokenType.True || reader.TokenType == JsonTokenType.False
+                    ? reader.GetBoolean()
+                    : null,
+                GaldrFieldType.DateTime => reader.TokenType == JsonTokenType.String
+                    ? reader.GetDateTime()
+                    : null,
+                GaldrFieldType.DateTimeOffset => reader.TokenType == JsonTokenType.String
+                    ? reader.GetDateTimeOffset()
+                    : null,
+                GaldrFieldType.Guid => reader.TokenType == JsonTokenType.String
+                    ? reader.GetGuid()
+                    : null,
+                GaldrFieldType.Byte => reader.TokenType == JsonTokenType.Number
+                    ? reader.GetByte()
+                    : null,
+                GaldrFieldType.SByte => reader.TokenType == JsonTokenType.Number
+                    ? reader.GetSByte()
+                    : null,
+                GaldrFieldType.Int16 => reader.TokenType == JsonTokenType.Number
+                    ? reader.GetInt16()
+                    : null,
+                GaldrFieldType.UInt16 => reader.TokenType == JsonTokenType.Number
+                    ? reader.GetUInt16()
+                    : null,
+                GaldrFieldType.UInt32 => reader.TokenType == JsonTokenType.Number
+                    ? reader.GetUInt32()
+                    : null,
+                GaldrFieldType.UInt64 => reader.TokenType == JsonTokenType.Number
+                    ? reader.GetUInt64()
+                    : null,
+                GaldrFieldType.Single => reader.TokenType == JsonTokenType.Number
+                    ? reader.GetSingle()
+                    : null,
+                GaldrFieldType.Char => reader.TokenType == JsonTokenType.String && reader.GetString().Length > 0
+                    ? reader.GetString()[0]
+                    : null,
+                GaldrFieldType.TimeSpan => reader.TokenType == JsonTokenType.String
+                    ? TimeSpan.Parse(reader.GetString())
+                    : null,
+                GaldrFieldType.DateOnly => reader.TokenType == JsonTokenType.String
+                    ? DateOnly.Parse(reader.GetString())
+                    : null,
+                GaldrFieldType.TimeOnly => reader.TokenType == JsonTokenType.String
+                    ? TimeOnly.Parse(reader.GetString())
+                    : null,
+                _ => null
+            };
+        }
+
+        return new ExtractedValue(value);
     }
 }

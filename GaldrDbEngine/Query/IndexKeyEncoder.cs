@@ -317,4 +317,153 @@ internal static class IndexKeyEncoder
 
         return result;
     }
+
+    /// <summary>
+    /// Encodes multiple field values into a compound key.
+    /// </summary>
+    /// <param name="values">The values in field order (can contain nulls).</param>
+    /// <param name="fieldTypes">The field types in order.</param>
+    /// <returns>The encoded compound key bytes.</returns>
+    public static byte[] EncodeCompound(object[] values, GaldrFieldType[] fieldTypes)
+    {
+        return EncodeCompound(values, fieldTypes, values.Length);
+    }
+
+    /// <summary>
+    /// Encodes a subset of field values into a compound key.
+    /// </summary>
+    public static byte[] EncodeCompound(object[] values, GaldrFieldType[] fieldTypes, int count)
+    {
+        int totalSize = 0;
+        for (int i = 0; i < count; i++)
+        {
+            totalSize += GetCompoundFieldSize(values[i], fieldTypes[i]);
+        }
+
+        byte[] result = new byte[totalSize];
+        int offset = 0;
+
+        for (int i = 0; i < count; i++)
+        {
+            offset += EncodeCompoundField(result, offset, values[i], fieldTypes[i]);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Encodes a prefix of field values into a compound key for prefix queries.
+    /// </summary>
+    /// <param name="values">The values for the prefix fields (can contain nulls).</param>
+    /// <param name="fieldTypes">The field types for the prefix fields.</param>
+    /// <returns>The encoded compound key prefix bytes.</returns>
+    public static byte[] EncodeCompoundPrefix(object[] values, GaldrFieldType[] fieldTypes)
+    {
+        return EncodeCompound(values, fieldTypes);
+    }
+
+    private static int GetCompoundFieldSize(object value, GaldrFieldType fieldType)
+    {
+        int result;
+
+        if (value == null)
+        {
+            result = 1;
+        }
+        else if (fieldType == GaldrFieldType.String)
+        {
+            byte[] stringBytes = Encoding.UTF8.GetBytes((string)value);
+            result = 1 + 2 + stringBytes.Length;
+        }
+        else
+        {
+            result = 1 + GetFixedTypeSize(fieldType);
+        }
+
+        return result;
+    }
+
+    private static int EncodeCompoundField(byte[] buffer, int offset, object value, GaldrFieldType fieldType)
+    {
+        int bytesWritten;
+
+        if (value == null)
+        {
+            buffer[offset] = NULL_PREFIX;
+            bytesWritten = 1;
+        }
+        else if (fieldType == GaldrFieldType.String)
+        {
+            buffer[offset] = VALUE_PREFIX;
+            byte[] stringBytes = Encoding.UTF8.GetBytes((string)value);
+            buffer[offset + 1] = (byte)((stringBytes.Length >> 8) & 0xFF);
+            buffer[offset + 2] = (byte)(stringBytes.Length & 0xFF);
+            Array.Copy(stringBytes, 0, buffer, offset + 3, stringBytes.Length);
+            bytesWritten = 1 + 2 + stringBytes.Length;
+        }
+        else
+        {
+            buffer[offset] = VALUE_PREFIX;
+            byte[] valueBytes = EncodeValue(value, fieldType);
+            Array.Copy(valueBytes, 0, buffer, offset + 1, valueBytes.Length);
+            bytesWritten = 1 + valueBytes.Length;
+        }
+
+        return bytesWritten;
+    }
+
+    private static byte[] EncodeValue(object value, GaldrFieldType fieldType)
+    {
+        return fieldType switch
+        {
+            GaldrFieldType.String => EncodeString((string)value),
+            GaldrFieldType.Int32 => EncodeInt32((int)value),
+            GaldrFieldType.Int64 => EncodeInt64((long)value),
+            GaldrFieldType.Double => EncodeDouble((double)value),
+            GaldrFieldType.Decimal => EncodeDecimal((decimal)value),
+            GaldrFieldType.Boolean => EncodeBoolean((bool)value),
+            GaldrFieldType.DateTime => EncodeDateTime((DateTime)value),
+            GaldrFieldType.DateTimeOffset => EncodeDateTimeOffset((DateTimeOffset)value),
+            GaldrFieldType.Guid => EncodeGuid((Guid)value),
+            GaldrFieldType.Byte => EncodeByte((byte)value),
+            GaldrFieldType.SByte => EncodeSByte((sbyte)value),
+            GaldrFieldType.Int16 => EncodeInt16((short)value),
+            GaldrFieldType.UInt16 => EncodeUInt16((ushort)value),
+            GaldrFieldType.UInt32 => EncodeUInt32((uint)value),
+            GaldrFieldType.UInt64 => EncodeUInt64((ulong)value),
+            GaldrFieldType.Single => EncodeSingle((float)value),
+            GaldrFieldType.Char => EncodeChar((char)value),
+            GaldrFieldType.TimeSpan => EncodeTimeSpan((TimeSpan)value),
+            GaldrFieldType.DateOnly => EncodeDateOnly((DateOnly)value),
+            GaldrFieldType.TimeOnly => EncodeTimeOnly((TimeOnly)value),
+            _ => throw new NotSupportedException($"Field type {fieldType} is not supported for compound index encoding")
+        };
+    }
+
+    private static int GetFixedTypeSize(GaldrFieldType fieldType)
+    {
+        return fieldType switch
+        {
+            GaldrFieldType.Int32 => 4,
+            GaldrFieldType.Int64 => 8,
+            GaldrFieldType.Double => 8,
+            GaldrFieldType.Decimal => 16,
+            GaldrFieldType.Boolean => 1,
+            GaldrFieldType.DateTime => 8,
+            GaldrFieldType.DateTimeOffset => 16,
+            GaldrFieldType.Guid => 16,
+            GaldrFieldType.Byte => 1,
+            GaldrFieldType.SByte => 1,
+            GaldrFieldType.Int16 => 2,
+            GaldrFieldType.UInt16 => 2,
+            GaldrFieldType.UInt32 => 4,
+            GaldrFieldType.UInt64 => 8,
+            GaldrFieldType.Single => 4,
+            GaldrFieldType.Char => 2,
+            GaldrFieldType.TimeSpan => 8,
+            GaldrFieldType.DateOnly => 4,
+            GaldrFieldType.TimeOnly => 8,
+            _ => throw new NotSupportedException($"Field type {fieldType} is not a fixed-size type")
+        };
+    }
 }

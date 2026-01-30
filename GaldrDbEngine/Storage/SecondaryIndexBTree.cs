@@ -117,6 +117,13 @@ internal class SecondaryIndexBTree
         return results;
     }
 
+    public List<SecondaryIndexEntry> SearchPrefixRangeWithDocIds(byte[] startKey, byte[] prefixKey, bool includeStart)
+    {
+        List<SecondaryIndexEntry> results = new List<SecondaryIndexEntry>();
+        SearchPrefixRangeNodeWithDocIds(_rootPageId, startKey, prefixKey, includeStart, results);
+        return results;
+    }
+
     public bool Delete(byte[] key)
     {
         return DeleteFromNode(_rootPageId, key);
@@ -440,6 +447,80 @@ internal class SecondaryIndexBTree
                     if (shouldDescend)
                     {
                         SearchRangeNodeWithDocIds(node.ChildPageIds[i], startKey, endKey, includeStart, includeEnd, results);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            BufferPool.Return(buffer);
+            SecondaryIndexNodePool.Return(node);
+        }
+    }
+
+    private void SearchPrefixRangeNodeWithDocIds(int pageId, byte[] startKey, byte[] prefixKey, bool includeStart, List<SecondaryIndexEntry> results)
+    {
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
+        try
+        {
+            _pageIO.ReadPage(pageId, buffer);
+            SecondaryIndexNode.DeserializeTo(buffer, node);
+
+            ReadOnlySpan<byte> startSpan = startKey.AsSpan();
+
+            if (node.NodeType == BTreeNodeType.Leaf)
+            {
+                for (int i = 0; i < node.KeyCount; i++)
+                {
+                    KeyBuffer nodeKey = node.Keys[i];
+
+                    if (!nodeKey.StartsWith(prefixKey))
+                    {
+                        int cmp = KeyBuffer.Compare(prefixKey.AsSpan(), nodeKey);
+                        if (cmp < 0)
+                        {
+                            break;
+                        }
+                        continue;
+                    }
+
+                    bool afterStart;
+                    if (nodeKey.StartsWith(startKey))
+                    {
+                        afterStart = includeStart;
+                    }
+                    else
+                    {
+                        int startCmp = KeyBuffer.Compare(startSpan, nodeKey);
+                        afterStart = startCmp < 0;
+                    }
+
+                    if (afterStart)
+                    {
+                        int docId = ExtractDocIdFromKey(nodeKey);
+                        results.Add(new SecondaryIndexEntry(docId, node.LeafValues[i]));
+                    }
+                }
+            }
+            else
+            {
+                for (int i = 0; i <= node.KeyCount && i < node.ChildPageIds.Count; i++)
+                {
+                    bool shouldDescend = true;
+
+                    if (i < node.KeyCount)
+                    {
+                        int cmp = KeyBuffer.Compare(startSpan, node.Keys[i]);
+                        if (cmp > 0)
+                        {
+                            shouldDescend = false;
+                        }
+                    }
+
+                    if (shouldDescend)
+                    {
+                        SearchPrefixRangeNodeWithDocIds(node.ChildPageIds[i], startKey, prefixKey, includeStart, results);
                     }
                 }
             }

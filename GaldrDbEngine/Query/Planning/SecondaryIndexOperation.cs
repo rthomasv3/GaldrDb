@@ -5,5 +5,6 @@ internal enum SecondaryIndexOperation
     ExactMatch,
     PrefixMatch,
     MultiMatch,
-    RangeScan
+    RangeScan,
+    PrefixRangeScan
 }

@@ -608,6 +608,147 @@ public class IndexKeyEncoderTests
         Assert.HasCount(9, encoded);
     }
 
+    [TestMethod]
+    public void EncodeCompound_TwoStringFields_MaintainsSortOrder()
+    {
+        object[] values1 = { "Apple", "Red" };
+        object[] values2 = { "Apple", "Yellow" };
+        object[] values3 = { "Banana", "Green" };
+        GaldrFieldType[] types = { GaldrFieldType.String, GaldrFieldType.String };
+
+        byte[] encoded1 = IndexKeyEncoder.EncodeCompound(values1, types);
+        byte[] encoded2 = IndexKeyEncoder.EncodeCompound(values2, types);
+        byte[] encoded3 = IndexKeyEncoder.EncodeCompound(values3, types);
+
+        Assert.IsLessThan(0, CompareBytes(encoded1, encoded2));
+        Assert.IsLessThan(0, CompareBytes(encoded2, encoded3));
+    }
+
+    [TestMethod]
+    public void EncodeCompound_StringAndInt_MaintainsSortOrder()
+    {
+        object[] values1 = { "Active", 1 };
+        object[] values2 = { "Active", 5 };
+        object[] values3 = { "Pending", 1 };
+        GaldrFieldType[] types = { GaldrFieldType.String, GaldrFieldType.Int32 };
+
+        byte[] encoded1 = IndexKeyEncoder.EncodeCompound(values1, types);
+        byte[] encoded2 = IndexKeyEncoder.EncodeCompound(values2, types);
+        byte[] encoded3 = IndexKeyEncoder.EncodeCompound(values3, types);
+
+        Assert.IsLessThan(0, CompareBytes(encoded1, encoded2));
+        Assert.IsLessThan(0, CompareBytes(encoded2, encoded3));
+    }
+
+    [TestMethod]
+    public void EncodeCompound_WithNullFirstField_SortsBeforeNonNull()
+    {
+        object[] valuesNull = { null, 5 };
+        object[] valuesNonNull = { "Active", 5 };
+        GaldrFieldType[] types = { GaldrFieldType.String, GaldrFieldType.Int32 };
+
+        byte[] encodedNull = IndexKeyEncoder.EncodeCompound(valuesNull, types);
+        byte[] encodedNonNull = IndexKeyEncoder.EncodeCompound(valuesNonNull, types);
+
+        Assert.IsLessThan(0, CompareBytes(encodedNull, encodedNonNull));
+    }
+
+    [TestMethod]
+    public void EncodeCompound_WithNullSecondField_SortsBeforeNonNull()
+    {
+        object[] valuesNull = { "Active", null };
+        object[] valuesNonNull = { "Active", 5 };
+        GaldrFieldType[] types = { GaldrFieldType.String, GaldrFieldType.Int32 };
+
+        byte[] encodedNull = IndexKeyEncoder.EncodeCompound(valuesNull, types);
+        byte[] encodedNonNull = IndexKeyEncoder.EncodeCompound(valuesNonNull, types);
+
+        Assert.IsLessThan(0, CompareBytes(encodedNull, encodedNonNull));
+    }
+
+    [TestMethod]
+    public void EncodeCompound_ThreeFields_MaintainsSortOrder()
+    {
+        object[] values1 = { "A", "X", 1 };
+        object[] values2 = { "A", "X", 2 };
+        object[] values3 = { "A", "Y", 1 };
+        object[] values4 = { "B", "X", 1 };
+        GaldrFieldType[] types = { GaldrFieldType.String, GaldrFieldType.String, GaldrFieldType.Int32 };
+
+        byte[] encoded1 = IndexKeyEncoder.EncodeCompound(values1, types);
+        byte[] encoded2 = IndexKeyEncoder.EncodeCompound(values2, types);
+        byte[] encoded3 = IndexKeyEncoder.EncodeCompound(values3, types);
+        byte[] encoded4 = IndexKeyEncoder.EncodeCompound(values4, types);
+
+        Assert.IsLessThan(0, CompareBytes(encoded1, encoded2));
+        Assert.IsLessThan(0, CompareBytes(encoded2, encoded3));
+        Assert.IsLessThan(0, CompareBytes(encoded3, encoded4));
+    }
+
+    [TestMethod]
+    public void EncodeCompound_StringWithLengthPrefix_PreventsCollision()
+    {
+        object[] valuesABC = { "A", "BC" };
+        object[] valuesAB_C = { "AB", "C" };
+        GaldrFieldType[] types = { GaldrFieldType.String, GaldrFieldType.String };
+
+        byte[] encodedABC = IndexKeyEncoder.EncodeCompound(valuesABC, types);
+        byte[] encodedAB_C = IndexKeyEncoder.EncodeCompound(valuesAB_C, types);
+
+        Assert.AreNotEqual(0, CompareBytes(encodedABC, encodedAB_C));
+    }
+
+    [TestMethod]
+    public void EncodeCompound_DateTimeField_MaintainsSortOrder()
+    {
+        DateTime date1 = new DateTime(2024, 1, 1);
+        DateTime date2 = new DateTime(2024, 6, 15);
+        object[] values1 = { "Order", date1 };
+        object[] values2 = { "Order", date2 };
+        GaldrFieldType[] types = { GaldrFieldType.String, GaldrFieldType.DateTime };
+
+        byte[] encoded1 = IndexKeyEncoder.EncodeCompound(values1, types);
+        byte[] encoded2 = IndexKeyEncoder.EncodeCompound(values2, types);
+
+        Assert.IsLessThan(0, CompareBytes(encoded1, encoded2));
+    }
+
+    [TestMethod]
+    public void EncodeCompoundPrefix_SameAsEncodeCompound()
+    {
+        object[] values = { "Status", 42 };
+        GaldrFieldType[] types = { GaldrFieldType.String, GaldrFieldType.Int32 };
+
+        byte[] encoded = IndexKeyEncoder.EncodeCompound(values, types);
+        byte[] prefix = IndexKeyEncoder.EncodeCompoundPrefix(values, types);
+
+        Assert.AreEqual(0, CompareBytes(encoded, prefix));
+    }
+
+    [TestMethod]
+    public void EncodeCompound_PartialKey_IsPrefixOfFullKey()
+    {
+        object[] partialValues = { "Active" };
+        object[] fullValues = { "Active", 5 };
+        GaldrFieldType[] partialTypes = { GaldrFieldType.String };
+        GaldrFieldType[] fullTypes = { GaldrFieldType.String, GaldrFieldType.Int32 };
+
+        byte[] partialKey = IndexKeyEncoder.EncodeCompound(partialValues, partialTypes);
+        byte[] fullKey = IndexKeyEncoder.EncodeCompound(fullValues, fullTypes);
+
+        bool isPrefix = true;
+        for (int i = 0; i < partialKey.Length && isPrefix; i++)
+        {
+            if (partialKey[i] != fullKey[i])
+            {
+                isPrefix = false;
+            }
+        }
+
+        Assert.IsTrue(isPrefix);
+        Assert.IsGreaterThan(partialKey.Length, fullKey.Length);
+    }
+
     private static int CompareBytes(byte[] a, byte[] b)
     {
         int minLength = Math.Min(a.Length, b.Length);

@@ -106,7 +106,23 @@ internal class CollectionEntry
 
         for (int i = 0; i < Indexes.Count; i++)
         {
-            if (Indexes[i].FieldName == fieldName)
+            if (!Indexes[i].IsCompound && Indexes[i].FieldName == fieldName)
+            {
+                result = Indexes[i];
+                break;
+            }
+        }
+
+        return result;
+    }
+
+    public IndexDefinition FindIndexByName(string indexName)
+    {
+        IndexDefinition result = null;
+
+        for (int i = 0; i < Indexes.Count; i++)
+        {
+            if (Indexes[i].IndexName == indexName)
             {
                 result = Indexes[i];
                 break;

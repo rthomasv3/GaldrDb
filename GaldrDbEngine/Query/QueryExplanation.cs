@@ -202,20 +202,62 @@ public sealed class QueryExplanation
     private static QueryExplanation CreateSecondaryIndexExplanationFromExecutionPlan(QueryExecutionPlan plan, int totalFilters)
     {
         SecondaryIndexSpec indexSpec = plan.SecondaryIndex;
-        string fieldName = indexSpec?.IndexDefinition?.FieldName ?? "Unknown";
-        string operation = indexSpec?.IndexFilter?.Operation.ToString() ?? "Unknown";
-        string description = $"Secondary index scan on '{fieldName}' using {operation}";
+        string indexName;
+        string description;
+        int filtersUsedByIndex;
+
+        if (indexSpec.IsCompoundScan)
+        {
+            indexName = indexSpec.IndexDefinition?.IndexName ?? "Unknown";
+            int matchedCount = indexSpec.MatchedFilters?.Count ?? 0;
+            filtersUsedByIndex = matchedCount;
+
+            if (matchedCount > 0)
+            {
+                System.Text.StringBuilder sb = new System.Text.StringBuilder();
+                sb.Append("Compound index scan on '");
+                sb.Append(indexName);
+                sb.Append("' matching ");
+                sb.Append(matchedCount);
+                sb.Append(matchedCount == 1 ? " field: " : " fields: ");
+
+                for (int i = 0; i < matchedCount; i++)
+                {
+                    if (i > 0)
+                    {
+                        sb.Append(", ");
+                    }
+                    IFieldFilter filter = indexSpec.MatchedFilters[i];
+                    sb.Append(filter.FieldName);
+                    sb.Append(' ');
+                    sb.Append(filter.Operation.ToString());
+                }
+
+                description = sb.ToString();
+            }
+            else
+            {
+                description = $"Compound index scan on '{indexName}'";
+            }
+        }
+        else
+        {
+            indexName = indexSpec?.IndexDefinition?.FieldName ?? "Unknown";
+            string operation = indexSpec?.IndexFilter?.Operation.ToString() ?? "Unknown";
+            description = $"Secondary index scan on '{indexName}' using {operation}";
+            filtersUsedByIndex = 1;
+        }
 
         return new QueryExplanation(
             QueryScanType.SecondaryIndex,
             description,
-            fieldName,
+            indexName,
             null,
             null,
             true,
             true,
             totalFilters,
-            1);
+            filtersUsedByIndex);
     }
 
     private static string FormatBound(int? value, int unboundedValue, string unboundedLabel)

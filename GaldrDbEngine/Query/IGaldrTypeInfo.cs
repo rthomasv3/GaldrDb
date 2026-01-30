@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using GaldrDbEngine.Storage;
 
 namespace GaldrDbEngine.Query;
 
@@ -20,6 +19,9 @@ public interface IGaldrTypeInfo
 
     /// <summary>Names of fields that have unique indexes.</summary>
     IReadOnlyList<string> UniqueIndexFieldNames { get; }
+
+    /// <summary>Metadata for compound indexes on this type.</summary>
+    IReadOnlyList<CompoundIndexInfo> CompoundIndexes { get; }
 
     /// <summary>Extracts indexed field values from a document.</summary>
     /// <param name="document">The document to extract from.</param>

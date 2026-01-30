@@ -10,7 +10,7 @@ GaldrDb is a high-performance, type-safe document database that compiles to nati
 - **MVCC** (Multi-Version Concurrency Control) with snapshot isolation
 - **Write-Ahead Logging (WAL)** for crash recovery and durability
 - **Fluent query API** with LINQ-style filtering, sorting, and projections
-- **Secondary indexes** with unique constraint support
+- **Secondary indexes** with unique constraints and compound (multi-field) indexes
 - **Encryption at rest** with AES-256-GCM and per-page nonces
 - **Memory-mapped I/O** with automatic fallback to standard file I/O
 - **Native AOT** compilation support (no reflection, no dynamic code generation)
@@ -174,6 +174,37 @@ var products = db.Query<Product>()
     .Where(ProductMeta.Category, FieldOp.Equals, "Electronics")
     .ToList();
 ```
+
+### Compound Indexes
+
+Compound indexes optimize queries that filter on multiple fields. Define them at the class level:
+
+```csharp
+[GaldrDbCollection]
+[GaldrDbCompoundIndex("Status", "CreatedDate")]
+[GaldrDbCompoundIndex("Category", "Priority")]
+public class Order
+{
+    public int Id { get; set; }
+    public string Status { get; set; }
+    public DateTime CreatedDate { get; set; }
+    public string Category { get; set; }
+    public int Priority { get; set; }
+}
+
+// Uses the Status_CreatedDate compound index
+var orders = db.Query<Order>()
+    .Where(OrderMeta.Status, FieldOp.Equals, "Pending")
+    .Where(OrderMeta.CreatedDate, FieldOp.GreaterThan, DateTime.Today.AddDays(-7))
+    .ToList();
+
+// Prefix queries also use the compound index
+var pendingOrders = db.Query<Order>()
+    .Where(OrderMeta.Status, FieldOp.Equals, "Pending")
+    .ToList();
+```
+
+Compound indexes follow the leftmost-prefix rule: an index on `(A, B, C)` can serve queries on `A`, `A AND B`, or `A AND B AND C`. The query planner automatically selects the best index based on filter selectivity.
 
 ### Nested Document Queries
 
@@ -373,9 +404,9 @@ GaldrDb is designed for Native AOT compatibility:
 
 ## Testing
 
-- **968 unit and integration tests** covering CRUD, transactions, queries, ACID properties, and recovery scenarios
+- **1015 unit and integration tests** covering CRUD, transactions, queries, ACID properties, and recovery scenarios
 - **63 deterministic simulation tests** for concurrent operations, conflict resolution, and edge cases
-- **1031 total tests** across the test suite
+- **1078 total tests** across the test suite
 - **Performance benchmarks** for single operations, bulk inserts, and query performance
 - Test coverage includes: ACID compliance, WAL recovery, MVCC isolation, query planning, schema management
 

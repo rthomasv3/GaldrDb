@@ -20,7 +20,64 @@ internal sealed class SecondaryIndexScanner
 
     public List<SecondaryIndexEntry> GetEntries(SecondaryIndexSpec indexSpec)
     {
-        return GetEntriesCore(indexSpec.IndexDefinition, indexSpec.IndexFilter);
+        List<SecondaryIndexEntry> result;
+
+        if (indexSpec.IsCompoundScan)
+        {
+            result = GetCompoundEntries(indexSpec);
+        }
+        else
+        {
+            result = GetEntriesCore(indexSpec.IndexDefinition, indexSpec.IndexFilter);
+        }
+
+        return result;
+    }
+
+    private List<SecondaryIndexEntry> GetCompoundEntries(SecondaryIndexSpec indexSpec)
+    {
+        List<SecondaryIndexEntry> entries;
+        IndexDefinition indexDef = indexSpec.IndexDefinition;
+        byte[] startKey = indexSpec.CompoundStartKey;
+        byte[] endKey = indexSpec.CompoundEndKey;
+        SecondaryIndexOperation operation = indexSpec.Operation;
+
+        if (operation == SecondaryIndexOperation.ExactMatch)
+        {
+            entries = _db.SearchSecondaryIndexExact(indexDef, startKey);
+        }
+        else if (operation == SecondaryIndexOperation.PrefixMatch)
+        {
+            entries = _db.SearchSecondaryIndex(indexDef, startKey);
+        }
+        else if (operation == SecondaryIndexOperation.RangeScan)
+        {
+            bool includeStart = true;
+            bool includeEnd = true;
+            if (indexSpec.MatchedFilters != null && indexSpec.MatchedFilters.Count > 0)
+            {
+                IFieldFilter lastFilter = indexSpec.MatchedFilters[indexSpec.MatchedFilters.Count - 1];
+                includeEnd = lastFilter.Operation != FieldOp.LessThan;
+            }
+            entries = _db.SearchSecondaryIndexRange(indexDef, startKey, endKey, includeStart, includeEnd);
+        }
+        else if (operation == SecondaryIndexOperation.PrefixRangeScan)
+        {
+            byte[] prefixKey = indexSpec.CompoundPrefixKey;
+            bool includeStart = true;
+            if (indexSpec.MatchedFilters != null && indexSpec.MatchedFilters.Count > 0)
+            {
+                IFieldFilter lastFilter = indexSpec.MatchedFilters[indexSpec.MatchedFilters.Count - 1];
+                includeStart = lastFilter.Operation != FieldOp.GreaterThan;
+            }
+            entries = _db.SearchSecondaryIndexPrefixRange(indexDef, startKey, prefixKey, includeStart);
+        }
+        else
+        {
+            entries = new List<SecondaryIndexEntry>();
+        }
+
+        return entries;
     }
 
     private List<SecondaryIndexEntry> GetEntriesCore(IndexDefinition indexDef, IFieldFilter filter)

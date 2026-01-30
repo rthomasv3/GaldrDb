@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using GaldrDbEngine.Storage;
 using GaldrJson;
 
 namespace GaldrDbEngine.Query;
@@ -13,6 +12,7 @@ namespace GaldrDbEngine.Query;
 public sealed class GaldrProjectionTypeInfo<TProjection, TSource> : IGaldrProjectionTypeInfo
     where TProjection : IProjectionOf<TSource>
 {
+    private static readonly IReadOnlyList<CompoundIndexInfo> _emptyCompoundIndexes = Array.Empty<CompoundIndexInfo>();
     private readonly Func<TSource, TProjection> _converter;
     private readonly Func<TSource, int> _sourceIdGetter;
 
@@ -30,6 +30,9 @@ public sealed class GaldrProjectionTypeInfo<TProjection, TSource> : IGaldrProjec
 
     /// <inheritdoc/>
     public IReadOnlyList<string> UniqueIndexFieldNames { get; }
+
+    /// <inheritdoc/>
+    public IReadOnlyList<CompoundIndexInfo> CompoundIndexes => _emptyCompoundIndexes;
 
     /// <summary>
     /// Creates a new projection type info instance.

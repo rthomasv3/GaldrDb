@@ -76,6 +76,54 @@ namespace GaldrDbSourceGenerators
             defaultSeverity: DiagnosticSeverity.Error,
             isEnabledByDefault: true);
 
+        private static readonly DiagnosticDescriptor CompoundIndexFieldNotFound = new DiagnosticDescriptor(
+            id: "GALDR030",
+            title: "Compound index field not found",
+            messageFormat: "Field '{0}' in compound index does not exist on type '{1}'",
+            category: "GaldrDb",
+            defaultSeverity: DiagnosticSeverity.Error,
+            isEnabledByDefault: true);
+
+        private static readonly DiagnosticDescriptor CompoundIndexFieldNotIndexable = new DiagnosticDescriptor(
+            id: "GALDR031",
+            title: "Compound index field not indexable",
+            messageFormat: "Field '{0}' in compound index is not an indexable type (Complex types cannot be indexed)",
+            category: "GaldrDb",
+            defaultSeverity: DiagnosticSeverity.Error,
+            isEnabledByDefault: true);
+
+        private static readonly DiagnosticDescriptor CompoundIndexDuplicateField = new DiagnosticDescriptor(
+            id: "GALDR032",
+            title: "Duplicate field in compound index",
+            messageFormat: "Duplicate field '{0}' in compound index",
+            category: "GaldrDb",
+            defaultSeverity: DiagnosticSeverity.Error,
+            isEnabledByDefault: true);
+
+        private static readonly DiagnosticDescriptor CompoundIndexTooManyFields = new DiagnosticDescriptor(
+            id: "GALDR033",
+            title: "Too many fields in compound index",
+            messageFormat: "Compound index exceeds maximum of 8 fields",
+            category: "GaldrDb",
+            defaultSeverity: DiagnosticSeverity.Error,
+            isEnabledByDefault: true);
+
+        private static readonly DiagnosticDescriptor CompoundIndexRedundantSingleField = new DiagnosticDescriptor(
+            id: "GALDR034",
+            title: "Redundant single-field index",
+            messageFormat: "Single-field index on '{0}' is redundant - it is the first field of compound index '{1}'",
+            category: "GaldrDb",
+            defaultSeverity: DiagnosticSeverity.Warning,
+            isEnabledByDefault: true);
+
+        private static readonly DiagnosticDescriptor CompoundIndexTooFewFields = new DiagnosticDescriptor(
+            id: "GALDR035",
+            title: "Too few fields in compound index",
+            messageFormat: "Compound index must have at least 2 fields (use [GaldrDbIndex] for single-field indexes)",
+            category: "GaldrDb",
+            defaultSeverity: DiagnosticSeverity.Error,
+            isEnabledByDefault: true);
+
         public void Initialize(IncrementalGeneratorInitializationContext context)
         {
             // Collect all classes with [GaldrDbCollection] attribute
@@ -233,12 +281,53 @@ namespace GaldrDbSourceGenerators
                     nestedProps));
             }
 
+            // Collect compound index attributes
+            ImmutableArray<CompoundIndexAttributeInfo>.Builder compoundIndexes = ImmutableArray.CreateBuilder<CompoundIndexAttributeInfo>();
+            foreach (AttributeData attr in classSymbol.GetAttributes())
+            {
+                if (attr.AttributeClass?.Name != "GaldrDbCompoundIndexAttribute")
+                {
+                    continue;
+                }
+
+                // Parse field names from constructor argument (params string[])
+                ImmutableArray<string>.Builder fieldNames = ImmutableArray.CreateBuilder<string>();
+                if (attr.ConstructorArguments.Length > 0)
+                {
+                    TypedConstant arg = attr.ConstructorArguments[0];
+                    if (arg.Kind == TypedConstantKind.Array)
+                    {
+                        foreach (TypedConstant element in arg.Values)
+                        {
+                            if (element.Value is string fieldName)
+                            {
+                                fieldNames.Add(fieldName);
+                            }
+                        }
+                    }
+                }
+
+                // Parse Unique named argument
+                bool isUnique = false;
+                foreach (KeyValuePair<string, TypedConstant> namedArg in attr.NamedArguments)
+                {
+                    if (namedArg.Key == "Unique" && namedArg.Value.Value is bool uniqueValue)
+                    {
+                        isUnique = uniqueValue;
+                    }
+                }
+
+                Location location = attr.ApplicationSyntaxReference?.GetSyntax()?.GetLocation() ?? classSymbol.Locations.FirstOrDefault();
+                compoundIndexes.Add(new CompoundIndexAttributeInfo(fieldNames.ToImmutable(), isUnique, location));
+            }
+
             return new ClassInfo(
                 classSymbol.Name,
                 classSymbol.ContainingNamespace?.ToDisplayString() ?? "",
                 GetFullyQualifiedName(classSymbol),
                 collectionOverride,
                 properties.ToImmutable(),
+                compoundIndexes.ToImmutable(),
                 classSymbol.Locations.FirstOrDefault(),
                 IdValidationResult.Valid);
         }
@@ -697,6 +786,9 @@ namespace GaldrDbSourceGenerators
                                 classInfo.ClassName));
                             break;
                     }
+
+                    // Validate compound indexes for this class
+                    ValidateCompoundIndexes(context, classInfo);
                 }
             }
 
@@ -958,6 +1050,45 @@ namespace GaldrDbSourceGenerators
                     }
                     isb.AppendLine();
 
+                    // CompoundIndexes property
+                    isb.AppendLine("/// <summary>");
+                    isb.AppendLine("/// List of compound index definitions for multi-field query optimization.");
+                    isb.AppendLine("/// </summary>");
+                    if (classInfo.CompoundIndexes.IsDefaultOrEmpty || classInfo.CompoundIndexes.Length == 0)
+                    {
+                        isb.AppendLine("public static IReadOnlyList<CompoundIndexInfo> CompoundIndexes { get; } = Array.Empty<CompoundIndexInfo>();");
+                    }
+                    else
+                    {
+                        isb.AppendLine("public static IReadOnlyList<CompoundIndexInfo> CompoundIndexes { get; } = new CompoundIndexInfo[]");
+                        isb.AppendLine("{");
+                        using (isb.Indent())
+                        {
+                            for (int idx = 0; idx < classInfo.CompoundIndexes.Length; idx++)
+                            {
+                                CompoundIndexAttributeInfo compound = classInfo.CompoundIndexes[idx];
+                                string indexName = string.Join("_", compound.FieldNames);
+                                string uniqueStr = compound.IsUnique ? "true" : "false";
+
+                                isb.AppendLine($"new CompoundIndexInfo(\"{indexName}\", new CompoundIndexField[]");
+                                isb.AppendLine("{");
+                                using (isb.Indent())
+                                {
+                                    foreach (string fieldName in compound.FieldNames)
+                                    {
+                                        PropertyInfo prop = classInfo.Properties.FirstOrDefault(p => p.Name == fieldName);
+                                        string fieldTypeEnum = prop != null ? prop.FieldType.FieldTypeEnum : "GaldrFieldType.String";
+                                        isb.AppendLine($"new CompoundIndexField(\"{fieldName}\", {fieldTypeEnum}),");
+                                    }
+                                }
+                                string trailComma = idx < classInfo.CompoundIndexes.Length - 1 ? "," : "";
+                                isb.AppendLine($"}}, {uniqueStr}){trailComma}");
+                            }
+                        }
+                        isb.AppendLine("};");
+                    }
+                    isb.AppendLine();
+
                     // GaldrField properties for each property
                     foreach (PropertyInfo prop in classInfo.Properties)
                     {
@@ -1065,6 +1196,7 @@ namespace GaldrDbSourceGenerators
                         isb.AppendLine("collectionName: CollectionName,");
                         isb.AppendLine("indexedFieldNames: IndexedFieldNames,");
                         isb.AppendLine("uniqueIndexFieldNames: UniqueIndexFieldNames,");
+                        isb.AppendLine("compoundIndexes: CompoundIndexes,");
                         isb.AppendLine("idSetter: SetId,");
                         isb.AppendLine("idGetter: GetId,");
                         isb.AppendLine("extractIndexedFields: ExtractIndexedFields);");
@@ -1453,6 +1585,113 @@ namespace GaldrDbSourceGenerators
             }
 
             return isb.ToString();
+        }
+
+        private static void ValidateCompoundIndexes(SourceProductionContext context, ClassInfo classInfo)
+        {
+            if (classInfo.CompoundIndexes.IsDefaultOrEmpty)
+            {
+                return;
+            }
+
+            // Build property lookup for validation
+            Dictionary<string, PropertyInfo> propertyMap = new Dictionary<string, PropertyInfo>();
+            foreach (PropertyInfo prop in classInfo.Properties)
+            {
+                propertyMap[prop.Name] = prop;
+            }
+
+            // Collect first fields of compound indexes for redundancy checking
+            HashSet<string> compoundFirstFields = new HashSet<string>();
+            foreach (CompoundIndexAttributeInfo compoundIndex in classInfo.CompoundIndexes)
+            {
+                if (compoundIndex.FieldNames.Length > 0)
+                {
+                    compoundFirstFields.Add(compoundIndex.FieldNames[0]);
+                }
+            }
+
+            foreach (CompoundIndexAttributeInfo compoundIndex in classInfo.CompoundIndexes)
+            {
+                // Validate field count
+                if (compoundIndex.FieldNames.Length < 2)
+                {
+                    context.ReportDiagnostic(Diagnostic.Create(
+                        CompoundIndexTooFewFields,
+                        compoundIndex.Location));
+                    continue;
+                }
+
+                if (compoundIndex.FieldNames.Length > 8)
+                {
+                    context.ReportDiagnostic(Diagnostic.Create(
+                        CompoundIndexTooManyFields,
+                        compoundIndex.Location));
+                    continue;
+                }
+
+                // Validate each field
+                HashSet<string> seenFields = new HashSet<string>();
+                foreach (string fieldName in compoundIndex.FieldNames)
+                {
+                    // Check for duplicate
+                    if (!seenFields.Add(fieldName))
+                    {
+                        context.ReportDiagnostic(Diagnostic.Create(
+                            CompoundIndexDuplicateField,
+                            compoundIndex.Location,
+                            fieldName));
+                        continue;
+                    }
+
+                    // Check field exists
+                    if (!propertyMap.TryGetValue(fieldName, out PropertyInfo prop))
+                    {
+                        context.ReportDiagnostic(Diagnostic.Create(
+                            CompoundIndexFieldNotFound,
+                            compoundIndex.Location,
+                            fieldName,
+                            classInfo.ClassName));
+                        continue;
+                    }
+
+                    // Check field is indexable
+                    if (prop.FieldType.FieldTypeEnum == "GaldrFieldType.Complex")
+                    {
+                        context.ReportDiagnostic(Diagnostic.Create(
+                            CompoundIndexFieldNotIndexable,
+                            compoundIndex.Location,
+                            fieldName));
+                    }
+                }
+            }
+
+            // Check for redundant single-field indexes
+            foreach (PropertyInfo prop in classInfo.Properties)
+            {
+                if (prop.IsIndexed && compoundFirstFields.Contains(prop.Name))
+                {
+                    // Find the compound index name
+                    string compoundIndexName = null;
+                    foreach (CompoundIndexAttributeInfo compoundIndex in classInfo.CompoundIndexes)
+                    {
+                        if (compoundIndex.FieldNames.Length > 0 && compoundIndex.FieldNames[0] == prop.Name)
+                        {
+                            compoundIndexName = string.Join("_", compoundIndex.FieldNames);
+                            break;
+                        }
+                    }
+
+                    if (compoundIndexName != null)
+                    {
+                        context.ReportDiagnostic(Diagnostic.Create(
+                            CompoundIndexRedundantSingleField,
+                            classInfo.DiagnosticLocation,
+                            prop.Name,
+                            compoundIndexName));
+                    }
+                }
+            }
         }
     }
 }
