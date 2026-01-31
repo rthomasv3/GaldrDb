@@ -1,0 +1,79 @@
+name: Release Engine
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_suffix:
+        description: 'Pre-release suffix (e.g., rc1, beta2). Leave empty for stable release.'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET 8
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+
+    - name: Setup .NET 9
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+
+    - name: Setup .NET 10
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build -c Release --no-restore
+
+    - name: Test
+      run: dotnet test -c Release --no-build --verbosity normal
+
+    - name: Determine version
+      id: version
+      shell: pwsh
+      run: |
+        $prefix = Select-String -Path "Directory.Build.props" -Pattern "<VersionPrefix>(.*)</VersionPrefix>" | ForEach-Object { $_.Matches.Groups[1].Value }
+        $suffix = "${{ inputs.version_suffix }}"
+        if ($suffix) {
+          $version = "$prefix-$suffix"
+        } else {
+          $version = $prefix
+        }
+        echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+        echo "Version: $version"
+
+    - name: Pack GaldrDbEngine
+      run: dotnet pack GaldrDbEngine/GaldrDbEngine.csproj -c Release --no-build --output ./packages ${{ inputs.version_suffix && format('/p:VersionSuffix={0}', inputs.version_suffix) || '' }}
+
+    - name: Pack GaldrDbAspNetCore
+      run: dotnet pack GaldrDbAspNetCore/GaldrDbAspNetCore.csproj -c Release --no-build --output ./packages ${{ inputs.version_suffix && format('/p:VersionSuffix={0}', inputs.version_suffix) || '' }}
+
+    - name: List generated packages
+      run: dir ./packages
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: engine-v${{ steps.version.outputs.VERSION }}
+        name: GaldrDb Engine v${{ steps.version.outputs.VERSION }}
+        draft: true
+        prerelease: ${{ inputs.version_suffix != '' }}
+        generate_release_notes: true
+        make_latest: ${{ inputs.version_suffix == '' }}
+        files: |
+          ./packages/*.nupkg
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

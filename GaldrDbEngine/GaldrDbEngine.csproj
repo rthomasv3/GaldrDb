@@ -4,38 +4,19 @@
         <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
         <RootNamespace>GaldrDbEngine</RootNamespace>
         <IsPackable>true</IsPackable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <Description>AOT-native single file database for .NET</Description>
-        <Copyright>Copyright © Robert Thomas 2026</Copyright>
-        <VersionPrefix>1.0.0-dev1</VersionPrefix>
-        <Authors>Robert Thomas</Authors>
-        <RepositoryUrl>https://github.com/rthomasv3/GaldrDb</RepositoryUrl>
-        <GenerateDocumentationFile>True</GenerateDocumentationFile>
-        <PackageReadmeFile>README.md</PackageReadmeFile>
-        <PackageLicenseFile>LICENSE</PackageLicenseFile>
-        <PackageIcon>wizard-round-128.png</PackageIcon>
     </PropertyGroup>
-    
+
     <ItemGroup>
       <PackageReference Include="GaldrJson" Version="1.1.1" />
-      <PackageReference Include="System.IO.Hashing" Version="9.0.0" />
+      <PackageReference Include="System.IO.Hashing" Version="10.0.2" />
     </ItemGroup>
 
     <ItemGroup>
       <InternalsVisibleTo Include="GaldrDb.UnitTests" />
       <InternalsVisibleTo Include="GaldrDb.SimulationTests" />
       <InternalsVisibleTo Include="GaldrDbConsole" />
-    </ItemGroup>
-
-    <ItemGroup>
-        <None Include="..\README.md" Pack="true" PackagePath="" />
-    </ItemGroup>
-
-    <ItemGroup>
-        <None Include="..\LICENSE" Pack="true" PackagePath="" />
-    </ItemGroup>
-
-    <ItemGroup>
-        <None Include="..\wizard-round-128.png" Pack="true" PackagePath="" />
     </ItemGroup>
 
     <ItemGroup>
