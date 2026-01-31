@@ -143,6 +143,56 @@ var explanation = db.Query<Person>()
     .Explain();
 ```
 
+### ASP.NET Core Integration
+
+Install the `GaldrDbAspNetCore` package for dependency injection support:
+
+```
+dotnet add package GaldrDbAspNetCore
+```
+
+**Basic setup (single database):**
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddGaldrDb(options =>
+{
+    options.FilePath = "app.db";
+    options.OpenMode = GaldrDbOpenMode.OpenOrCreate;
+});
+
+var app = builder.Build();
+
+// Inject IGaldrDb directly
+app.MapGet("/users/{id}", (IGaldrDb db, int id) =>
+{
+    return db.GetById<User>(id);
+});
+```
+
+**Multiple databases (named instances):**
+
+```csharp
+// Register named databases
+builder.Services.AddGaldrDb(options =>
+{
+    options.FilePath = "users.db";
+});
+
+builder.Services.AddGaldrDb("orders", options =>
+{
+    options.FilePath = "orders.db";
+});
+
+// Access named instances via IGaldrDbFactory
+app.MapGet("/orders/{id}", (IGaldrDbFactory factory, int id) =>
+{
+    IGaldrDb db = factory.Get("orders");
+    return db.GetById<Order>(id);
+});
+```
+
 ## Advanced Features
 
 ### Transactions
