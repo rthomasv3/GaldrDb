@@ -100,10 +100,19 @@ public class GaldrDb : IGaldrDb
     public static GaldrDb Create(string filePath, GaldrDbOptions options)
     {
         GaldrDb db = new GaldrDb(filePath, options);
-        db.ValidateOptions();
-        db.InitializeFile();
-        db.InitializePools();
-        return db;
+
+        try
+        {
+            db.ValidateOptions();
+            db.InitializeFile();
+            db.InitializePools();
+            return db;
+        }
+        catch
+        {
+            db.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
@@ -156,10 +165,18 @@ public class GaldrDb : IGaldrDb
         }
 
         GaldrDb db = new GaldrDb(filePath, options);
-        db.OpenAndValidateFile();
-        db.InitializePools();
 
-        return db;
+        try
+        {
+            db.OpenAndValidateFile();
+            db.InitializePools();
+            return db;
+        }
+        catch
+        {
+            db.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
