@@ -445,6 +445,52 @@ var options = new GaldrDbOptions
 - **WAL write-through**: Committed data is flushed before returning (configurable)
 - **Async support**: All CRUD and query operations have async variants (`InsertAsync`, `ToListAsync`, etc.)
 
+### Benchmarks
+
+These are the current benchmark results from `SingleOperationAotBenchmarks` and `SingleOperationBenchmarks`. The results are of the current in development build, with future optimizations planned. Additional benchmarks with more advanced queries will be added at a later date.
+
+#### Setup
+
+BenchmarkDotNet v0.15.8, Linux Fedora Linux 43 (Workstation Edition)
+AMD Ryzen AI 7 PRO 350 w/ Radeon 860M 0.62GHz, 1 CPU, 16 logical and 8 physical cores
+.NET SDK 10.0.101
+
+InvocationCount=16384  IterationCount=20  WarmupCount=3
+
+#### SingleOperationAotBenchmarks
+
+Native AOT comparison between GaldrDb and SQLite ADO.NET. Both use WAL mode with equivalent durability guarantees (synchronous=FULL). GaldrDb shows strong read and delete performance; write performance is an area of active optimization.
+
+| Method                  | Mean        | Error     | StdDev    | Rank | Gen0   | Gen1   | Allocated |
+|------------------------ |------------:|----------:|----------:|-----:|-------:|-------:|----------:|
+| 'GaldrDb Delete'        |    272.9 ns |  11.28 ns |  12.99 ns |    1 | 0.0610 |      - |     713 B |
+| 'GaldrDb Read'          |  1,795.1 ns |  79.36 ns |  84.92 ns |    2 | 0.1221 |      - |    1374 B |
+| 'SQLite ADO.NET Delete' |  2,476.2 ns |  19.04 ns |  20.37 ns |    3 | 0.0610 |      - |     768 B |
+| 'SQLite ADO.NET Update' |  3,146.7 ns |  15.25 ns |  16.95 ns |    4 | 0.1221 |      - |    1200 B |
+| 'SQLite ADO.NET Read'   |  4,695.1 ns |  32.25 ns |  34.51 ns |    5 | 0.1221 |      - |    1280 B |
+| 'SQLite ADO.NET Insert' | 10,076.2 ns | 302.63 ns | 348.51 ns |    6 | 0.2441 | 0.0610 |    2248 B |
+| 'GaldrDb Update'        | 20,401.6 ns | 157.08 ns | 174.59 ns |    7 | 0.4272 | 0.0610 |    3982 B |
+| 'GaldrDb Insert'        | 23,704.4 ns | 552.45 ns | 567.32 ns |    8 | 0.4272 | 0.1221 |    3935 B |
+
+#### SingleOperationBenchmarks
+
+JIT comparison including EF Core. GaldrDb outperforms EF Core across all operations while providing similar developer ergonomics. Note that EF Core Insert has significant per-operation overhead from change tracking and context management.
+
+| Method                  | Mean           | Error        | StdDev       | Median         | Rank | Gen0     | Gen1    | Gen2   | Allocated |
+|------------------------ |---------------:|-------------:|-------------:|---------------:|-----:|---------:|--------:|-------:|----------:|
+| 'GaldrDb Delete'        |       701.2 ns |    174.53 ns |    179.23 ns |       786.3 ns |    1 |   0.0610 |       - |      - |     832 B |
+| 'GaldrDb Read'          |     1,625.8 ns |     85.68 ns |     84.15 ns |     1,596.6 ns |    2 |   0.1221 |       - |      - |    1374 B |
+| 'SQLite ADO.NET Delete' |     2,781.5 ns |    414.43 ns |    477.26 ns |     2,450.1 ns |    3 |   0.0610 |       - |      - |     768 B |
+| 'SQLite ADO.NET Update' |     3,342.9 ns |     61.09 ns |     62.73 ns |     3,334.6 ns |    4 |   0.1221 |       - |      - |    1200 B |
+| 'SQLite ADO.NET Read'   |     4,786.6 ns |     41.29 ns |     38.62 ns |     4,779.8 ns |    5 |   0.1221 |       - |      - |    1296 B |
+| 'SQLite ADO.NET Insert' |     9,872.5 ns |    123.61 ns |    121.40 ns |     9,872.1 ns |    6 |   0.2441 |  0.0610 |      - |    2264 B |
+| 'SQLite EF Core Delete' |    16,673.2 ns |    160.97 ns |    172.24 ns |    16,616.0 ns |    7 |   1.4648 |  0.4883 |      - |   12520 B |
+| 'GaldrDb Update'        |    18,957.7 ns |    259.52 ns |    288.46 ns |    18,943.1 ns |    8 |   0.4272 |  0.0610 |      - |    4078 B |
+| 'SQLite EF Core Read'   |    20,643.3 ns |    341.67 ns |    393.47 ns |    20,544.7 ns |    9 |   1.4648 |  0.4883 |      - |   12528 B |
+| 'SQLite EF Core Update' |    20,906.7 ns |    201.73 ns |    215.85 ns |    20,906.7 ns |    9 |   1.8311 |  0.6104 |      - |   15704 B |
+| 'GaldrDb Insert'        |    23,214.8 ns |    448.47 ns |    498.47 ns |    23,177.1 ns |   10 |   0.4272 |  0.1221 |      - |    4055 B |
+| 'SQLite EF Core Insert' | 1,380,911.3 ns | 30,631.48 ns | 34,046.81 ns | 1,376,880.2 ns |   11 | 366.5161 | 19.8975 | 8.7891 | 3031581 B |
+
 ## Native AOT
 
 GaldrDb is designed for Native AOT compatibility:

@@ -43,7 +43,7 @@ public class BenchmarkDbContext : DbContext
 
     public void EnableWalMode()
     {
-        Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
+        Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

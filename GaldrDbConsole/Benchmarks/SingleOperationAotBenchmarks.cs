@@ -14,8 +14,8 @@ namespace GaldrDbConsole.Benchmarks;
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
 [RankColumn]
-// [SimpleJob(RuntimeMoniker.Net10_0, warmupCount: 3, iterationCount: 25, invocationCount: 16384)]
-[SimpleJob(RuntimeMoniker.NativeAot10_0, warmupCount: 3, iterationCount: 25, invocationCount: 16384)]
+// [SimpleJob(RuntimeMoniker.Net10_0, warmupCount: 3, iterationCount: 20, invocationCount: 16384)]
+[SimpleJob(RuntimeMoniker.NativeAot10_0, warmupCount: 3, iterationCount: 20, invocationCount: 16384)]
 public class SingleOperationAotBenchmarks
 {
     private string _testDirectory;
@@ -102,9 +102,10 @@ public class SingleOperationAotBenchmarks
         _sqliteConnection = new SqliteConnection(connectionString);
         _sqliteConnection.Open();
 
+        // Enable WAL mode and full synchronous for fair comparison (GaldrDb fsyncs every commit)
         using (SqliteCommand walCmd = _sqliteConnection.CreateCommand())
         {
-            walCmd.CommandText = "PRAGMA journal_mode=WAL;";
+            walCmd.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;";
             walCmd.ExecuteNonQuery();
         }
 

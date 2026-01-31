@@ -14,7 +14,7 @@ namespace GaldrDbConsole.Benchmarks;
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
 [RankColumn]
-[SimpleJob(warmupCount: 3, iterationCount: 15)]
+[SimpleJob(warmupCount: 3, iterationCount: 20, invocationCount: 16384)]
 public class SingleOperationBenchmarks
 {
     private string _testDirectory;
@@ -62,10 +62,10 @@ public class SingleOperationBenchmarks
         _sqliteConnection = new SqliteConnection(connectionString);
         _sqliteConnection.Open();
 
-        // Enable WAL mode for fair comparison
+        // Enable WAL mode and full synchronous for fair comparison (GaldrDb fsyncs every commit)
         using (SqliteCommand walCmd = _sqliteConnection.CreateCommand())
         {
-            walCmd.CommandText = "PRAGMA journal_mode=WAL;";
+            walCmd.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;";
             walCmd.ExecuteNonQuery();
         }
 
@@ -177,11 +177,17 @@ public class SingleOperationBenchmarks
             Address = "456 Oak Ave",
             Phone = "555-5678"
         };
-    
+
         _efContext.People.Add(person);
         _efContext.SaveChanges();
-    
+
         return person.Id;
+    }
+
+    [IterationCleanup(Target = nameof(SqliteEf_Insert))]
+    public void CleanupEfInsert()
+    {
+        _efContext.ChangeTracker.Clear();
     }
 
     #endregion
@@ -244,11 +250,8 @@ public class SingleOperationBenchmarks
     public bool GaldrDb_Update()
     {
         return _galdrDb.UpdateById<BenchmarkPerson>(_existingId)
-            .Set(BenchmarkPersonMeta.Name, "Updated Person")
             .Set(BenchmarkPersonMeta.Age, 31)
             .Set(BenchmarkPersonMeta.Email, "updated@example.com")
-            .Set(BenchmarkPersonMeta.Address, "789 Pine Rd")
-            .Set(BenchmarkPersonMeta.Phone, "555-9999")
             .Execute();
     }
 
@@ -259,19 +262,15 @@ public class SingleOperationBenchmarks
         using (SqliteCommand cmd = _sqliteConnection.CreateCommand())
         {
             cmd.CommandText = @"
-                UPDATE Person 
-                SET Name = @name, Age = @age, Email = @email, Address = @address, Phone = @phone
+                UPDATE Person
+                SET Age = @age, Email = @email
                 WHERE Id = @id
             ";
             cmd.Parameters.AddWithValue("@id", 1);
-            cmd.Parameters.AddWithValue("@name", "Updated Person");
             cmd.Parameters.AddWithValue("@age", 31);
             cmd.Parameters.AddWithValue("@email", "updated@example.com");
-            cmd.Parameters.AddWithValue("@address", "789 Pine Rd");
-            cmd.Parameters.AddWithValue("@phone", "555-9999");
-    
-            int rowsAffected = cmd.ExecuteNonQuery();
-            return rowsAffected;
+
+            return cmd.ExecuteNonQuery();
         }
     }
     
@@ -280,16 +279,11 @@ public class SingleOperationBenchmarks
     public int SqliteEf_Update()
     {
         // Use ExecuteUpdate for direct SQL update without loading/tracking entity
-        int result = _efContext.People
+        return _efContext.People
             .Where(p => p.Id == 1)
             .ExecuteUpdate(setters => setters
-                .SetProperty(p => p.Name, "Updated Person")
                 .SetProperty(p => p.Age, 31)
-                .SetProperty(p => p.Email, "updated@example.com")
-                .SetProperty(p => p.Address, "789 Pine Rd")
-                .SetProperty(p => p.Phone, "555-9999"));
-    
-        return result;
+                .SetProperty(p => p.Email, "updated@example.com"));
     }
 
     #endregion
