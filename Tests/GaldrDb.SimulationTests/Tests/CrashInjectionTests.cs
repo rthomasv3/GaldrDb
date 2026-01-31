@@ -33,7 +33,7 @@ public class CrashInjectionTests
         byte[] originalHash;
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create("crash_test.db", options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 TestDocument doc = TestDocument.Generate(rng, 200);
                 insertedId = tx.Insert(doc);
@@ -58,7 +58,7 @@ public class CrashInjectionTests
 
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Open("crash_test.db", options))
         {
-            using (Transaction tx = db.BeginReadOnlyTransaction())
+            using (ITransaction tx = db.BeginReadOnlyTransaction())
             {
                 TestDocument recovered = tx.GetById<TestDocument>(insertedId);
                 Assert.IsNotNull(recovered, "Document should survive crash after commit");
@@ -95,7 +95,7 @@ public class CrashInjectionTests
 
         // First, commit some data to establish a baseline
         int committedId;
-        using (Transaction tx = db.BeginTransaction())
+        using (ITransaction tx = db.BeginTransaction())
         {
             TestDocument doc = TestDocument.Generate(rng, 200);
             doc.Name = "Committed";
@@ -104,7 +104,7 @@ public class CrashInjectionTests
         }
 
         // Start a transaction but don't commit
-        Transaction uncommittedTx = db.BeginTransaction();
+        ITransaction uncommittedTx = db.BeginTransaction();
         TestDocument uncommittedDoc = TestDocument.Generate(rng, 200);
         uncommittedDoc.Name = "Uncommitted";
         int uncommittedId = uncommittedTx.Insert(uncommittedDoc);
@@ -127,7 +127,7 @@ public class CrashInjectionTests
 
         using (GaldrDbEngine.GaldrDb db2 = GaldrDbEngine.GaldrDb.Open("crash_test2.db", options))
         {
-            using (Transaction tx = db2.BeginReadOnlyTransaction())
+            using (ITransaction tx = db2.BeginReadOnlyTransaction())
             {
                 // Committed document should exist
                 TestDocument committed = tx.GetById<TestDocument>(committedId);

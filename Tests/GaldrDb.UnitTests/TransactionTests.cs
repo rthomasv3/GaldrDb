@@ -173,7 +173,7 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Assert.IsTrue(tx.TxId.IsValid);
                 Assert.AreEqual(TransactionState.Active, tx.State);
@@ -190,7 +190,7 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginReadOnlyTransaction())
+            using (ITransaction tx = db.BeginReadOnlyTransaction())
             {
                 Assert.IsTrue(tx.TxId.IsValid);
                 Assert.AreEqual(TransactionState.Active, tx.State);
@@ -207,7 +207,7 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Commit();
 
@@ -224,7 +224,7 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Rollback();
 
@@ -242,7 +242,7 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            Transaction tx = db.BeginTransaction();
+            ITransaction tx = db.BeginTransaction();
             tx.Dispose();
             stateAfterDispose = tx.State;
         }
@@ -262,7 +262,7 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "Test", Age = 30, Email = "test@example.com" };
                 int id = tx.Insert(person);
@@ -283,7 +283,7 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "Test", Age = 30, Email = "test@example.com" };
                 int id = tx.Insert(person);
@@ -310,7 +310,7 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "Test", Age = 30, Email = "test@example.com" };
                 insertedId = tx.Insert(person);
@@ -334,7 +334,7 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "Test", Age = 30, Email = "test@example.com" };
                 insertedId = tx.Insert(person);
@@ -364,7 +364,7 @@ public class TransactionTests
             insertedId = db.Insert(person);
 
             // Update in transaction
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person updated = new Person { Id = insertedId, Name = "Updated", Age = 30, Email = "updated@example.com" };
                 bool result = tx.Replace(updated);
@@ -396,7 +396,7 @@ public class TransactionTests
             insertedId = db.Insert(person);
 
             // Delete in transaction
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 bool result = tx.DeleteById<Person>(insertedId);
 
@@ -427,7 +427,7 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person person1 = new Person { Name = "Person1", Age = 25, Email = "p1@example.com" };
                 id1 = tx.Insert(person1);
@@ -468,7 +468,7 @@ public class TransactionTests
         {
             bool exceptionThrown = false;
 
-            using (Transaction tx = db.BeginReadOnlyTransaction())
+            using (ITransaction tx = db.BeginReadOnlyTransaction())
             {
                 try
                 {
@@ -498,7 +498,7 @@ public class TransactionTests
             Person person = new Person { Name = "Readable", Age = 25, Email = "read@example.com" };
             insertedId = db.Insert(person);
 
-            using (Transaction tx = db.BeginReadOnlyTransaction())
+            using (ITransaction tx = db.BeginReadOnlyTransaction())
             {
                 Person retrieved = tx.GetById<Person>(insertedId);
 
@@ -526,7 +526,7 @@ public class TransactionTests
             Person existing = new Person { Name = "Existing", Age = 25, Email = "existing@example.com" };
             db.Insert(existing);
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 // Insert within transaction
                 Person newPerson = new Person { Name = "New", Age = 30, Email = "new@example.com" };
@@ -557,7 +557,7 @@ public class TransactionTests
             Person person = new Person { Name = "Original", Age = 25, Email = "original@example.com" };
             int id = db.Insert(person);
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 // Update within transaction
                 Person updated = new Person { Id = id, Name = "Updated", Age = 30, Email = "updated@example.com" };
@@ -589,7 +589,7 @@ public class TransactionTests
             db.Insert(person1);
             int deleteId = db.Insert(person2);
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 // Delete within transaction
                 tx.DeleteById<Person>(deleteId);
@@ -613,7 +613,7 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
                 tx.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
@@ -646,7 +646,7 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "Persistent", Age = 40, Email = "persist@example.com" };
                 insertedId = tx.Insert(person);
@@ -677,7 +677,7 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "AsyncTest", Age = 30, Email = "async@example.com" };
                 int id = await tx.InsertAsync(person);
@@ -698,7 +698,7 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "AsyncRead", Age = 25, Email = "asyncread@example.com" };
                 int id = await tx.InsertAsync(person);
@@ -724,7 +724,7 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "AsyncCommit", Age = 35, Email = "asynccommit@example.com" };
                 insertedId = await tx.InsertAsync(person);
@@ -751,7 +751,7 @@ public class TransactionTests
             Person person = new Person { Name = "OriginalAsync", Age = 25, Email = "originalasync@example.com" };
             insertedId = db.Insert(person);
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person updated = new Person { Id = insertedId, Name = "UpdatedAsync", Age = 30, Email = "updatedasync@example.com" };
                 bool result = await tx.ReplaceAsync(updated);
@@ -780,7 +780,7 @@ public class TransactionTests
             Person person = new Person { Name = "ToDeleteAsync", Age = 25, Email = "deleteasync@example.com" };
             insertedId = db.Insert(person);
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 bool result = await tx.DeleteByIdAsync<Person>(insertedId);
 
@@ -809,7 +809,7 @@ public class TransactionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person person1 = new Person { Name = "AsyncPerson1", Age = 25, Email = "ap1@example.com" };
                 id1 = await tx.InsertAsync(person1);

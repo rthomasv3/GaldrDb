@@ -36,7 +36,7 @@ public static class AllocationTracingTest
                 // Warmup - run enough iterations to stabilize
                 for (int i = 0; i < 200; i++)
                 {
-                    using (Transaction tx = db.BeginTransaction())
+                    using (ITransaction tx = db.BeginTransaction())
                     {
                         tx.UpdateById<BenchmarkPerson>(id)
                             .Set(BenchmarkPersonMeta.Age, 31 + (i % 10))
@@ -53,11 +53,11 @@ public static class AllocationTracingTest
                 AllocTracer.Enabled = true;
                 AllocTracer.Reset();
 
-                using (Transaction tx = db.BeginTransaction())
+                using (ITransaction tx = db.BeginTransaction())
                 {
                     AllocTracer.Checkpoint("BeginTx");
 
-                    UpdateBuilder<BenchmarkPerson> builder = tx.UpdateById<BenchmarkPerson>(id);
+                    IUpdateBuilder<BenchmarkPerson> builder = tx.UpdateById<BenchmarkPerson>(id);
                     AllocTracer.Checkpoint("UpdateById");
 
                     builder.Set(BenchmarkPersonMeta.Age, 42);
@@ -94,14 +94,14 @@ public static class AllocationTracingTest
         // Additional warmup for this specific test
         for (int i = 0; i < 50; i++)
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.UpdateById<BenchmarkPerson>(id)
                     .Set(BenchmarkPersonMeta.Age, 31 + (i % 10))
                     .Execute();
                 tx.Commit();
             }
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 BenchmarkPerson person = tx.GetById<BenchmarkPerson>(id);
                 person.Age = 31 + (i % 10);
@@ -121,7 +121,7 @@ public static class AllocationTracingTest
         for (int i = 0; i < iterations; i++)
         {
             long before = GC.GetAllocatedBytesForCurrentThread();
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.UpdateById<BenchmarkPerson>(id)
                     .Set(BenchmarkPersonMeta.Age, 31 + (i % 10))
@@ -135,7 +135,7 @@ public static class AllocationTracingTest
         for (int i = 0; i < iterations; i++)
         {
             long before = GC.GetAllocatedBytesForCurrentThread();
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 BenchmarkPerson person = tx.GetById<BenchmarkPerson>(id);
                 person.Age = 31 + (i % 10);

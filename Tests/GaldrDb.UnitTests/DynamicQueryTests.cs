@@ -994,7 +994,7 @@ public class DynamicQueryTests
         {
             db.Insert(new Person { Name = "Test", Age = 25, Email = "test@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 JsonDocument doc = tx.GetByIdDynamic("Person", 1);
 
@@ -1012,7 +1012,7 @@ public class DynamicQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 int id = tx.InsertDynamic("Person", "{\"Name\":\"Uncommitted\",\"Age\":30,\"Email\":\"uncommitted@example.com\"}");
 
@@ -1034,7 +1034,7 @@ public class DynamicQueryTests
         {
             db.InsertDynamic("Person", "{\"Name\":\"Committed\",\"Age\":25,\"Email\":\"committed@example.com\"}");
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.InsertDynamic("Person", "{\"Name\":\"Uncommitted\",\"Age\":30,\"Email\":\"uncommitted@example.com\"}");
 
@@ -1056,7 +1056,7 @@ public class DynamicQueryTests
             db.InsertDynamic("Person", "{\"Name\":\"Alice\",\"Age\":25,\"Email\":\"alice@example.com\"}");
             db.InsertDynamic("Person", "{\"Name\":\"Bob\",\"Age\":30,\"Email\":\"bob@example.com\"}");
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.DeleteByIdDynamic("Person", 1);
 
@@ -1078,7 +1078,7 @@ public class DynamicQueryTests
         {
             db.InsertDynamic("Person", "{\"Name\":\"Original\",\"Age\":25,\"Email\":\"original@example.com\"}");
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.ReplaceDynamic("Person", 1, "{\"Id\":1,\"Name\":\"Updated\",\"Age\":30,\"Email\":\"updated@example.com\"}");
 
@@ -1104,7 +1104,7 @@ public class DynamicQueryTests
             db.InsertDynamic("Person", "{\"Name\":\"Alice\",\"Age\":25,\"Email\":\"alice@example.com\"}");
             db.InsertDynamic("Person", "{\"Name\":\"Bob\",\"Age\":30,\"Email\":\"bob@example.com\"}");
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.InsertDynamic("Person", "{\"Name\":\"Charlie\",\"Age\":35,\"Email\":\"charlie@example.com\"}");
                 tx.InsertDynamic("Person", "{\"Name\":\"Diana\",\"Age\":28,\"Email\":\"diana@example.com\"}");
@@ -1128,7 +1128,7 @@ public class DynamicQueryTests
             db.InsertDynamic("Person", "{\"Name\":\"Bob\",\"Age\":30,\"Email\":\"bob@example.com\"}");
             db.InsertDynamic("Person", "{\"Name\":\"Charlie\",\"Age\":35,\"Email\":\"charlie@example.com\"}");
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.DeleteByIdDynamic("Person", 1);
 
@@ -1147,7 +1147,7 @@ public class DynamicQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.InsertDynamic("Person", "{\"Name\":\"Committed\",\"Age\":25,\"Email\":\"committed@example.com\"}");
                 tx.Commit();
@@ -1168,7 +1168,7 @@ public class DynamicQueryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.InsertDynamic("Person", "{\"Name\":\"RolledBack\",\"Age\":25,\"Email\":\"rolledback@example.com\"}");
             }
@@ -1383,7 +1383,7 @@ public class DynamicQueryTests
         {
             db.InsertDynamic("Person", "{\"Name\":\"Alice\",\"Age\":25,\"Email\":\"alice@example.com\"}");
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 bool result = tx.UpdateByIdDynamic("Person", 1)
                     .Set("Age", 30)
@@ -1407,7 +1407,7 @@ public class DynamicQueryTests
         {
             db.InsertDynamic("Person", "{\"Name\":\"Alice\",\"Age\":25,\"Email\":\"alice@example.com\"}");
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.UpdateByIdDynamic("Person", 1)
                     .Set("Age", 30)
@@ -1431,7 +1431,7 @@ public class DynamicQueryTests
         {
             db.InsertDynamic("Person", "{\"Name\":\"Alice\",\"Age\":25,\"Email\":\"alice@example.com\"}");
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.UpdateByIdDynamic("Person", 1)
                     .Set("Age", 30)
@@ -1621,7 +1621,7 @@ public class DynamicQueryTests
         {
             db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.InsertDynamic("Person", "{\"Name\":\"Bob\",\"Age\":50,\"Email\":\"bob@example.com\"}");
 
@@ -1644,7 +1644,7 @@ public class DynamicQueryTests
         {
             db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.DeleteById<Person>(1);
 
@@ -1665,7 +1665,7 @@ public class DynamicQueryTests
         {
             db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.UpdateByIdDynamic("Person", 1)
                     .Set("Age", 50)

@@ -199,7 +199,7 @@ public class WalRecoveryTests
             db.Checkpoint();
 
             // Insert more data after checkpoint (WAL may be reset on BeginTransaction)
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 id2 = tx.Insert(new Person { Name = "Second", Age = 30, Email = "second@example.com" });
                 tx.Commit();
@@ -240,7 +240,7 @@ public class WalRecoveryTests
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
             // First, create a transaction that writes some data
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 id1 = tx.Insert(new Person { Name = "TxPerson", Age = 25, Email = "tx@example.com" });
                 tx.Commit();
@@ -435,7 +435,7 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "TxPerson", Age = 35, Email = "txperson@example.com" };
                 insertedId = tx.Insert(person);
@@ -465,7 +465,7 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person person1 = new Person { Name = "Person1", Age = 25, Email = "p1@example.com" };
                 Person person2 = new Person { Name = "Person2", Age = 30, Email = "p2@example.com" };
@@ -504,7 +504,7 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "Original", Age = 25, Email = "original@example.com" };
                 insertedId = tx.Insert(person);
@@ -515,7 +515,7 @@ public class WalRecoveryTests
         using (GaldrDbInstance db = GaldrDbInstance.Open(dbPath, options))
         {
             // After reopen, VersionIndex should be rebuilt and transactions should work
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person retrieved = tx.GetById<Person>(insertedId);
 
@@ -816,7 +816,7 @@ public class WalRecoveryTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 0; i < 100; i++)
                 {
@@ -857,7 +857,7 @@ public class WalRecoveryTests
             committedId = db.Insert(new Person { Name = "Committed", Age = 25, Email = "committed@example.com" });
 
             // Rolled back transaction
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Insert(new Person { Name = "RolledBack", Age = 30, Email = "rolledback@example.com" });
                 tx.Rollback();

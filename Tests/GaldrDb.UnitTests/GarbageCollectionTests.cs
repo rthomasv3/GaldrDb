@@ -89,7 +89,7 @@ public class GarbageCollectionTests
             int id = db.Insert(person);
 
             // Start a read transaction that holds a snapshot
-            using (Transaction readTx = db.BeginReadOnlyTransaction())
+            using (ITransaction readTx = db.BeginReadOnlyTransaction())
             {
                 // Update to create a new version
                 person.Id = id;
@@ -123,7 +123,7 @@ public class GarbageCollectionTests
             int id = db.Insert(person);
 
             // Start and end a read transaction
-            using (Transaction readTx = db.BeginReadOnlyTransaction())
+            using (ITransaction readTx = db.BeginReadOnlyTransaction())
             {
                 Person fromReadTx = readTx.GetById<Person>(id);
                 Assert.AreEqual("Version1", fromReadTx.Name);
@@ -472,7 +472,7 @@ public class GarbageCollectionTests
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
             // Insert and update in the same transaction - only one version should be created
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "Original", Age = 25, Email = "test@example.com" };
                 int id = tx.Insert(person);

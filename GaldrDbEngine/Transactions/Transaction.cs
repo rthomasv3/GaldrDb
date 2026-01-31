@@ -18,7 +18,7 @@ namespace GaldrDbEngine.Transactions;
 /// Represents a database transaction with snapshot isolation.
 /// Must be committed or disposed when complete.
 /// </summary>
-public class Transaction : IDisposable
+public class Transaction : ITransaction
 {
     private readonly GaldrDb _db;
     private readonly TransactionManager _txManager;
@@ -390,7 +390,7 @@ public class Transaction : IDisposable
     /// <typeparam name="T">The document type.</typeparam>
     /// <param name="id">The document ID.</param>
     /// <returns>An UpdateBuilder for chaining Set calls.</returns>
-    public UpdateBuilder<T> UpdateById<T>(int id)
+    public IUpdateBuilder<T> UpdateById<T>(int id)
     {
         GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
 
@@ -406,7 +406,7 @@ public class Transaction : IDisposable
     /// <param name="collectionName">The collection name.</param>
     /// <param name="id">The document ID.</param>
     /// <returns>A DynamicUpdateBuilder for chaining Set calls.</returns>
-    public DynamicUpdateBuilder UpdateByIdDynamic(string collectionName, int id)
+    public IDynamicUpdateBuilder UpdateByIdDynamic(string collectionName, int id)
     {
         EnsureActive();
         EnsureWritable();

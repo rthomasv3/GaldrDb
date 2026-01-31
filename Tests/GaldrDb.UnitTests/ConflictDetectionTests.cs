@@ -45,10 +45,10 @@ public class ConflictDetectionTests
             int id = db.Insert(person);
 
             // Start transaction 1 (gets snapshot)
-            Transaction tx1 = db.BeginTransaction();
+            ITransaction tx1 = db.BeginTransaction();
 
             // Transaction 2 updates the document and commits
-            using (Transaction tx2 = db.BeginTransaction())
+            using (ITransaction tx2 = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Alice Updated", Age = 31 };
                 tx2.Replace(updated);
@@ -77,10 +77,10 @@ public class ConflictDetectionTests
             int id = db.Insert(person);
 
             // Start transaction 1 (gets snapshot)
-            Transaction tx1 = db.BeginTransaction();
+            ITransaction tx1 = db.BeginTransaction();
 
             // Transaction 2 updates the document and commits
-            using (Transaction tx2 = db.BeginTransaction())
+            using (ITransaction tx2 = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Bob Updated", Age = 26 };
                 tx2.Replace(updated);
@@ -107,7 +107,7 @@ public class ConflictDetectionTests
             int id = db.Insert(person);
 
             // Single transaction updates - no conflict
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Charlie Updated", Age = 36 };
                 bool result = tx.Replace(updated);
@@ -133,12 +133,12 @@ public class ConflictDetectionTests
             int id = db.Insert(person);
 
             // Start transaction 1 and buffer an update (doesn't check yet)
-            Transaction tx1 = db.BeginTransaction();
+            ITransaction tx1 = db.BeginTransaction();
             Person tx1Update = new Person { Id = id, Name = "Diana from tx1", Age = 41 };
             tx1.Replace(tx1Update);
 
             // Transaction 2 updates and commits (after tx1 buffered but before tx1 commits)
-            using (Transaction tx2 = db.BeginTransaction())
+            using (ITransaction tx2 = db.BeginTransaction())
             {
                 Person tx2Update = new Person { Id = id, Name = "Diana from tx2", Age = 42 };
                 tx2.Replace(tx2Update);
@@ -170,7 +170,7 @@ public class ConflictDetectionTests
             db.Insert(person);
 
             // Try to insert another document with same ID - should conflict
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person duplicate = new Person { Id = 100, Name = "Eve Duplicate", Age = 29 };
 
@@ -192,14 +192,14 @@ public class ConflictDetectionTests
             int id = db.Insert(person);
 
             // Sequential transactions should not conflict
-            using (Transaction tx1 = db.BeginTransaction())
+            using (ITransaction tx1 = db.BeginTransaction())
             {
                 Person update1 = new Person { Id = id, Name = "Frank v1", Age = 51 };
                 tx1.Replace(update1);
                 tx1.Commit();
             }
 
-            using (Transaction tx2 = db.BeginTransaction())
+            using (ITransaction tx2 = db.BeginTransaction())
             {
                 Person update2 = new Person { Id = id, Name = "Frank v2", Age = 52 };
                 tx2.Replace(update2);
@@ -224,8 +224,8 @@ public class ConflictDetectionTests
             int id2 = db.Insert(person2);
 
             // Concurrent transactions on different documents should not conflict
-            Transaction tx1 = db.BeginTransaction();
-            Transaction tx2 = db.BeginTransaction();
+            ITransaction tx1 = db.BeginTransaction();
+            ITransaction tx2 = db.BeginTransaction();
 
             Person update1 = new Person { Id = id1, Name = "Grace Updated", Age = 31 };
             Person update2 = new Person { Id = id2, Name = "Henry Updated", Age = 36 };
@@ -255,9 +255,9 @@ public class ConflictDetectionTests
             Person person = new Person { Name = "Ivan", Age = 45 };
             int id = db.Insert(person);
 
-            Transaction tx1 = db.BeginTransaction();
+            ITransaction tx1 = db.BeginTransaction();
 
-            using (Transaction tx2 = db.BeginTransaction())
+            using (ITransaction tx2 = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Ivan Updated", Age = 46 };
                 tx2.Replace(updated);
@@ -292,7 +292,7 @@ public class ConflictDetectionTests
             int id = db.Insert(person);
 
             // Start transaction and buffer changes but rollback
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Julia Updated", Age = 34 };
                 tx.Replace(updated);
@@ -300,7 +300,7 @@ public class ConflictDetectionTests
             }
 
             // Another transaction should succeed without conflict
-            using (Transaction tx2 = db.BeginTransaction())
+            using (ITransaction tx2 = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Julia v2", Age = 35 };
                 tx2.Replace(updated);

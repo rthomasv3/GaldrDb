@@ -10,7 +10,7 @@ namespace GaldrDbEngine.Transactions;
 /// Fluent builder for performing partial updates on a document by ID using runtime field names.
 /// Allows updating individual fields without loading the full typed document.
 /// </summary>
-public sealed class DynamicUpdateBuilder
+public sealed class DynamicUpdateBuilder : IDynamicUpdateBuilder
 {
     private readonly Transaction _transaction;
     private readonly GaldrDb _db;
@@ -50,7 +50,7 @@ public sealed class DynamicUpdateBuilder
     /// <param name="fieldName">The field name to set.</param>
     /// <param name="value">The new value.</param>
     /// <returns>This builder for chaining.</returns>
-    public DynamicUpdateBuilder Set(string fieldName, object value)
+    public IDynamicUpdateBuilder Set(string fieldName, object value)
     {
         GaldrFieldType fieldType = InferFieldType(value);
 
@@ -78,9 +78,9 @@ public sealed class DynamicUpdateBuilder
         }
         else
         {
-            using (Transaction tx = _db.BeginTransaction())
+            using (ITransaction tx = _db.BeginTransaction())
             {
-                result = tx.ExecutePartialUpdateDynamic(_collectionName, _documentId, _modifications);
+                result = ((Transaction)tx).ExecutePartialUpdateDynamic(_collectionName, _documentId, _modifications);
                 if (result)
                 {
                     tx.Commit();
@@ -106,9 +106,9 @@ public sealed class DynamicUpdateBuilder
         }
         else
         {
-            using (Transaction tx = _db.BeginTransaction())
+            using (ITransaction tx = _db.BeginTransaction())
             {
-                result = await tx.ExecutePartialUpdateDynamicAsync(_collectionName, _documentId, _modifications, cancellationToken).ConfigureAwait(false);
+                result = await ((Transaction)tx).ExecutePartialUpdateDynamicAsync(_collectionName, _documentId, _modifications, cancellationToken).ConfigureAwait(false);
                 if (result)
                 {
                     await tx.CommitAsync(cancellationToken).ConfigureAwait(false);

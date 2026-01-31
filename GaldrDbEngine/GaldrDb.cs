@@ -23,7 +23,7 @@ namespace GaldrDbEngine;
 /// The main database class. Use <see cref="Create"/> to create a new database, <see cref="Open"/> to open an existing one,
 /// or <see cref="OpenOrCreate"/> to open or create as needed.
 /// </summary>
-public class GaldrDb : IDisposable
+public class GaldrDb : IGaldrDb
 {
     #region Fields
 
@@ -496,7 +496,7 @@ public class GaldrDb : IDisposable
     /// Begins a new read-write transaction with snapshot isolation.
     /// </summary>
     /// <returns>A new transaction that must be committed or disposed.</returns>
-    public Transaction BeginTransaction()
+    public ITransaction BeginTransaction()
     {
         EnsureTransactionManager();
         EnsureVersionIndex();
@@ -523,7 +523,7 @@ public class GaldrDb : IDisposable
     /// Begins a new read-only transaction with snapshot isolation.
     /// </summary>
     /// <returns>A new read-only transaction that must be disposed when complete.</returns>
-    public Transaction BeginReadOnlyTransaction()
+    public ITransaction BeginReadOnlyTransaction()
     {
         EnsureTransactionManager();
         EnsureVersionIndex();
@@ -921,7 +921,7 @@ public class GaldrDb : IDisposable
     /// <returns>The assigned document ID.</returns>
     public int Insert<T>(T document)
     {
-        using (Transaction tx = BeginTransaction())
+        using (ITransaction tx = BeginTransaction())
         {
             int id = tx.Insert<T>(document);
             tx.Commit();
@@ -937,7 +937,7 @@ public class GaldrDb : IDisposable
     /// <returns>The document, or default if not found.</returns>
     public T GetById<T>(int id)
     {
-        using (Transaction tx = BeginReadOnlyTransaction())
+        using (ITransaction tx = BeginReadOnlyTransaction())
         {
             T result = tx.GetById<T>(id);
             tx.Commit();
@@ -953,7 +953,7 @@ public class GaldrDb : IDisposable
     /// <returns>True if the document was found and updated, false otherwise.</returns>
     public bool Replace<T>(T document)
     {
-        using (Transaction tx = BeginTransaction())
+        using (ITransaction tx = BeginTransaction())
         {
             bool result = tx.Replace<T>(document);
             tx.Commit();
@@ -968,7 +968,7 @@ public class GaldrDb : IDisposable
     /// <typeparam name="T">The document type.</typeparam>
     /// <param name="id">The document ID.</param>
     /// <returns>An UpdateBuilder for chaining Set calls.</returns>
-    public UpdateBuilder<T> UpdateById<T>(int id)
+    public IUpdateBuilder<T> UpdateById<T>(int id)
     {
         GaldrTypeInfo<T> typeInfo = GaldrTypeRegistry.Get<T>();
         return new UpdateBuilder<T>(this, typeInfo, id);
@@ -981,7 +981,7 @@ public class GaldrDb : IDisposable
     /// <param name="collectionName">The collection name.</param>
     /// <param name="id">The document ID.</param>
     /// <returns>A DynamicUpdateBuilder for chaining Set calls.</returns>
-    public DynamicUpdateBuilder UpdateByIdDynamic(string collectionName, int id)
+    public IDynamicUpdateBuilder UpdateByIdDynamic(string collectionName, int id)
     {
         return new DynamicUpdateBuilder(this, collectionName, id);
     }
@@ -994,7 +994,7 @@ public class GaldrDb : IDisposable
     /// <returns>True if the document was found and deleted, false otherwise.</returns>
     public bool DeleteById<T>(int id)
     {
-        using (Transaction tx = BeginTransaction())
+        using (ITransaction tx = BeginTransaction())
         {
             bool result = tx.DeleteById<T>(id);
             tx.Commit();
@@ -1009,7 +1009,7 @@ public class GaldrDb : IDisposable
     /// <returns>A query builder for constructing and executing queries.</returns>
     public QueryBuilder<T> Query<T>()
     {
-        Transaction tx = BeginReadOnlyTransaction();
+        ITransaction tx = BeginReadOnlyTransaction();
         QueryBuilder<T> innerQuery = tx.Query<T>();
 
         // Wrap the executor to auto-dispose the transaction after query execution
@@ -1038,7 +1038,7 @@ public class GaldrDb : IDisposable
     /// <returns>The assigned document ID.</returns>
     public async Task<int> InsertAsync<T>(T document, CancellationToken cancellationToken = default)
     {
-        using (Transaction tx = BeginTransaction())
+        using (ITransaction tx = BeginTransaction())
         {
             int id = await tx.InsertAsync<T>(document, cancellationToken).ConfigureAwait(false);
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -1055,7 +1055,7 @@ public class GaldrDb : IDisposable
     /// <returns>The document, or default if not found.</returns>
     public async Task<T> GetByIdAsync<T>(int id, CancellationToken cancellationToken = default)
     {
-        using (Transaction tx = BeginReadOnlyTransaction())
+        using (ITransaction tx = BeginReadOnlyTransaction())
         {
             T result = await tx.GetByIdAsync<T>(id, cancellationToken).ConfigureAwait(false);
             tx.Commit();
@@ -1072,7 +1072,7 @@ public class GaldrDb : IDisposable
     /// <returns>True if the document was found and updated, false otherwise.</returns>
     public async Task<bool> ReplaceAsync<T>(T document, CancellationToken cancellationToken = default)
     {
-        using (Transaction tx = BeginTransaction())
+        using (ITransaction tx = BeginTransaction())
         {
             bool result = await tx.ReplaceAsync<T>(document, cancellationToken).ConfigureAwait(false);
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -1089,7 +1089,7 @@ public class GaldrDb : IDisposable
     /// <returns>True if the document was found and deleted, false otherwise.</returns>
     public async Task<bool> DeleteAsync<T>(int id, CancellationToken cancellationToken = default)
     {
-        using (Transaction tx = BeginTransaction())
+        using (ITransaction tx = BeginTransaction())
         {
             bool result = await tx.DeleteByIdAsync<T>(id, cancellationToken).ConfigureAwait(false);
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -1109,7 +1109,7 @@ public class GaldrDb : IDisposable
     /// <returns>The JsonDocument, or null if not found.</returns>
     public JsonDocument GetByIdDynamic(string collectionName, int id)
     {
-        using (Transaction tx = BeginReadOnlyTransaction())
+        using (ITransaction tx = BeginReadOnlyTransaction())
         {
             JsonDocument result = tx.GetByIdDynamic(collectionName, id);
             tx.Commit();
@@ -1126,7 +1126,7 @@ public class GaldrDb : IDisposable
     /// <returns>The JsonDocument, or null if not found.</returns>
     public async Task<JsonDocument> GetByIdDynamicAsync(string collectionName, int id, CancellationToken cancellationToken = default)
     {
-        using (Transaction tx = BeginReadOnlyTransaction())
+        using (ITransaction tx = BeginReadOnlyTransaction())
         {
             JsonDocument result = await tx.GetByIdDynamicAsync(collectionName, id, cancellationToken).ConfigureAwait(false);
             tx.Commit();
@@ -1141,7 +1141,7 @@ public class GaldrDb : IDisposable
     /// <returns>A dynamic query builder for constructing and executing queries.</returns>
     public DynamicQueryBuilder QueryDynamic(string collectionName)
     {
-        Transaction tx = BeginReadOnlyTransaction();
+        ITransaction tx = BeginReadOnlyTransaction();
         DynamicQueryBuilder innerQuery = tx.QueryDynamic(collectionName);
 
         AutoDisposingDynamicQueryExecutor autoDisposingExecutor = new AutoDisposingDynamicQueryExecutor(
@@ -1160,7 +1160,7 @@ public class GaldrDb : IDisposable
     /// <returns>The assigned document ID.</returns>
     public int InsertDynamic(string collectionName, string json)
     {
-        using (Transaction tx = BeginTransaction())
+        using (ITransaction tx = BeginTransaction())
         {
             int id = tx.InsertDynamic(collectionName, json);
             tx.Commit();
@@ -1177,7 +1177,7 @@ public class GaldrDb : IDisposable
     /// <returns>The assigned document ID.</returns>
     public async Task<int> InsertDynamicAsync(string collectionName, string json, CancellationToken cancellationToken = default)
     {
-        using (Transaction tx = BeginTransaction())
+        using (ITransaction tx = BeginTransaction())
         {
             int id = await tx.InsertDynamicAsync(collectionName, json, cancellationToken).ConfigureAwait(false);
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -1194,7 +1194,7 @@ public class GaldrDb : IDisposable
     /// <returns>True if the document was found and replaced, false otherwise.</returns>
     public bool ReplaceDynamic(string collectionName, int id, string json)
     {
-        using (Transaction tx = BeginTransaction())
+        using (ITransaction tx = BeginTransaction())
         {
             bool result = tx.ReplaceDynamic(collectionName, id, json);
             tx.Commit();
@@ -1212,7 +1212,7 @@ public class GaldrDb : IDisposable
     /// <returns>True if the document was found and replaced, false otherwise.</returns>
     public async Task<bool> ReplaceDynamicAsync(string collectionName, int id, string json, CancellationToken cancellationToken = default)
     {
-        using (Transaction tx = BeginTransaction())
+        using (ITransaction tx = BeginTransaction())
         {
             bool result = await tx.ReplaceDynamicAsync(collectionName, id, json, cancellationToken).ConfigureAwait(false);
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -1228,7 +1228,7 @@ public class GaldrDb : IDisposable
     /// <returns>True if the document was found and deleted, false otherwise.</returns>
     public bool DeleteByIdDynamic(string collectionName, int id)
     {
-        using (Transaction tx = BeginTransaction())
+        using (ITransaction tx = BeginTransaction())
         {
             bool result = tx.DeleteByIdDynamic(collectionName, id);
             tx.Commit();
@@ -1245,7 +1245,7 @@ public class GaldrDb : IDisposable
     /// <returns>True if the document was found and deleted, false otherwise.</returns>
     public async Task<bool> DeleteByIdDynamicAsync(string collectionName, int id, CancellationToken cancellationToken = default)
     {
-        using (Transaction tx = BeginTransaction())
+        using (ITransaction tx = BeginTransaction())
         {
             bool result = await tx.DeleteByIdDynamicAsync(collectionName, id, cancellationToken).ConfigureAwait(false);
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);

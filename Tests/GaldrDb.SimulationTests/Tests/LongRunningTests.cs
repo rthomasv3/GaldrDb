@@ -177,7 +177,7 @@ public class LongRunningTests
                 {
                     Operation op = generator.GenerateOperation(sharedState);
 
-                    using (Transaction tx = db.BeginTransaction())
+                    using (ITransaction tx = db.BeginTransaction())
                     {
                         OperationResult result = op.Execute(db, tx, sharedState);
 

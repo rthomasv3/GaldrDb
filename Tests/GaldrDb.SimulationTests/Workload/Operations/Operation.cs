@@ -8,7 +8,7 @@ public abstract class Operation
 {
     public string CollectionName { get; set; }
 
-    public abstract OperationResult Execute(GaldrDbEngine.GaldrDb db, Transaction tx, SimulationState state);
+    public abstract OperationResult Execute(GaldrDbEngine.GaldrDb db, ITransaction tx, SimulationState state);
 
     public abstract string OperationType { get; }
 }

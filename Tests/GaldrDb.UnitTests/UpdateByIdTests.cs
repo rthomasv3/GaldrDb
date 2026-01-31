@@ -42,7 +42,7 @@ public class UpdateByIdTests
         {
             int id = db.Insert(new Person { Name = "Alice", Age = 30, Email = "alice@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 bool result = tx.UpdateById<Person>(id)
                     .Set(PersonMeta.Name, "Alice Smith")
@@ -68,7 +68,7 @@ public class UpdateByIdTests
         {
             int id = db.Insert(new Person { Name = "Bob", Age = 25, Email = "bob@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 bool result = tx.UpdateById<Person>(id)
                     .Set(PersonMeta.Name, "Robert")
@@ -94,7 +94,7 @@ public class UpdateByIdTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, new GaldrDbOptions { PageSize = 8192, UseWal = true }))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 bool result = tx.UpdateById<Person>(999)
                     .Set(PersonMeta.Name, "NonExistent")
@@ -114,7 +114,7 @@ public class UpdateByIdTests
         {
             int id = db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 bool result = tx.UpdateById<Person>(id)
                     .Set(PersonMeta.Email, null)
@@ -143,7 +143,7 @@ public class UpdateByIdTests
         {
             int id = db.Insert(new Person { Name = "David", Age = 40, Email = "david@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.UpdateById<Person>(id)
                     .Set(PersonMeta.Name, "Dave")
@@ -166,7 +166,7 @@ public class UpdateByIdTests
         {
             int id = db.Insert(new Person { Name = "Eve", Age = 28, Email = "eve@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.UpdateById<Person>(id)
                     .Set(PersonMeta.Age, 29)
@@ -230,7 +230,7 @@ public class UpdateByIdTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, new GaldrDbOptions { PageSize = 8192, UseWal = true }))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 int id = tx.Insert(new Person { Name = "Grace", Age = 32, Email = "grace@example.com" });
 
@@ -256,7 +256,7 @@ public class UpdateByIdTests
         {
             int id = db.Insert(new Person { Name = "Henry", Age = 50, Email = "henry@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.UpdateById<Person>(id)
                     .Set(PersonMeta.Name, "Hank")
@@ -288,7 +288,7 @@ public class UpdateByIdTests
         {
             int id = db.Insert(new Person { Name = "Ivy", Age = 27, Email = "ivy@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 bool result = await tx.UpdateById<Person>(id)
                     .Set(PersonMeta.Name, "Ivy League")
@@ -336,7 +336,7 @@ public class UpdateByIdTests
         {
             int id = db.Insert(new Person { Name = "Kate", Age = 29, Email = "kate@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.UpdateById<Person>(id)
                     .Set(PersonMeta.Name, "Katherine")
@@ -369,7 +369,7 @@ public class UpdateByIdTests
         {
             int id = db.Insert(new Person { Name = "Leo", Age = 36, Email = "leo@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 // Age is not indexed
                 tx.UpdateById<Person>(id)
@@ -401,13 +401,13 @@ public class UpdateByIdTests
         {
             int id = db.Insert(new Person { Name = "Mike", Age = 42, Email = "mike@example.com" });
 
-            using (Transaction tx1 = db.BeginTransaction())
+            using (ITransaction tx1 = db.BeginTransaction())
             {
                 // tx1 starts
                 Person p1 = tx1.GetById<Person>(id);
 
                 // Another transaction modifies the document
-                using (Transaction tx2 = db.BeginTransaction())
+                using (ITransaction tx2 = db.BeginTransaction())
                 {
                     tx2.UpdateById<Person>(id)
                         .Set(PersonMeta.Name, "Michael")

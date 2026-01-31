@@ -45,7 +45,7 @@ public class CrashDebugTests
         Console.WriteLine("\n=== PHASE 2: Insert document ===");
 
         int insertedId;
-        using (Transaction tx = db.BeginTransaction())
+        using (ITransaction tx = db.BeginTransaction())
         {
             TestDocument doc = TestDocument.Generate(rng, 200);
             insertedId = tx.Insert(doc);
@@ -190,7 +190,7 @@ public class CrashDebugTests
             Console.WriteLine($"TestDocument collection name from GaldrTypeRegistry: '{expectedCollectionName}'");
 
             Console.WriteLine("\n=== PHASE 6: Query document ===");
-            using (Transaction tx = db2.BeginReadOnlyTransaction())
+            using (ITransaction tx = db2.BeginReadOnlyTransaction())
             {
                 Console.WriteLine($"Transaction SnapshotTxId: {tx.SnapshotTxId}");
 

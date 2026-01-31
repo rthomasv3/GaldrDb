@@ -22,7 +22,7 @@ public class UpdateOperation : Operation
         _maxPayloadSize = maxPayloadSize;
     }
 
-    public override OperationResult Execute(GaldrDbEngine.GaldrDb db, Transaction tx, SimulationState state)
+    public override OperationResult Execute(GaldrDbEngine.GaldrDb db, ITransaction tx, SimulationState state)
     {
         OperationResult result;
 

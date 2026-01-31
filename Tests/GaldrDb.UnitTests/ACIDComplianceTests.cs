@@ -43,7 +43,7 @@ public class ACIDComplianceTests
         {
             int id = db.Insert(new Person { Name = "Original", Age = 30 });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Insert(new Person { Name = "ShouldNotExist", Age = 25 });
 
@@ -73,7 +73,7 @@ public class ACIDComplianceTests
 
             try
             {
-                using (Transaction tx = db.BeginTransaction())
+                using (ITransaction tx = db.BeginTransaction())
                 {
                     tx.Insert(new Person { Name = "Inserted", Age = 25 });
                     throw new InvalidOperationException("Simulated failure");
@@ -97,7 +97,7 @@ public class ACIDComplianceTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 0; i < 100; i++)
                 {
@@ -125,9 +125,9 @@ public class ACIDComplianceTests
         {
             int id = db.Insert(new Person { Name = "Original", Age = 30 });
 
-            Transaction tx1 = db.BeginTransaction();
+            ITransaction tx1 = db.BeginTransaction();
 
-            using (Transaction tx2 = db.BeginTransaction())
+            using (ITransaction tx2 = db.BeginTransaction())
             {
                 tx2.Replace(new Person { Id = id, Name = "FromTx2", Age = 31 });
                 tx2.Commit();
@@ -178,7 +178,7 @@ public class ACIDComplianceTests
                 {
                     try
                     {
-                        using (Transaction readTx = db.BeginReadOnlyTransaction())
+                        using (ITransaction readTx = db.BeginReadOnlyTransaction())
                         {
                             Person p = readTx.GetById<Person>(id);
                             if (p != null && p.Name != "Initial" && !p.Name.StartsWith("Update"))
@@ -200,7 +200,7 @@ public class ACIDComplianceTests
                     {
                         try
                         {
-                            using (Transaction writeTx = db.BeginTransaction())
+                            using (ITransaction writeTx = db.BeginTransaction())
                             {
                                 writeTx.Replace(new Person { Id = id, Name = $"Update{updateIteration}", Age = updateIteration });
                                 writeTx.Commit();
@@ -228,12 +228,12 @@ public class ACIDComplianceTests
         {
             int id = db.Insert(new Person { Name = "Alice", Age = 30 });
 
-            using (Transaction readTx = db.BeginReadOnlyTransaction())
+            using (ITransaction readTx = db.BeginReadOnlyTransaction())
             {
                 Person firstRead = readTx.GetById<Person>(id);
                 Assert.AreEqual("Alice", firstRead.Name);
 
-                using (Transaction writeTx = db.BeginTransaction())
+                using (ITransaction writeTx = db.BeginTransaction())
                 {
                     writeTx.Replace(new Person { Id = id, Name = "Alice Updated", Age = 31 });
                     writeTx.Commit();
@@ -260,7 +260,7 @@ public class ACIDComplianceTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 insertedId = tx.Insert(new Person { Name = "Durable", Age = 42 });
                 tx.Commit();
@@ -289,7 +289,7 @@ public class ACIDComplianceTests
         {
             for (int i = 0; i < 10; i++)
             {
-                using (Transaction tx = db.BeginTransaction())
+                using (ITransaction tx = db.BeginTransaction())
                 {
                     ids[i] = tx.Insert(new Person { Name = $"Person{i}", Age = 20 + i });
                     tx.Commit();
@@ -322,7 +322,7 @@ public class ACIDComplianceTests
             id1 = db.Insert(new Person { Name = "ToUpdate", Age = 25 });
             id2 = db.Insert(new Person { Name = "ToDelete", Age = 30 });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Replace(new Person { Id = id1, Name = "Updated", Age = 26 });
                 tx.DeleteById<Person>(id2);
@@ -379,10 +379,10 @@ public class ACIDComplianceTests
         {
             int id = db.Insert(new Person { Name = "Test", Age = 25 });
 
-            Transaction readTx = db.BeginReadOnlyTransaction();
+            ITransaction readTx = db.BeginReadOnlyTransaction();
             Person readResult = readTx.GetById<Person>(id);
 
-            using (Transaction writeTx = db.BeginTransaction())
+            using (ITransaction writeTx = db.BeginTransaction())
             {
                 writeTx.Replace(new Person { Id = id, Name = "Updated", Age = 26 });
                 writeTx.Commit();
@@ -417,7 +417,7 @@ public class ACIDComplianceTests
                 int idx = i;
                 tasks.Add(Task.Run(() =>
                 {
-                    using (Transaction tx = db.BeginTransaction())
+                    using (ITransaction tx = db.BeginTransaction())
                     {
                         tx.Replace(new Person { Id = ids[idx], Name = $"Updated{idx}", Age = 100 + idx });
                         tx.Commit();
@@ -459,7 +459,7 @@ public class ACIDComplianceTests
                 {
                     try
                     {
-                        using (Transaction tx = db.BeginTransaction())
+                        using (ITransaction tx = db.BeginTransaction())
                         {
                             tx.Replace(new Person { Id = id, Name = $"Writer{iteration}", Age = 100 + iteration });
                             tx.Commit();
@@ -491,7 +491,7 @@ public class ACIDComplianceTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 int id = await tx.InsertAsync(new Person { Name = "AsyncPerson", Age = 30 });
                 await tx.CommitAsync();
@@ -512,7 +512,7 @@ public class ACIDComplianceTests
         {
             int id = db.Insert(new Person { Name = "Original", Age = 25 });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 bool updated = await tx.ReplaceAsync(new Person { Id = id, Name = "Updated", Age = 26 });
                 Assert.IsTrue(updated);
@@ -522,7 +522,7 @@ public class ACIDComplianceTests
             Person afterUpdate = db.GetById<Person>(id);
             Assert.AreEqual("Updated", afterUpdate.Name);
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 bool deleted = await tx.DeleteByIdAsync<Person>(id);
                 Assert.IsTrue(deleted);
@@ -544,7 +544,7 @@ public class ACIDComplianceTests
 
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 insertedId = await tx.InsertAsync(new Person { Name = "AsyncDurable", Age = 42 });
                 await tx.CommitAsync();
@@ -583,7 +583,7 @@ public class ACIDComplianceTests
                 int idx = i;
                 tasks.Add(Task.Run(async () =>
                 {
-                    using (Transaction tx = db.BeginTransaction())
+                    using (ITransaction tx = db.BeginTransaction())
                     {
                         await tx.ReplaceAsync(new Person { Id = ids[idx], Name = $"AsyncUpdated{idx}", Age = 100 + idx });
                         await tx.CommitAsync();
@@ -613,9 +613,9 @@ public class ACIDComplianceTests
         {
             int id = db.Insert(new Person { Name = "Original", Age = 30 });
 
-            Transaction tx1 = db.BeginTransaction();
+            ITransaction tx1 = db.BeginTransaction();
 
-            using (Transaction tx2 = db.BeginTransaction())
+            using (ITransaction tx2 = db.BeginTransaction())
             {
                 await tx2.ReplaceAsync(new Person { Id = id, Name = "FromTx2", Age = 31 });
                 await tx2.CommitAsync();

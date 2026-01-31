@@ -91,7 +91,7 @@ public class ConcurrencySimulationRunner
         List<int> documentIds = new List<int>();
         int initialSum = 0;
 
-        using (Transaction tx = _db.BeginTransaction())
+        using (ITransaction tx = _db.BeginTransaction())
         {
             for (int i = 0; i < _config.InitialDocumentCount; i++)
             {
@@ -165,7 +165,7 @@ public class ConcurrencySimulationRunner
     {
         int actualSum = 0;
 
-        using (Transaction tx = _db.BeginReadOnlyTransaction())
+        using (ITransaction tx = _db.BeginReadOnlyTransaction())
         {
             List<int> docIds = _state.GetAllDocumentIds();
             foreach (int docId in docIds)

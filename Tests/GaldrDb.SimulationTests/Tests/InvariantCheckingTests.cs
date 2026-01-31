@@ -38,7 +38,7 @@ public class InvariantCheckingTests
             // Insert some documents and track state
             for (int i = 0; i < 5; i++)
             {
-                using (Transaction tx = db.BeginTransaction())
+                using (ITransaction tx = db.BeginTransaction())
                 {
                     TestDocument doc = TestDocument.Generate(rng, 200);
                     int docId = tx.Insert(doc);
@@ -84,7 +84,7 @@ public class InvariantCheckingTests
             state.EnsureCollection("TestDocument");
 
             // Insert a document
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 TestDocument doc = TestDocument.Generate(rng, 200);
                 int docId = tx.Insert(doc);
@@ -142,7 +142,7 @@ public class InvariantCheckingTests
             state.EnsureCollection("TestDocument");
 
             int insertedId;
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 TestDocument doc = TestDocument.Generate(rng, 200);
                 insertedId = tx.Insert(doc);
@@ -198,7 +198,7 @@ public class InvariantCheckingTests
             // Insert documents
             for (int i = 0; i < 3; i++)
             {
-                using (Transaction tx = db.BeginTransaction())
+                using (ITransaction tx = db.BeginTransaction())
                 {
                     TestDocument doc = TestDocument.Generate(rng, 200);
                     int docId = tx.Insert(doc);
@@ -241,7 +241,7 @@ public class InvariantCheckingTests
             state.EnsureCollection("TestDocument");
 
             // Insert one document
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 TestDocument doc = TestDocument.Generate(rng, 200);
                 int docId = tx.Insert(doc);
@@ -286,7 +286,7 @@ public class InvariantCheckingTests
             state.EnsureCollection("TestDocument");
 
             // Insert a document
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 TestDocument doc = TestDocument.Generate(rng, 200);
                 int docId = tx.Insert(doc);

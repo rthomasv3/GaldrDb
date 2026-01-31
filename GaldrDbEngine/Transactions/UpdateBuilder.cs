@@ -10,7 +10,7 @@ namespace GaldrDbEngine.Transactions;
 /// Allows updating individual fields without loading the full typed document.
 /// </summary>
 /// <typeparam name="T">The document type.</typeparam>
-public sealed class UpdateBuilder<T>
+public sealed class UpdateBuilder<T> : IUpdateBuilder<T>
 {
     private readonly Transaction _transaction;
     private readonly GaldrDb _db;
@@ -49,7 +49,7 @@ public sealed class UpdateBuilder<T>
     /// <param name="field">The field to set.</param>
     /// <param name="value">The new value.</param>
     /// <returns>This builder for chaining.</returns>
-    public UpdateBuilder<T> Set<TField>(GaldrField<T, TField> field, TField value)
+    public IUpdateBuilder<T> Set<TField>(GaldrField<T, TField> field, TField value)
     {
         FieldModification mod = new FieldModification
         {
@@ -75,9 +75,9 @@ public sealed class UpdateBuilder<T>
         }
         else
         {
-            using (Transaction tx = _db.BeginTransaction())
+            using (ITransaction tx = _db.BeginTransaction())
             {
-                result = tx.ExecutePartialUpdate(_typeInfo, _documentId, _modifications);
+                result = ((Transaction)tx).ExecutePartialUpdate(_typeInfo, _documentId, _modifications);
                 if (result)
                 {
                     tx.Commit();
@@ -103,9 +103,9 @@ public sealed class UpdateBuilder<T>
         }
         else
         {
-            using (Transaction tx = _db.BeginTransaction())
+            using (ITransaction tx = _db.BeginTransaction())
             {
-                result = await tx.ExecutePartialUpdateAsync(_typeInfo, _documentId, _modifications, cancellationToken).ConfigureAwait(false);
+                result = await ((Transaction)tx).ExecutePartialUpdateAsync(_typeInfo, _documentId, _modifications, cancellationToken).ConfigureAwait(false);
                 if (result)
                 {
                     await tx.CommitAsync(cancellationToken).ConfigureAwait(false);

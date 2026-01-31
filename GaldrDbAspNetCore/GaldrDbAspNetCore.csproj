@@ -1,10 +1,10 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
-        <RootNamespace>GaldrDbEngine</RootNamespace>
+        <RootNamespace>GaldrDbAspNetCore</RootNamespace>
         <IsPackable>true</IsPackable>
-        <Description>AOT-native single file database for .NET</Description>
+        <Description>ASP.NET Core dependency injection support for GaldrDb</Description>
         <Copyright>Copyright © Robert Thomas 2026</Copyright>
         <VersionPrefix>1.0.0-dev1</VersionPrefix>
         <Authors>Robert Thomas</Authors>
@@ -14,16 +14,10 @@
         <PackageLicenseFile>LICENSE</PackageLicenseFile>
         <PackageIcon>wizard-round-128.png</PackageIcon>
     </PropertyGroup>
-    
-    <ItemGroup>
-      <PackageReference Include="GaldrJson" Version="1.1.1" />
-      <PackageReference Include="System.IO.Hashing" Version="9.0.0" />
-    </ItemGroup>
 
     <ItemGroup>
-      <InternalsVisibleTo Include="GaldrDb.UnitTests" />
-      <InternalsVisibleTo Include="GaldrDb.SimulationTests" />
-      <InternalsVisibleTo Include="GaldrDbConsole" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Options" Version="9.0.0" />
     </ItemGroup>
 
     <ItemGroup>
@@ -39,16 +33,9 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\GaldrDbSourceGenerators\GaldrDbSourceGenerators.csproj"
-                        OutputItemType="Analyzer"
-                        ReferenceOutputAssembly="false" />
-    </ItemGroup>
-
-    <ItemGroup>
-      <None Include="$(MSBuildThisFileDirectory)..\GaldrDbSourceGenerators\bin\$(Configuration)\netstandard2.0\GaldrDbSourceGenerators.dll"
-            Pack="true"
-            PackagePath="analyzers/dotnet/cs"
-            Visible="false" />
+        <ProjectReference Include="..\GaldrDbEngine\GaldrDbEngine.csproj">
+            <PrivateAssets>none</PrivateAssets>
+        </ProjectReference>
     </ItemGroup>
 
 </Project>

@@ -15,7 +15,7 @@ public class ConcurrencyActor
     private readonly int _maxOperations;
 
     private ActorState _state;
-    private Transaction _currentTransaction;
+    private ITransaction _currentTransaction;
     private int _currentDocumentId;
     private int _readCounterValue;
     private int _retryCount;

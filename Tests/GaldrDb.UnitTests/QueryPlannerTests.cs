@@ -38,7 +38,7 @@ public class QueryPlannerTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 1; i <= 100; i++)
                 {
@@ -62,7 +62,7 @@ public class QueryPlannerTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 1; i <= 20; i++)
                 {
@@ -89,7 +89,7 @@ public class QueryPlannerTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 1; i <= 20; i++)
                 {
@@ -116,7 +116,7 @@ public class QueryPlannerTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 1; i <= 20; i++)
                 {
@@ -143,7 +143,7 @@ public class QueryPlannerTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 1; i <= 20; i++)
                 {
@@ -170,7 +170,7 @@ public class QueryPlannerTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 1; i <= 50; i++)
                 {
@@ -197,7 +197,7 @@ public class QueryPlannerTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 1; i <= 100; i++)
                 {
@@ -224,7 +224,7 @@ public class QueryPlannerTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 1; i <= 10; i++)
                 {
@@ -246,7 +246,7 @@ public class QueryPlannerTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 1; i <= 10; i++)
                 {
@@ -268,7 +268,7 @@ public class QueryPlannerTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 1; i <= 10; i++)
                 {
@@ -277,7 +277,7 @@ public class QueryPlannerTests
                 tx.Commit();
             }
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Insert(new Person { Name = "NewPerson", Age = 99, Email = "new@example.com" });
 
@@ -296,7 +296,7 @@ public class QueryPlannerTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 1; i <= 50; i++)
                 {
@@ -323,7 +323,7 @@ public class QueryPlannerTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 1; i <= 100; i++)
                 {
@@ -350,7 +350,7 @@ public class QueryPlannerTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 1; i <= 100; i++)
                 {
@@ -378,7 +378,7 @@ public class QueryPlannerTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 1; i <= 1000; i++)
                 {
@@ -512,7 +512,7 @@ public class QueryPlannerTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Insert(new Person { Name = "Test", Age = 25, Email = "test@example.com" });
                 tx.Commit();

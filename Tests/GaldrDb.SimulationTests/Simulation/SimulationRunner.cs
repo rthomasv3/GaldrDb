@@ -110,7 +110,7 @@ public class SimulationRunner
         {
             Operation op = _workloadGenerator.GenerateOperation(_state);
 
-            using (Transaction tx = _db.BeginTransaction())
+            using (ITransaction tx = _db.BeginTransaction())
             {
                 OperationResult opResult = op.Execute(_db, tx, _state);
 
@@ -168,7 +168,7 @@ public class SimulationRunner
         {
             List<int> expectedIds = _state.GetAllDocumentIds(collection);
 
-            using (Transaction tx = _db.BeginReadOnlyTransaction())
+            using (ITransaction tx = _db.BeginReadOnlyTransaction())
             {
                 foreach (int docId in expectedIds)
                 {

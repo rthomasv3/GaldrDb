@@ -137,7 +137,7 @@ public class InvariantChecker
     {
         List<int> expectedDocIds = expectedState.GetAllDocumentIds(collectionName);
 
-        using (Transaction tx = db.BeginReadOnlyTransaction())
+        using (ITransaction tx = db.BeginReadOnlyTransaction())
         {
             // Check each expected document exists and has correct content
             foreach (int docId in expectedDocIds)
@@ -210,7 +210,7 @@ public class InvariantChecker
             byte[] hash1 = null;
             byte[] hash2 = null;
 
-            using (Transaction tx1 = db.BeginReadOnlyTransaction())
+            using (ITransaction tx1 = db.BeginReadOnlyTransaction())
             {
                 TestDocument doc1 = tx1.GetById<TestDocument>(testDocId);
                 if (doc1 != null)
@@ -219,7 +219,7 @@ public class InvariantChecker
                 }
             }
 
-            using (Transaction tx2 = db.BeginReadOnlyTransaction())
+            using (ITransaction tx2 = db.BeginReadOnlyTransaction())
             {
                 TestDocument doc2 = tx2.GetById<TestDocument>(testDocId);
                 if (doc2 != null)
@@ -287,7 +287,7 @@ public class InvariantChecker
             int expectedCount = expectedState.GetDocumentCount(collectionName);
             List<int> docIds = expectedState.GetAllDocumentIds(collectionName);
 
-            using (Transaction tx = db.BeginReadOnlyTransaction())
+            using (ITransaction tx = db.BeginReadOnlyTransaction())
             {
                 int foundCount = 0;
                 foreach (int docId in docIds)
@@ -316,7 +316,7 @@ public class InvariantChecker
     {
         _stats.InvariantChecks++;
 
-        using (Transaction tx = db.BeginReadOnlyTransaction())
+        using (ITransaction tx = db.BeginReadOnlyTransaction())
         {
             TestDocument doc = tx.GetById<TestDocument>(docId);
 
@@ -330,7 +330,7 @@ public class InvariantChecker
         }
     }
 
-    private int CountDocumentsInCollection(Transaction tx, List<int> docIds)
+    private int CountDocumentsInCollection(ITransaction tx, List<int> docIds)
     {
         int count = 0;
 

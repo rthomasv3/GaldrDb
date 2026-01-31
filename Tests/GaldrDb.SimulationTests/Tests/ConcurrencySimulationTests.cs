@@ -300,7 +300,7 @@ public class ConcurrencySimulationTests
         int initialCounterValue = 100;
         List<int> documentIds = new List<int>();
 
-        using (Transaction tx = db.BeginTransaction())
+        using (ITransaction tx = db.BeginTransaction())
         {
             for (int i = 0; i < documentCount; i++)
             {
@@ -363,7 +363,7 @@ public class ConcurrencySimulationTests
 
         // Validate: sum should match expected
         int actualSum = 0;
-        using (Transaction tx = db.BeginReadOnlyTransaction())
+        using (ITransaction tx = db.BeginReadOnlyTransaction())
         {
             foreach (int docId in documentIds)
             {

@@ -41,7 +41,7 @@ public class CompactToTests
 
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(sourcePath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 0; i < 10; i++)
                 {
@@ -72,7 +72,7 @@ public class CompactToTests
 
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(sourcePath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Insert(new Person { Name = "Alice", Age = 30, Email = "alice@example.com" });
                 tx.Insert(new Person { Name = "Bob", Age = 25, Email = "bob@example.com" });
@@ -106,7 +106,7 @@ public class CompactToTests
 
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(sourcePath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Insert(new Person { Name = "Alice", Age = 30, Email = "alice@example.com" });
                 tx.Insert(new Person { Name = "Bob", Age = 25, Email = "bob@example.com" });
@@ -118,7 +118,7 @@ public class CompactToTests
 
         using (GaldrDbEngine.GaldrDb targetDb = GaldrDbEngine.GaldrDb.Open(targetPath))
         {
-            using (Transaction tx = targetDb.BeginTransaction())
+            using (ITransaction tx = targetDb.BeginTransaction())
             {
                 int newId = tx.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
                 tx.Commit();
@@ -136,7 +136,7 @@ public class CompactToTests
 
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(sourcePath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Insert(new Person { Name = "Alice", Age = 30, Email = "alice@example.com" });
                 tx.Insert(new Person { Name = "Bob", Age = 25, Email = "bob@example.com" });
@@ -144,7 +144,7 @@ public class CompactToTests
                 tx.Commit();
             }
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.DeleteById<Person>(2);
                 tx.Commit();
@@ -173,13 +173,13 @@ public class CompactToTests
 
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(sourcePath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Insert(new Person { Name = "Alice", Age = 30, Email = "alice@example.com" });
                 tx.Commit();
             }
 
-            using (Transaction openTx = db.BeginTransaction())
+            using (ITransaction openTx = db.BeginTransaction())
             {
                 Assert.Throws<InvalidOperationException>(() => db.CompactTo(targetPath));
             }
@@ -194,7 +194,7 @@ public class CompactToTests
 
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(sourcePath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Insert(new User { Name = "Alice", Email = "alice@example.com", Department = "Engineering" });
                 tx.Insert(new User { Name = "Bob", Email = "bob@example.com", Department = "Engineering" });
@@ -224,7 +224,7 @@ public class CompactToTests
 
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(sourcePath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Insert(new Person { Name = "Alice", Age = 30, Email = "alice@example.com" });
                 tx.Insert(new Person { Name = "Bob", Age = 25, Email = "bob@example.com" });
@@ -260,7 +260,7 @@ public class CompactToTests
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(sourcePath, options))
         {
             // Insert enough documents to cause multiple expansions
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 0; i < 2000; i++)
                 {
@@ -270,7 +270,7 @@ public class CompactToTests
             }
 
             // Delete most documents
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 1; i <= 1900; i++)
                 {
@@ -296,7 +296,7 @@ public class CompactToTests
 
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(sourcePath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 0; i < 10; i++)
                 {
@@ -334,7 +334,7 @@ public class CompactToTests
 
         using (GaldrDbEngine.GaldrDb targetDb = GaldrDbEngine.GaldrDb.Open(targetPath))
         {
-            using (Transaction tx = targetDb.BeginTransaction())
+            using (ITransaction tx = targetDb.BeginTransaction())
             {
                 int id = tx.Insert(new Person { Name = "Alice", Age = 30, Email = "alice@example.com" });
                 tx.Commit();

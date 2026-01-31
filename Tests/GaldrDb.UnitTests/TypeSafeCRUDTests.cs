@@ -786,7 +786,7 @@ public class TypeSafeCRUDTests
             db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
             db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
                 tx.Insert(new Person { Name = "Diana", Age = 28, Email = "diana@example.com" });
@@ -810,7 +810,7 @@ public class TypeSafeCRUDTests
             db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
             db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.DeleteById<Person>(1);
 
@@ -832,7 +832,7 @@ public class TypeSafeCRUDTests
             db.Insert(new Person { Name = "Alice", Age = 25, Email = "alice@example.com" });
             db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
                 tx.Insert(new Person { Name = "Diana", Age = 22, Email = "diana@example.com" });
@@ -858,7 +858,7 @@ public class TypeSafeCRUDTests
             db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
             db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.DeleteById<Person>(2);
 
@@ -883,7 +883,7 @@ public class TypeSafeCRUDTests
             db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
             db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Replace(new Person { Id = 1, Name = "Alice", Age = 40, Email = "alice@example.com" });
 
@@ -908,7 +908,7 @@ public class TypeSafeCRUDTests
             db.Insert(new Person { Name = "Bob", Age = 30, Email = "bob@example.com" });
             db.Insert(new Person { Name = "Charlie", Age = 35, Email = "charlie@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Replace(new Person { Id = 2, Name = "Bob", Age = 20, Email = "bob@example.com" });
 

@@ -51,7 +51,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -76,7 +76,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -100,7 +100,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -123,7 +123,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -146,7 +146,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -170,7 +170,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -197,7 +197,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -240,7 +240,7 @@ public class ProjectionQueryTests
         {
             int personId = db.Insert(new Person { Name = "Original", Age = 25, Email = "orig@example.com" });
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person person = tx.GetById<Person>(personId);
                 person.Name = "Updated";
@@ -262,13 +262,13 @@ public class ProjectionQueryTests
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
             int personId;
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 personId = tx.Insert(new Person { Name = "ToDelete", Age = 25, Email = "del@example.com" });
                 tx.Commit();
             }
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.DeleteById<Person>(personId);
 
@@ -284,7 +284,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -307,7 +307,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Insert(new Person { Name = "Alice", Age = 30, Email = "alice@example.com" });
                 tx.Commit();
@@ -326,7 +326,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -348,7 +348,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -375,7 +375,7 @@ public class ProjectionQueryTests
         // Test combining source field filters (PersonMeta) and projection field filters (PersonSummaryMeta)
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -405,7 +405,7 @@ public class ProjectionQueryTests
         // combined with a projection field filter
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -430,7 +430,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -450,7 +450,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -472,7 +472,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -494,7 +494,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -517,7 +517,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Insert(new Person { Name = "Alice", Age = 30, Email = "alice@example.com" });
                 tx.Insert(new Person { Name = "Bob", Age = 25, Email = "bob@example.com" });
@@ -534,7 +534,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {
@@ -543,7 +543,7 @@ public class ProjectionQueryTests
                 tx.Commit();
             }
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.DeleteById<Person>(1);
 
@@ -559,7 +559,7 @@ public class ProjectionQueryTests
     {
         using (GaldrDbEngine.GaldrDb db = GaldrDbEngine.GaldrDb.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 foreach (Person person in _testPeople)
                 {

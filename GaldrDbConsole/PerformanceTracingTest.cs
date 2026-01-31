@@ -239,7 +239,7 @@ public static class PerformanceTracingTest
                 // Warmup - run enough iterations to stabilize
                 for (int i = 0; i < 200; i++)
                 {
-                    using (Transaction tx = db.BeginTransaction())
+                    using (ITransaction tx = db.BeginTransaction())
                     {
                         tx.UpdateById<BenchmarkPerson>(id)
                             .Set(BenchmarkPersonMeta.Age, 31 + (i % 10))
@@ -252,11 +252,11 @@ public static class PerformanceTracingTest
                 PerfTracer.Enabled = true;
                 PerfTracer.Reset();
 
-                using (Transaction tx = db.BeginTransaction())
+                using (ITransaction tx = db.BeginTransaction())
                 {
                     PerfTracer.Checkpoint("BeginTx");
 
-                    UpdateBuilder<BenchmarkPerson> builder = tx.UpdateById<BenchmarkPerson>(id);
+                    IUpdateBuilder<BenchmarkPerson> builder = tx.UpdateById<BenchmarkPerson>(id);
                     PerfTracer.Checkpoint("UpdateById");
 
                     builder.Set(BenchmarkPersonMeta.Age, 42);
@@ -293,7 +293,7 @@ public static class PerformanceTracingTest
         // Additional warmup
         for (int i = 0; i < 50; i++)
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.UpdateById<BenchmarkPerson>(id)
                     .Set(BenchmarkPersonMeta.Age, 31 + (i % 10))
@@ -310,7 +310,7 @@ public static class PerformanceTracingTest
 
         for (int i = 0; i < iterations; i++)
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.UpdateById<BenchmarkPerson>(id)
                     .Set(BenchmarkPersonMeta.Age, 31 + (i % 10))

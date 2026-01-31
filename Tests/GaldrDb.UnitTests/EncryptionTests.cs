@@ -734,7 +734,7 @@ public class EncryptionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person person1 = new Person { Name = "TxPerson1", Age = 25, Email = "tx1@example.com" };
                 Person person2 = new Person { Name = "TxPerson2", Age = 30, Email = "tx2@example.com" };
@@ -771,7 +771,7 @@ public class EncryptionTests
             Person committed = new Person { Name = "Committed", Age = 25, Email = "committed@example.com" };
             db.Insert(committed);
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person rolledBack = new Person { Name = "RolledBack", Age = 30, Email = "rolledback@example.com" };
                 tx.Insert(rolledBack);
@@ -918,7 +918,7 @@ public class EncryptionTests
 
         using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 for (int i = 0; i < 20; i++)
                 {

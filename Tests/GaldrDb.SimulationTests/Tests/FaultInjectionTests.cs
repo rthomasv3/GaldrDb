@@ -211,7 +211,7 @@ public class FaultInjectionTests
         {
             pageIO.Flush(); // Ensure initial setup is durable
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 TestDocument doc = TestDocument.Generate(rng, 200);
                 insertedId = tx.Insert(doc);
@@ -247,7 +247,7 @@ public class FaultInjectionTests
             {
                 try
                 {
-                    using (Transaction tx = db.BeginReadOnlyTransaction())
+                    using (ITransaction tx = db.BeginReadOnlyTransaction())
                     {
                         TestDocument doc = tx.GetById<TestDocument>(insertedId);
                         if (doc != null)
@@ -304,7 +304,7 @@ public class FaultInjectionTests
             {
                 for (int i = 0; i < 10; i++)
                 {
-                    using (Transaction tx = db.BeginTransaction())
+                    using (ITransaction tx = db.BeginTransaction())
                     {
                         TestDocument doc = TestDocument.Generate(rng, 200);
                         tx.Insert(doc);

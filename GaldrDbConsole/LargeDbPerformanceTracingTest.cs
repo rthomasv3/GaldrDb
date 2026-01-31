@@ -130,7 +130,7 @@ public static class LargeDbPerformanceTracingTest
         {
             for (int batch = 0; batch < batches; ++batch)
             {
-                Transaction tx = db.BeginTransaction();
+                ITransaction tx = db.BeginTransaction();
 
                 for (int entry = 0; entry < batchSize; ++entry)
                 {

@@ -43,7 +43,7 @@ public class SnapshotIsolationTests
     {
         using (GaldrDatabase db = GaldrDatabase.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person person = new Person { Name = "Alice", Age = 30 };
                 int id = tx.Insert(person);
@@ -67,7 +67,7 @@ public class SnapshotIsolationTests
             Person person = new Person { Name = "Bob", Age = 25 };
             int id = db.Insert(person);
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Bob Updated", Age = 26 };
                 tx.Replace(updated);
@@ -91,7 +91,7 @@ public class SnapshotIsolationTests
             Person person = new Person { Name = "Charlie", Age = 35 };
             int id = db.Insert(person);
 
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.DeleteById<Person>(id);
 
@@ -109,10 +109,10 @@ public class SnapshotIsolationTests
     {
         using (GaldrDatabase db = GaldrDatabase.Create(_testDbPath, new GaldrDbOptions()))
         {
-            Transaction tx1 = db.BeginTransaction();
+            ITransaction tx1 = db.BeginTransaction();
 
             int id;
-            using (Transaction tx2 = db.BeginTransaction())
+            using (ITransaction tx2 = db.BeginTransaction())
             {
                 Person person = new Person { Name = "Diana", Age = 40 };
                 id = tx2.Insert(person);
@@ -135,9 +135,9 @@ public class SnapshotIsolationTests
             Person person = new Person { Name = "Eve", Age = 28 };
             int id = db.Insert(person);
 
-            Transaction tx1 = db.BeginTransaction();
+            ITransaction tx1 = db.BeginTransaction();
 
-            using (Transaction tx2 = db.BeginTransaction())
+            using (ITransaction tx2 = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Eve Updated", Age = 29 };
                 tx2.Replace(updated);
@@ -162,9 +162,9 @@ public class SnapshotIsolationTests
             Person person = new Person { Name = "Frank", Age = 50 };
             int id = db.Insert(person);
 
-            Transaction tx1 = db.BeginTransaction();
+            ITransaction tx1 = db.BeginTransaction();
 
-            using (Transaction tx2 = db.BeginTransaction())
+            using (ITransaction tx2 = db.BeginTransaction())
             {
                 tx2.DeleteById<Person>(id);
                 tx2.Commit();
@@ -184,7 +184,7 @@ public class SnapshotIsolationTests
     {
         using (GaldrDatabase db = GaldrDatabase.Create(_testDbPath, new GaldrDbOptions()))
         {
-            using (Transaction tx = db.BeginTransaction())
+            using (ITransaction tx = db.BeginTransaction())
             {
                 tx.Insert(new Person { Name = "Grace", Age = 30 });
                 tx.Insert(new Person { Name = "Henry", Age = 35 });
@@ -203,9 +203,9 @@ public class SnapshotIsolationTests
     {
         using (GaldrDatabase db = GaldrDatabase.Create(_testDbPath, new GaldrDbOptions()))
         {
-            Transaction tx1 = db.BeginTransaction();
+            ITransaction tx1 = db.BeginTransaction();
 
-            using (Transaction tx2 = db.BeginTransaction())
+            using (ITransaction tx2 = db.BeginTransaction())
             {
                 tx2.Insert(new Person { Name = "Ivan", Age = 45 });
                 tx2.Insert(new Person { Name = "Julia", Age = 33 });
@@ -228,9 +228,9 @@ public class SnapshotIsolationTests
             Person person = new Person { Name = "Kate", Age = 25 };
             int id = db.Insert(person);
 
-            Transaction tx1 = db.BeginTransaction();
+            ITransaction tx1 = db.BeginTransaction();
 
-            using (Transaction tx2 = db.BeginTransaction())
+            using (ITransaction tx2 = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Kate Updated", Age = 26 };
                 tx2.Replace(updated);
@@ -255,9 +255,9 @@ public class SnapshotIsolationTests
             Person person = new Person { Name = "Leo", Age = 40 };
             int id = db.Insert(person);
 
-            Transaction tx1 = db.BeginTransaction();
+            ITransaction tx1 = db.BeginTransaction();
 
-            using (Transaction tx2 = db.BeginTransaction())
+            using (ITransaction tx2 = db.BeginTransaction())
             {
                 tx2.DeleteById<Person>(id);
                 tx2.Commit();
@@ -280,9 +280,9 @@ public class SnapshotIsolationTests
             db.Insert(new Person { Name = "Mary", Age = 25 });
             db.Insert(new Person { Name = "Nancy", Age = 35 });
 
-            Transaction tx1 = db.BeginTransaction();
+            ITransaction tx1 = db.BeginTransaction();
 
-            using (Transaction tx2 = db.BeginTransaction())
+            using (ITransaction tx2 = db.BeginTransaction())
             {
                 tx2.Insert(new Person { Name = "Oscar", Age = 30 });
                 tx2.Commit();
@@ -307,9 +307,9 @@ public class SnapshotIsolationTests
             Person person = new Person { Name = "Paul", Age = 45 };
             int id = db.Insert(person);
 
-            Transaction readTx = db.BeginReadOnlyTransaction();
+            ITransaction readTx = db.BeginReadOnlyTransaction();
 
-            using (Transaction writeTx = db.BeginTransaction())
+            using (ITransaction writeTx = db.BeginTransaction())
             {
                 Person updated = new Person { Id = id, Name = "Paul Updated", Age = 46 };
                 writeTx.Replace(updated);
@@ -334,18 +334,18 @@ public class SnapshotIsolationTests
             Person person = new Person { Name = "Quinn v1", Age = 20 };
             int id = db.Insert(person);
 
-            Transaction tx1 = db.BeginTransaction();
+            ITransaction tx1 = db.BeginTransaction();
 
-            using (Transaction tx2 = db.BeginTransaction())
+            using (ITransaction tx2 = db.BeginTransaction())
             {
                 Person v2 = new Person { Id = id, Name = "Quinn v2", Age = 21 };
                 tx2.Replace(v2);
                 tx2.Commit();
             }
 
-            Transaction tx3 = db.BeginTransaction();
+            ITransaction tx3 = db.BeginTransaction();
 
-            using (Transaction tx4 = db.BeginTransaction())
+            using (ITransaction tx4 = db.BeginTransaction())
             {
                 Person v3 = new Person { Id = id, Name = "Quinn v3", Age = 22 };
                 tx4.Replace(v3);
