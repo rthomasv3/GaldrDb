@@ -206,7 +206,7 @@ jobs:
           gh release create browser-v${{ inputs.version }} \
             --draft \
             --title "GaldrDb Browser v${{ inputs.version }}" \
-            --generate-release-notes \
+            --notes "GaldrDb Browser version ${{ inputs.version }}" \
             artifacts/GaldrDbBrowser-${{ inputs.version }}-win-x64/GaldrDbBrowser-${{ inputs.version }}-win-x64.zip \
             artifacts/GaldrDbBrowser-${{ inputs.version }}-linux-x64/GaldrDbBrowser-${{ inputs.version }}-linux-x64.zip \
             artifacts/GaldrDbBrowser-${{ inputs.version }}-osx-x64/GaldrDbBrowser-${{ inputs.version }}-osx-x64.zip \
