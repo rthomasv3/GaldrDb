@@ -368,3 +368,7 @@ TEMP/
 BenchmarkResults/
 Documents/
 .claude/
+
+GaldrDbBrowser/AppImage/tmp/
+GaldrDbBrowser/AppImage/output/
+GaldrDbBrowser/tmp/

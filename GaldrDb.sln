@@ -20,6 +20,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 	ProjectSection(SolutionItems) = preProject
 		.github\workflows\release-galdrdb.yml = .github\workflows\release-galdrdb.yml
 		Directory.Build.props = Directory.Build.props
+		.github\workflows\release-galdrdb-browser.yml = .github\workflows\release-galdrdb-browser.yml
 	EndProjectSection
 EndProject
 Global

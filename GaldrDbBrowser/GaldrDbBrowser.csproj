@@ -10,8 +10,16 @@
     <PackageReference Include="Galdr.Native" Version="1.1.2" />
   </ItemGroup>
 
-  <ItemGroup>
+  <!-- Debug: use project references for local development -->
+  <ItemGroup Condition="'$(Configuration)' == 'Debug'">
     <ProjectReference Include="..\GaldrDbEngine\GaldrDbEngine.csproj" />
+    <ProjectReference Include="..\GaldrDbSourceGenerators\GaldrDbSourceGenerators.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- Release: use NuGet packages (enables AOT publish) -->
+  <ItemGroup Condition="'$(Configuration)' != 'Debug'">
+    <PackageReference Include="GaldrDbEngine" Version="1.0.0-rc1" />
   </ItemGroup>
 
   <ItemGroup>

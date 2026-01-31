@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=GaldrDb Browser
+Comment=Database browser for GaldrDb
+Exec=GaldrDbBrowser
+Icon=io.github.rthomasv3.GaldrDbBrowser
+Categories=Development;Database;
+Terminal=false
