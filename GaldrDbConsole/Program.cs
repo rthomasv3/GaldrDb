@@ -2,6 +2,7 @@ using System;
 using BenchmarkDotNet.Configs;
 using BenchmarkDotNet.Running;
 using GaldrDbConsole.Benchmarks;
+using GaldrDbConsole.StressTest;
 
 namespace GaldrDbConsole;
 
@@ -61,6 +62,14 @@ class Program
             case "--test-diag":
             case "-td":
                 DiagnosticTest.Run();
+                break;
+            case "--stress":
+            case "-st":
+                StressTestConfiguration stressConfig = StressTestConfiguration.FromArgs(args);
+                StressTestRunner runner = new StressTestRunner(stressConfig);
+                StressTestResult result = runner.Run();
+                result.PrintSummary();
+                Environment.ExitCode = result.Success ? 0 : 1;
                 break;
             case "--help":
             case "-h":
@@ -136,16 +145,20 @@ class Program
         Console.WriteLine();
         Console.WriteLine("Usage:");
         Console.WriteLine("  GaldrDbConsole --benchmark <suite> [options]");
+        Console.WriteLine("  GaldrDbConsole --stress [profile] [options]");
         Console.WriteLine("  GaldrDbConsole --help");
         Console.WriteLine();
         Console.WriteLine("Commands:");
         Console.WriteLine("  -b, --benchmark <suite>  Run benchmark suite");
+        Console.WriteLine("  -st, --stress [profile]  Run stress test (balanced, writeheavy, readheavy, highchurn)");
         Console.WriteLine("  -h, --help               Show this help message");
         Console.WriteLine();
         PrintBenchmarkSuites();
         Console.WriteLine();
-        Console.WriteLine("Options:");
+        Console.WriteLine("Benchmark Options:");
         Console.WriteLine("  -q, --quick              Run in quick mode (fewer iterations)");
+        Console.WriteLine();
+        StressTestConfiguration.PrintUsage();
     }
 
     static void PrintBenchmarkSuites()
