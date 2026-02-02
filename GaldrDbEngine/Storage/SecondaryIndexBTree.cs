@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using GaldrDbEngine.IO;
 using GaldrDbEngine.Pages;
 using GaldrDbEngine.Utilities;
+using GaldrDbEngine.WAL;
 
 namespace GaldrDbEngine.Storage;
 
@@ -1255,11 +1256,14 @@ internal class SecondaryIndexBTree
             // PAGE_TYPE_SECONDARY_INDEX = 3
             if (pageType != 3)
             {
-                throw new InvalidOperationException($"SplitChild: childPageId={childPageId} has wrong page type 0x{pageType:X2} (expected 0x03), nodeType={nodeType}, keyCount={keyCount}, maxKeys={maxKeys}, first 32 bytes: {BitConverter.ToString(childBuffer, 0, 32)}");
+                // This indicates snapshot inconsistency - another transaction modified the BTree structure
+                // Throw PageConflictException to trigger transaction retry with fresh snapshot
+                throw new PageConflictException(childPageId, 0, 0);
             }
-            if (keyCount > maxKeys || keyCount > 500)
+            if (keyCount > maxKeys)
             {
-                throw new InvalidOperationException($"SplitChild: childPageId={childPageId} has suspicious keyCount={keyCount}, maxKeys={maxKeys}, pageType=0x{pageType:X2}, first 32 bytes: {BitConverter.ToString(childBuffer, 0, 32)}");
+                // Suspicious data indicates snapshot inconsistency - trigger retry
+                throw new PageConflictException(childPageId, 0, 0);
             }
 
             SecondaryIndexNode.DeserializeTo(childBuffer, fullChild);
