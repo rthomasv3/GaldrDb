@@ -97,98 +97,144 @@ internal class SecondaryIndexBTree
     {
         _rootLock.EnterReadLock();
         int rootPageId = _rootPageId;
+        _pageLockManager.AcquireReadLock(rootPageId);
         _rootLock.ExitReadLock();
-        return SearchNode(rootPageId, key);
+        return SearchNode(rootPageId, key, rootAlreadyLocked: true);
     }
 
     public List<DocumentLocation> SearchRange(byte[] startKey, byte[] endKey, bool includeStart, bool includeEnd)
     {
         _rootLock.EnterReadLock();
-        int rootPageId = _rootPageId;
-        _rootLock.ExitReadLock();
-
-        List<DocumentLocation> results = new List<DocumentLocation>();
-        SearchRangeNode(rootPageId, startKey, endKey, includeStart, includeEnd, results);
-        return results;
+        try
+        {
+            int rootPageId = _rootPageId;
+            List<DocumentLocation> results = new List<DocumentLocation>();
+            SearchRangeNode(rootPageId, startKey, endKey, includeStart, includeEnd, results);
+            return results;
+        }
+        finally
+        {
+            _rootLock.ExitReadLock();
+        }
     }
 
     public List<DocumentLocation> SearchByFieldValue(byte[] fieldValueKey)
     {
         _rootLock.EnterReadLock();
-        int rootPageId = _rootPageId;
-        _rootLock.ExitReadLock();
-
-        List<DocumentLocation> results = new List<DocumentLocation>();
-        SearchByFieldValueNode(rootPageId, fieldValueKey, results);
-        return results;
+        try
+        {
+            int rootPageId = _rootPageId;
+            List<DocumentLocation> results = new List<DocumentLocation>();
+            SearchByFieldValueNode(rootPageId, fieldValueKey, results);
+            return results;
+        }
+        finally
+        {
+            _rootLock.ExitReadLock();
+        }
     }
 
     public List<SecondaryIndexEntry> SearchByFieldValueWithDocIds(byte[] fieldValueKey)
     {
         _rootLock.EnterReadLock();
-        int rootPageId = _rootPageId;
-        _rootLock.ExitReadLock();
-
-        List<SecondaryIndexEntry> results = new List<SecondaryIndexEntry>();
-        SearchByFieldValueNodeWithDocIds(rootPageId, fieldValueKey, false, results);
-        return results;
+        try
+        {
+            int rootPageId = _rootPageId;
+            List<SecondaryIndexEntry> results = new List<SecondaryIndexEntry>();
+            SearchByFieldValueNodeWithDocIds(rootPageId, fieldValueKey, false, results);
+            return results;
+        }
+        finally
+        {
+            _rootLock.ExitReadLock();
+        }
     }
 
     public List<SecondaryIndexEntry> SearchByExactFieldValueWithDocIds(byte[] fieldValueKey)
     {
         _rootLock.EnterReadLock();
-        int rootPageId = _rootPageId;
-        _rootLock.ExitReadLock();
-
-        List<SecondaryIndexEntry> results = new List<SecondaryIndexEntry>();
-        SearchByFieldValueNodeWithDocIds(rootPageId, fieldValueKey, true, results);
-        return results;
+        try
+        {
+            int rootPageId = _rootPageId;
+            List<SecondaryIndexEntry> results = new List<SecondaryIndexEntry>();
+            SearchByFieldValueNodeWithDocIds(rootPageId, fieldValueKey, true, results);
+            return results;
+        }
+        finally
+        {
+            _rootLock.ExitReadLock();
+        }
     }
 
     public List<SecondaryIndexEntry> SearchRangeWithDocIds(byte[] startKey, byte[] endKey, bool includeStart, bool includeEnd)
     {
         _rootLock.EnterReadLock();
-        int rootPageId = _rootPageId;
-        _rootLock.ExitReadLock();
-
-        List<SecondaryIndexEntry> results = new List<SecondaryIndexEntry>();
-        SearchRangeNodeWithDocIds(rootPageId, startKey, endKey, includeStart, includeEnd, results);
-        return results;
+        try
+        {
+            int rootPageId = _rootPageId;
+            List<SecondaryIndexEntry> results = new List<SecondaryIndexEntry>();
+            SearchRangeNodeWithDocIds(rootPageId, startKey, endKey, includeStart, includeEnd, results);
+            return results;
+        }
+        finally
+        {
+            _rootLock.ExitReadLock();
+        }
     }
 
     public List<SecondaryIndexEntry> SearchPrefixRangeWithDocIds(byte[] startKey, byte[] prefixKey, bool includeStart)
     {
         _rootLock.EnterReadLock();
-        int rootPageId = _rootPageId;
-        _rootLock.ExitReadLock();
-
-        List<SecondaryIndexEntry> results = new List<SecondaryIndexEntry>();
-        SearchPrefixRangeNodeWithDocIds(rootPageId, startKey, prefixKey, includeStart, results);
-        return results;
+        try
+        {
+            int rootPageId = _rootPageId;
+            List<SecondaryIndexEntry> results = new List<SecondaryIndexEntry>();
+            SearchPrefixRangeNodeWithDocIds(rootPageId, startKey, prefixKey, includeStart, results);
+            return results;
+        }
+        finally
+        {
+            _rootLock.ExitReadLock();
+        }
     }
 
     public bool Delete(byte[] key)
     {
         _rootLock.EnterWriteLock();
         int rootPageId = _rootPageId;
+        _pageLockManager.AcquireWriteLock(rootPageId);
         _rootLock.ExitWriteLock();
-        return DeleteFromNode(rootPageId, key);
+        return DeleteFromNode(rootPageId, key, rootAlreadyLocked: true);
     }
 
     public List<int> CollectAllPageIds()
     {
         _rootLock.EnterReadLock();
         int rootPageId = _rootPageId;
+        _pageLockManager.AcquireReadLock(rootPageId);
         _rootLock.ExitReadLock();
 
         List<int> pageIds = new List<int>();
         byte[] buffer = BufferPool.Rent(_pageSize);
         SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
         Stack<int> pageStack = new Stack<int>();
-        pageStack.Push(rootPageId);
 
         try
         {
+            // Process root page first (already locked)
+            pageIds.Add(rootPageId);
+            _pageIO.ReadPage(rootPageId, buffer);
+            SecondaryIndexNode.DeserializeTo(buffer, node);
+            if (node.NodeType == BTreeNodeType.Internal)
+            {
+                for (int i = node.KeyCount; i >= 0; i--)
+                {
+                    pageStack.Push(node.ChildPageIds[i]);
+                }
+            }
+            _pageLockManager.ReleaseReadLock(rootPageId);
+
+            // Process remaining pages
             while (pageStack.Count > 0)
             {
                 int currentPageId = pageStack.Pop();
@@ -217,7 +263,7 @@ internal class SecondaryIndexBTree
         return pageIds;
     }
 
-    private DocumentLocation? SearchNode(int pageId, byte[] key)
+    private DocumentLocation? SearchNode(int pageId, byte[] key, bool rootAlreadyLocked = false)
     {
         DocumentLocation? result = null;
 
@@ -226,7 +272,10 @@ internal class SecondaryIndexBTree
         try
         {
             int currentPageId = pageId;
-            _pageLockManager.AcquireReadLock(currentPageId);
+            if (!rootAlreadyLocked)
+            {
+                _pageLockManager.AcquireReadLock(currentPageId);
+            }
             ReadOnlySpan<byte> keySpan = key.AsSpan();
 
             while (currentPageId != 0)
@@ -608,7 +657,7 @@ internal class SecondaryIndexBTree
         return docId;
     }
 
-    private bool DeleteFromNode(int pageId, byte[] key)
+    private bool DeleteFromNode(int pageId, byte[] key, bool rootAlreadyLocked = false)
     {
         bool result = false;
 
@@ -621,7 +670,10 @@ internal class SecondaryIndexBTree
             int currentPageId = pageId;
             int leafPageId = 0;
             ReadOnlySpan<byte> keySpan = key.AsSpan();
-            _pageLockManager.AcquireWriteLock(currentPageId);
+            if (!rootAlreadyLocked)
+            {
+                _pageLockManager.AcquireWriteLock(currentPageId);
+            }
             heldLocks.Push(currentPageId);
 
             while (currentPageId != 0)
@@ -1118,6 +1170,12 @@ internal class SecondaryIndexBTree
                 int childIndex = SecondaryIndexNode.FindKeyPosition(buffer, keyCount, keySpan);
                 int childPageId = SecondaryIndexNode.GetChildPageId(buffer, keyCount, childIndex);
 
+                // DIAGNOSTIC: Check if childPageId looks reasonable
+                if (childPageId < 0 || childPageId > 1000000)
+                {
+                    throw new InvalidOperationException($"InsertNonFull: suspicious childPageId={childPageId} from currentPageId={currentPageId}, keyCount={keyCount}, childIndex={childIndex}, buffer first 32 bytes: {BitConverter.ToString(buffer, 0, 32)}");
+                }
+
                 // Acquire lock on child before reading
                 _pageLockManager.AcquireWriteLock(childPageId);
                 _pageIO.ReadPage(childPageId, childBuffer);
@@ -1188,6 +1246,22 @@ internal class SecondaryIndexBTree
         try
         {
             _pageIO.ReadPage(childPageId, childBuffer);
+
+            // DIAGNOSTIC: Check if page looks valid before deserializing
+            byte pageType = childBuffer[0];
+            byte nodeType = childBuffer[1];
+            ushort keyCount = (ushort)(childBuffer[2] | (childBuffer[3] << 8));
+            ushort maxKeys = (ushort)(childBuffer[8] | (childBuffer[9] << 8));
+            // PAGE_TYPE_SECONDARY_INDEX = 3
+            if (pageType != 3)
+            {
+                throw new InvalidOperationException($"SplitChild: childPageId={childPageId} has wrong page type 0x{pageType:X2} (expected 0x03), nodeType={nodeType}, keyCount={keyCount}, maxKeys={maxKeys}, first 32 bytes: {BitConverter.ToString(childBuffer, 0, 32)}");
+            }
+            if (keyCount > maxKeys || keyCount > 500)
+            {
+                throw new InvalidOperationException($"SplitChild: childPageId={childPageId} has suspicious keyCount={keyCount}, maxKeys={maxKeys}, pageType=0x{pageType:X2}, first 32 bytes: {BitConverter.ToString(childBuffer, 0, 32)}");
+            }
+
             SecondaryIndexNode.DeserializeTo(childBuffer, fullChild);
 
             _pageIO.ReadPage(parentPageId, parentBuffer);
