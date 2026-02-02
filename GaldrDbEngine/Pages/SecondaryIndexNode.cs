@@ -407,6 +407,25 @@ internal class SecondaryIndexNode
     }
 
     /// <summary>
+    /// Check if node is safe for insert (won't split).
+    /// A node is safe if it has room for at least one more key.
+    /// </summary>
+    public static bool IsSafeForInsert(byte[] buffer, int maxKeys, int pageSize)
+    {
+        return !IsNodeFull(buffer, maxKeys, pageSize);
+    }
+
+    /// <summary>
+    /// Check if node is safe for delete (won't underflow/rebalance).
+    /// A node is delete-safe if it has more than the minimum required keys.
+    /// </summary>
+    public static bool IsSafeForDelete(byte[] buffer, int maxKeys)
+    {
+        int minKeys = maxKeys / 2;
+        return GetKeyCount(buffer) > minKeys;
+    }
+
+    /// <summary>
     /// Finds the position where a key should be inserted (for leaf) or the child index to descend (for internal).
     /// Returns the index where key should go (0 to keyCount).
     /// </summary>

@@ -16,11 +16,11 @@ internal class DocumentStorage : IDisposable
     private readonly int _usablePageSize;
     private bool _disposed;
 
-    public DocumentStorage(IPageIO pageIO, PageManager pageManager, int pageSize, int usablePageSize = 0)
+    public DocumentStorage(IPageIO pageIO, PageManager pageManager, PageLockManager pageLockManager, int pageSize, int usablePageSize = 0)
     {
         _pageIO = pageIO;
         _pageManager = pageManager;
-        _pageLockManager = new PageLockManager();
+        _pageLockManager = pageLockManager;
         _pageSize = pageSize;
         _usablePageSize = usablePageSize > 0 ? usablePageSize : pageSize;
     }
@@ -638,7 +638,6 @@ internal class DocumentStorage : IDisposable
         if (!_disposed)
         {
             _disposed = true;
-            _pageLockManager.Dispose();
         }
     }
 }

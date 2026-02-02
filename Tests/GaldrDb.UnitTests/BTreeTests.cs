@@ -5,7 +5,6 @@ using System.Threading.Tasks;
 using GaldrDbEngine.IO;
 using GaldrDbEngine.Pages;
 using GaldrDbEngine.Storage;
-using GaldrDbEngine.Utilities;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace GaldrDb.UnitTests;
@@ -31,12 +30,14 @@ public class BTreeTests
         }
     }
 
-    private BTree CreateBTree(string dbPath, int pageSize, int order, out IPageIO pageIO, out PageManager pageManager)
+    private BTree CreateBTree(string dbPath, int pageSize, int order, out IPageIO pageIO, out PageManager pageManager, out PageLockManager pageLockManager)
     {
         pageIO = new StandardPageIO(dbPath, pageSize, true);
 
         pageManager = new PageManager(pageIO, pageSize);
         pageManager.Initialize();
+
+        pageLockManager = new PageLockManager();
 
         int rootPageId = pageManager.AllocatePage();
 
@@ -46,7 +47,7 @@ public class BTreeTests
         pageIO.WritePage(rootPageId, rootBuffer);
         pageIO.Flush();
 
-        return new BTree(pageIO, pageManager, rootPageId, pageSize, order);
+        return new BTree(pageIO, pageManager, pageLockManager, rootPageId, pageSize, order);
     }
 
     [TestMethod]
@@ -58,7 +59,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         DocumentLocation location = new DocumentLocation(100, 5);
         btree.Insert(1, location);
@@ -81,7 +82,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         btree.Insert(1, new DocumentLocation(100, 0));
         btree.Insert(5, new DocumentLocation(101, 1));
@@ -109,7 +110,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         btree.Insert(1, new DocumentLocation(100, 0));
         btree.Insert(5, new DocumentLocation(101, 1));
@@ -132,7 +133,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 20; i++)
         {
@@ -161,7 +162,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         int originalRoot = btree.GetRootPageId();
 
@@ -188,7 +189,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 50; i++)
         {
@@ -220,7 +221,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 50; i >= 1; i--)
         {
@@ -252,7 +253,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         btree.Insert(1, new DocumentLocation(100, 0));
 
@@ -274,7 +275,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         btree.Insert(1, new DocumentLocation(100, 0));
 
@@ -294,7 +295,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         btree.Insert(1, new DocumentLocation(100, 0));
         btree.Insert(2, new DocumentLocation(101, 1));
@@ -324,7 +325,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 5; i++)
         {
@@ -364,7 +365,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 20; i++)
         {
@@ -402,9 +403,9 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
-        System.Collections.Generic.List<BTreeEntry> entries = btree.GetAllEntries();
+        List<BTreeEntry> entries = btree.GetAllEntries();
 
         pageIO.Dispose();
 
@@ -420,11 +421,11 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         btree.Insert(42, new DocumentLocation(100, 5));
 
-        System.Collections.Generic.List<BTreeEntry> entries = btree.GetAllEntries();
+        List<BTreeEntry> entries = btree.GetAllEntries();
 
         pageIO.Dispose();
 
@@ -443,13 +444,13 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         btree.Insert(3, new DocumentLocation(103, 3));
         btree.Insert(1, new DocumentLocation(101, 1));
         btree.Insert(2, new DocumentLocation(102, 2));
 
-        System.Collections.Generic.List<BTreeEntry> entries = btree.GetAllEntries();
+        List<BTreeEntry> entries = btree.GetAllEntries();
 
         pageIO.Dispose();
 
@@ -479,14 +480,14 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 30; i++)
         {
             btree.Insert(i, new DocumentLocation(100 + i, 0));
         }
 
-        System.Collections.Generic.List<BTreeEntry> entries = btree.GetAllEntries();
+        List<BTreeEntry> entries = btree.GetAllEntries();
 
         pageIO.Dispose();
 
@@ -526,7 +527,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 5; i++)
         {
@@ -536,7 +537,7 @@ public class BTreeTests
         btree.Delete(2);
         btree.Delete(4);
 
-        System.Collections.Generic.List<BTreeEntry> entries = btree.GetAllEntries();
+        List<BTreeEntry> entries = btree.GetAllEntries();
 
         pageIO.Dispose();
 
@@ -572,7 +573,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         DocumentLocation location = new DocumentLocation(100, 5);
         await btree.InsertAsync(1, location);
@@ -595,7 +596,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         await btree.InsertAsync(1, new DocumentLocation(100, 0));
         await btree.InsertAsync(5, new DocumentLocation(101, 1));
@@ -623,7 +624,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         await btree.InsertAsync(1, new DocumentLocation(100, 0));
 
@@ -643,7 +644,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 20; i++)
         {
@@ -672,7 +673,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         await btree.InsertAsync(1, new DocumentLocation(100, 0));
 
@@ -694,7 +695,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         await btree.InsertAsync(1, new DocumentLocation(100, 0));
 
@@ -714,7 +715,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 20; i++)
         {
@@ -752,7 +753,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 50; i++)
         {
@@ -784,7 +785,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 50; i >= 1; i--)
         {
@@ -820,7 +821,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         DocumentLocation? found = btree.Search(1);
 
@@ -838,7 +839,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 100; i <= 200; i++)
         {
@@ -861,7 +862,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 100; i++)
         {
@@ -884,7 +885,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 50; i++)
         {
@@ -919,7 +920,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         int[] keys = { 50, 25, 75, 10, 30, 60, 90, 5, 15, 27, 35, 55, 65, 85, 95 };
 
@@ -956,7 +957,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 500; i++)
         {
@@ -991,7 +992,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 1000; i++)
         {
@@ -1026,7 +1027,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         btree.Insert(1, new DocumentLocation(100, 0));
         btree.Insert(1, new DocumentLocation(200, 5));
@@ -1050,7 +1051,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 20; i++)
         {
@@ -1077,7 +1078,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 20; i++)
         {
@@ -1104,7 +1105,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 30; i++)
         {
@@ -1137,7 +1138,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 20; i++)
         {
@@ -1192,7 +1193,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 20; i++)
         {
@@ -1242,7 +1243,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         btree.Insert(10, new DocumentLocation(10, 0));
         btree.Insert(20, new DocumentLocation(20, 0));
@@ -1286,7 +1287,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 100; i++)
         {
@@ -1321,7 +1322,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 200; i++)
         {
@@ -1357,7 +1358,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         bool deleted = btree.Delete(1);
 
@@ -1375,7 +1376,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = -50; i <= 50; i++)
         {
@@ -1410,7 +1411,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         btree.Insert(0, new DocumentLocation(999, 0));
         btree.Insert(-1, new DocumentLocation(998, 0));
@@ -1439,7 +1440,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         int[] largeKeys = { int.MaxValue, int.MaxValue - 1, int.MinValue, int.MinValue + 1, 0 };
 
@@ -1473,7 +1474,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int cycle = 0; cycle < 5; cycle++)
         {
@@ -1507,7 +1508,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         HashSet<int> insertedKeys = new HashSet<int>();
         for (int i = 1; i <= 300; i++)
@@ -1662,7 +1663,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         List<BTreeEntry> results = btree.SearchRange(1, 10, true, true);
 
@@ -1680,7 +1681,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         btree.Insert(5, new DocumentLocation(105, 0));
 
@@ -1702,7 +1703,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         btree.Insert(50, new DocumentLocation(150, 0));
 
@@ -1722,7 +1723,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 20; i++)
         {
@@ -1757,7 +1758,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 10; i++)
         {
@@ -1792,7 +1793,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 10; i++)
         {
@@ -1827,7 +1828,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 10; i++)
         {
@@ -1861,7 +1862,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 100; i++)
         {
@@ -1896,7 +1897,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 50; i++)
         {
@@ -1919,7 +1920,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 50; i++)
         {
@@ -1942,7 +1943,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 50; i++)
         {
@@ -1965,7 +1966,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 100; i <= 150; i++)
         {
@@ -1988,7 +1989,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 20; i++)
         {
@@ -2012,7 +2013,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 20; i++)
         {
@@ -2035,7 +2036,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 1000; i++)
         {
@@ -2070,7 +2071,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = -50; i <= 50; i++)
         {
@@ -2105,7 +2106,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 30; i++)
         {
@@ -2148,7 +2149,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         List<BTreeEntry> results = await btree.SearchRangeAsync(1, 10, true, true);
 
@@ -2166,7 +2167,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 20; i++)
         {
@@ -2201,7 +2202,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 100; i++)
         {
@@ -2236,7 +2237,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 10; i++)
         {
@@ -2271,7 +2272,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 10; i++)
         {
@@ -2306,7 +2307,7 @@ public class BTreeTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager);
+        BTree btree = CreateBTree(dbPath, pageSize, order, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 500; i++)
         {

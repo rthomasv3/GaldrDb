@@ -32,7 +32,7 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
         _db = db;
         _typeInfo = typeInfo;
         _reader = new TypedDocumentReader<T>(typeInfo, jsonSerializer, jsonOptions);
-        SecondaryIndexScanner indexScanner = new SecondaryIndexScanner(db);
+        SecondaryIndexScanner indexScanner = new SecondaryIndexScanner(db, typeInfo.CollectionName);
         _versionScanner = new VersionScanner(db, versionIndex, snapshotTxId, indexScanner);
         _writeSetOverlay = new WriteSetOverlay<T>(transaction, typeInfo.CollectionName, _reader);
     }

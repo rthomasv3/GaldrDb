@@ -38,7 +38,7 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         _sourceType = projTypeInfo.SourceType;
         _projectionType = typeof(T);
         _reader = new ProjectionDocumentReader(projTypeInfo, jsonSerializer, jsonOptions);
-        SecondaryIndexScanner indexScanner = new SecondaryIndexScanner(db);
+        SecondaryIndexScanner indexScanner = new SecondaryIndexScanner(db, _collectionName);
         _versionScanner = new VersionScanner(db, versionIndex, snapshotTxId, indexScanner);
         _writeSetOverlay = new WriteSetOverlay<object>(transaction, projTypeInfo.CollectionName, _reader);
     }

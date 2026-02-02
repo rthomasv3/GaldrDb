@@ -29,16 +29,18 @@ public class DocumentStorageTests
         }
     }
 
-    private DocumentStorage CreateDocumentStorage(string dbPath, int pageSize, out IPageIO pageIO, out PageManager pageManager)
+    private DocumentStorage CreateDocumentStorage(string dbPath, int pageSize, out IPageIO pageIO, out PageManager pageManager, out PageLockManager pageLockManager)
     {
         pageIO = new StandardPageIO(dbPath, pageSize, true);
 
         pageManager = new PageManager(pageIO, pageSize);
         pageManager.Initialize();
 
+        pageLockManager = new PageLockManager();
+
         pageIO.Flush();
 
-        return new DocumentStorage(pageIO, pageManager, pageSize);
+        return new DocumentStorage(pageIO, pageManager, pageLockManager, pageSize);
     }
 
     [TestMethod]
@@ -52,7 +54,7 @@ public class DocumentStorageTests
         string testData = "Hello, GaldrDb! This is a test document.";
         byte[] documentBytes = Encoding.UTF8.GetBytes(testData);
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager, out PageLockManager _);
         DocumentLocation location = storage.WriteDocument(documentBytes);
 
         bool result = location.PageId >= 4 && location.SlotIndex == 0;
@@ -73,7 +75,7 @@ public class DocumentStorageTests
         string testData = "Hello, GaldrDb! This is a test document.";
         byte[] documentBytes = Encoding.UTF8.GetBytes(testData);
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager, out PageLockManager _);
         DocumentLocation location = storage.WriteDocument(documentBytes);
 
         byte[] readBytes = storage.ReadDocument(location.PageId, location.SlotIndex);
@@ -102,7 +104,7 @@ public class DocumentStorageTests
         string testData = sb.ToString();
         byte[] documentBytes = Encoding.UTF8.GetBytes(testData);
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager, out PageLockManager _);
         DocumentLocation location = storage.WriteDocument(documentBytes);
 
         byte[] readBytes = storage.ReadDocument(location.PageId, location.SlotIndex);
@@ -122,7 +124,7 @@ public class DocumentStorageTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager, out PageLockManager _);
 
         string doc1 = "First document";
         string doc2 = "Second document";
@@ -155,7 +157,7 @@ public class DocumentStorageTests
         string testData = "Document to be deleted.";
         byte[] documentBytes = Encoding.UTF8.GetBytes(testData);
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager, out PageLockManager _);
         DocumentLocation location = storage.WriteDocument(documentBytes);
 
         storage.DeleteDocument(location.PageId, location.SlotIndex);
@@ -179,7 +181,7 @@ public class DocumentStorageTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager, out PageLockManager _);
 
         string doc1 = "First document to be deleted";
         DocumentLocation loc1 = storage.WriteDocument(Encoding.UTF8.GetBytes(doc1));
@@ -209,7 +211,7 @@ public class DocumentStorageTests
         string smallData = "Small";
         byte[] smallBytes = Encoding.UTF8.GetBytes(smallData);
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager, out PageLockManager _);
         DocumentLocation location = storage.WriteDocument(smallBytes);
 
         pageIO.Dispose();
@@ -232,7 +234,7 @@ public class DocumentStorageTests
             largeDocument[i] = (byte)(i % 256);
         }
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager, out PageLockManager _);
         DocumentLocation location = storage.WriteDocument(largeDocument);
 
         byte[] readDocument = storage.ReadDocument(location.PageId, location.SlotIndex);
@@ -259,11 +261,14 @@ public class DocumentStorageTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager, out PageLockManager _);
+
+        byte[] documentBytes = Encoding.UTF8.GetBytes("Test document");
+        DocumentLocation location = storage.WriteDocument(documentBytes);
 
         ArgumentOutOfRangeException exception = Assert.Throws<ArgumentOutOfRangeException>(() =>
         {
-            byte[] readBytes = storage.ReadDocument(4, 999);
+            byte[] readBytes = storage.ReadDocument(location.PageId, 999);
         });
 
         pageIO.Dispose();
@@ -284,7 +289,7 @@ public class DocumentStorageTests
 
         IPageIO pageIO1 = null;
         PageManager pageManager1 = null;
-        DocumentStorage storage1 = CreateDocumentStorage(dbPath, pageSize, out pageIO1, out pageManager1);
+        DocumentStorage storage1 = CreateDocumentStorage(dbPath, pageSize, out pageIO1, out pageManager1, out PageLockManager _);
         location = storage1.WriteDocument(documentBytes);
         pageIO1.Flush();
         pageIO1.Dispose();
@@ -292,7 +297,8 @@ public class DocumentStorageTests
         IPageIO pageIO2 = new StandardPageIO(dbPath, pageSize, false);
         PageManager pageManager2 = new PageManager(pageIO2, pageSize);
         pageManager2.Load();
-        DocumentStorage storage2 = new DocumentStorage(pageIO2, pageManager2, pageSize);
+        PageLockManager pageLockManager2 = new PageLockManager();
+        DocumentStorage storage2 = new DocumentStorage(pageIO2, pageManager2, pageLockManager2, pageSize);
 
         byte[] readBytes = storage2.ReadDocument(location.PageId, location.SlotIndex);
         string readData = Encoding.UTF8.GetString(readBytes);
@@ -311,7 +317,7 @@ public class DocumentStorageTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager, out PageLockManager _);
 
         // Write a large document that spans multiple pages
         byte[] largeDocument = new byte[5000];
@@ -348,7 +354,7 @@ public class DocumentStorageTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager, out PageLockManager _);
 
         // Write a large document that spans multiple pages
         byte[] largeDocument = new byte[5000];
@@ -384,7 +390,7 @@ public class DocumentStorageTests
         IPageIO pageIO = null;
         PageManager pageManager = null;
 
-        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager);
+        DocumentStorage storage = CreateDocumentStorage(dbPath, pageSize, out pageIO, out pageManager, out PageLockManager _);
 
         byte[] doc1 = new byte[1000];
         byte[] doc2 = new byte[1000];

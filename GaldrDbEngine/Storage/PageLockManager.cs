@@ -61,6 +61,47 @@ internal class PageLockManager : IDisposable
         }
     }
 
+    /// <summary>
+    /// Acquires write locks on multiple pages in sorted order to prevent deadlocks.
+    /// </summary>
+    public void AcquireWriteLocks(int[] pageIds, int count)
+    {
+        int[] sortedIds = new int[count];
+        Array.Copy(pageIds, sortedIds, count);
+        Array.Sort(sortedIds);
+
+        for (int i = 0; i < count; i++)
+        {
+            AcquireWriteLock(sortedIds[i]);
+        }
+    }
+
+    /// <summary>
+    /// Releases write locks on multiple pages.
+    /// </summary>
+    public void ReleaseWriteLocks(int[] pageIds, int count)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            ReleaseWriteLock(pageIds[i]);
+        }
+    }
+
+    /// <summary>
+    /// Acquires write locks on multiple pages in sorted order to prevent deadlocks (async).
+    /// </summary>
+    public async Task AcquireWriteLocksAsync(int[] pageIds, int count, CancellationToken cancellationToken = default)
+    {
+        int[] sortedIds = new int[count];
+        Array.Copy(pageIds, sortedIds, count);
+        Array.Sort(sortedIds);
+
+        for (int i = 0; i < count; i++)
+        {
+            await AcquireWriteLockAsync(sortedIds[i], cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private AsyncReaderWriterLock GetOrCreateLock(int pageId)
     {
         return _pageLocks.GetOrAdd(pageId, _ => new AsyncReaderWriterLock());

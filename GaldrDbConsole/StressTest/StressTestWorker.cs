@@ -164,6 +164,21 @@ public class StressTestWorker
                     _stats.RecordRetry();
                 }
             }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("page conflict"))
+            {
+                // Page-level conflict exhaustion - treat as retryable conflict
+                _stats.RecordWriteConflict();
+                retryCount++;
+
+                if (retryCount > _maxRetries)
+                {
+                    _stats.RecordMaxRetriesExceeded();
+                }
+                else
+                {
+                    _stats.RecordRetry();
+                }
+            }
         }
 
         sw.Stop();
@@ -293,6 +308,21 @@ public class StressTestWorker
                     _stats.RecordRetry();
                 }
             }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("page conflict"))
+            {
+                // Page-level conflict exhaustion - treat as retryable conflict
+                _stats.RecordWriteConflict();
+                retryCount++;
+
+                if (retryCount > _maxRetries)
+                {
+                    _stats.RecordMaxRetriesExceeded();
+                }
+                else
+                {
+                    _stats.RecordRetry();
+                }
+            }
         }
 
         sw.Stop();
@@ -333,6 +363,21 @@ public class StressTestWorker
             }
             catch (WriteConflictException)
             {
+                _stats.RecordWriteConflict();
+                retryCount++;
+
+                if (retryCount > _maxRetries)
+                {
+                    _stats.RecordMaxRetriesExceeded();
+                }
+                else
+                {
+                    _stats.RecordRetry();
+                }
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("page conflict"))
+            {
+                // Page-level conflict exhaustion - treat as retryable conflict
                 _stats.RecordWriteConflict();
                 retryCount++;
 

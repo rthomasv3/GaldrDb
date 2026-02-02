@@ -33,7 +33,7 @@ internal sealed class DynamicQueryExecutor : IDynamicQueryExecutor
         _collectionName = collectionName;
         _collection = collection;
         _reader = new DynamicDocumentReader();
-        SecondaryIndexScanner indexScanner = new SecondaryIndexScanner(db);
+        SecondaryIndexScanner indexScanner = new SecondaryIndexScanner(db, collectionName);
         _versionScanner = new VersionScanner(db, versionIndex, snapshotTxId, indexScanner);
         _writeSetOverlay = new WriteSetOverlay<JsonDocument>(transaction, collectionName, _reader);
     }

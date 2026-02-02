@@ -115,6 +115,25 @@ internal class BTreeNode
     }
 
     /// <summary>
+    /// Check if node is safe for insert (won't split).
+    /// A node is insert-safe if it has room for at least one more key.
+    /// </summary>
+    public static bool IsSafeForInsert(byte[] buffer, int order)
+    {
+        return GetKeyCount(buffer) < order - 1;
+    }
+
+    /// <summary>
+    /// Check if node is safe for delete (won't underflow/rebalance).
+    /// A node is delete-safe if it has more than the minimum required keys.
+    /// </summary>
+    public static bool IsSafeForDelete(byte[] buffer, int order)
+    {
+        int minKeys = (order - 1) / 2;
+        return GetKeyCount(buffer) > minKeys;
+    }
+
+    /// <summary>
     /// Insert a key and value into a leaf node at the correct position.
     /// Shifts existing entries to make room. Returns the insert position.
     /// </summary>

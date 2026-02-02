@@ -7,10 +7,12 @@ namespace GaldrDbEngine.Query.Execution;
 internal sealed class SecondaryIndexScanner
 {
     private readonly GaldrDb _db;
+    private readonly string _collectionName;
 
-    public SecondaryIndexScanner(GaldrDb db)
+    public SecondaryIndexScanner(GaldrDb db, string collectionName)
     {
         _db = db;
+        _collectionName = collectionName;
     }
 
     public List<SecondaryIndexEntry> GetEntries(QueryPlan plan)
@@ -44,11 +46,11 @@ internal sealed class SecondaryIndexScanner
 
         if (operation == SecondaryIndexOperation.ExactMatch)
         {
-            entries = _db.SearchSecondaryIndexExact(indexDef, startKey);
+            entries = _db.SearchSecondaryIndexExact(_collectionName, indexDef, startKey);
         }
         else if (operation == SecondaryIndexOperation.PrefixMatch)
         {
-            entries = _db.SearchSecondaryIndex(indexDef, startKey);
+            entries = _db.SearchSecondaryIndex(_collectionName, indexDef, startKey);
         }
         else if (operation == SecondaryIndexOperation.RangeScan)
         {
@@ -59,7 +61,7 @@ internal sealed class SecondaryIndexScanner
                 IFieldFilter lastFilter = indexSpec.MatchedFilters[indexSpec.MatchedFilters.Count - 1];
                 includeEnd = lastFilter.Operation != FieldOp.LessThan;
             }
-            entries = _db.SearchSecondaryIndexRange(indexDef, startKey, endKey, includeStart, includeEnd);
+            entries = _db.SearchSecondaryIndexRange(_collectionName, indexDef, startKey, endKey, includeStart, includeEnd);
         }
         else if (operation == SecondaryIndexOperation.PrefixRangeScan)
         {
@@ -70,7 +72,7 @@ internal sealed class SecondaryIndexScanner
                 IFieldFilter lastFilter = indexSpec.MatchedFilters[indexSpec.MatchedFilters.Count - 1];
                 includeStart = lastFilter.Operation != FieldOp.GreaterThan;
             }
-            entries = _db.SearchSecondaryIndexPrefixRange(indexDef, startKey, prefixKey, includeStart);
+            entries = _db.SearchSecondaryIndexPrefixRange(_collectionName, indexDef, startKey, prefixKey, includeStart);
         }
         else
         {
@@ -87,11 +89,11 @@ internal sealed class SecondaryIndexScanner
 
         if (filter.Operation == FieldOp.Equals)
         {
-            entries = _db.SearchSecondaryIndexExact(indexDef, keyBytes);
+            entries = _db.SearchSecondaryIndexExact(_collectionName, indexDef, keyBytes);
         }
         else if (filter.Operation == FieldOp.StartsWith)
         {
-            entries = _db.SearchSecondaryIndex(indexDef, keyBytes);
+            entries = _db.SearchSecondaryIndex(_collectionName, indexDef, keyBytes);
         }
         else if (filter.Operation == FieldOp.In)
         {
@@ -99,7 +101,7 @@ internal sealed class SecondaryIndexScanner
             HashSet<int> seenDocIds = new HashSet<int>();
             foreach (byte[] valueKeyBytes in filter.GetAllIndexKeyBytes())
             {
-                List<SecondaryIndexEntry> valueEntries = _db.SearchSecondaryIndexExact(indexDef, valueKeyBytes);
+                List<SecondaryIndexEntry> valueEntries = _db.SearchSecondaryIndexExact(_collectionName, indexDef, valueKeyBytes);
                 foreach (SecondaryIndexEntry entry in valueEntries)
                 {
                     if (seenDocIds.Add(entry.DocId))
@@ -112,23 +114,23 @@ internal sealed class SecondaryIndexScanner
         else if (filter.Operation == FieldOp.Between)
         {
             byte[] endKeyBytes = filter.GetIndexKeyEndBytes();
-            entries = _db.SearchSecondaryIndexRange(indexDef, keyBytes, endKeyBytes, true, true);
+            entries = _db.SearchSecondaryIndexRange(_collectionName, indexDef, keyBytes, endKeyBytes, true, true);
         }
         else if (filter.Operation == FieldOp.GreaterThan)
         {
-            entries = _db.SearchSecondaryIndexRange(indexDef, keyBytes, null, false, true);
+            entries = _db.SearchSecondaryIndexRange(_collectionName, indexDef, keyBytes, null, false, true);
         }
         else if (filter.Operation == FieldOp.GreaterThanOrEqual)
         {
-            entries = _db.SearchSecondaryIndexRange(indexDef, keyBytes, null, true, true);
+            entries = _db.SearchSecondaryIndexRange(_collectionName, indexDef, keyBytes, null, true, true);
         }
         else if (filter.Operation == FieldOp.LessThan)
         {
-            entries = _db.SearchSecondaryIndexRange(indexDef, IndexKeyEncoder.MinimumNonNullKey, keyBytes, true, false);
+            entries = _db.SearchSecondaryIndexRange(_collectionName, indexDef, IndexKeyEncoder.MinimumNonNullKey, keyBytes, true, false);
         }
         else if (filter.Operation == FieldOp.LessThanOrEqual)
         {
-            entries = _db.SearchSecondaryIndexRange(indexDef, IndexKeyEncoder.MinimumNonNullKey, keyBytes, true, true);
+            entries = _db.SearchSecondaryIndexRange(_collectionName, indexDef, IndexKeyEncoder.MinimumNonNullKey, keyBytes, true, true);
         }
         else
         {

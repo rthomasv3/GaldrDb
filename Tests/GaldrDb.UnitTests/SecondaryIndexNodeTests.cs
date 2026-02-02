@@ -158,6 +158,8 @@ public class SecondaryIndexNodeTests
 
         StandardPageIO pageIO = new StandardPageIO(filePath, pageSize, true);
         PageManager pageManager = new PageManager(pageIO, pageSize);
+        PageLockManager pageLockManager = new PageLockManager();
+        
         pageManager.Initialize();
 
         int rootPageId = pageManager.AllocatePage();
@@ -166,7 +168,7 @@ public class SecondaryIndexNodeTests
         rootNode.SerializeTo(rootBuffer);
         pageIO.WritePage(rootPageId, rootBuffer);
 
-        SecondaryIndexBTree tree = new SecondaryIndexBTree(pageIO, pageManager, rootPageId, pageSize, pageSize, maxKeys);
+        SecondaryIndexBTree tree = new SecondaryIndexBTree(pageIO, pageManager, pageLockManager, rootPageId, pageSize, pageSize, maxKeys);
 
         byte[] key = Encoding.UTF8.GetBytes("TestKey");
         byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(key, 1);
@@ -333,11 +335,12 @@ public class SecondaryIndexNodeTests
 
     #region SecondaryIndexBTree Delete Tests
 
-    private SecondaryIndexBTree CreateSecondaryIndexBTree(string dbPath, int pageSize, int maxKeys, out IPageIO pageIO, out PageManager pageManager)
+    private SecondaryIndexBTree CreateSecondaryIndexBTree(string dbPath, int pageSize, int maxKeys, out IPageIO pageIO, out PageManager pageManager, out PageLockManager pageLockManager)
     {
         pageIO = new StandardPageIO(dbPath, pageSize, true);
         pageManager = new PageManager(pageIO, pageSize);
         pageManager.Initialize();
+        pageLockManager = new PageLockManager();
 
         int rootPageId = pageManager.AllocatePage();
         SecondaryIndexNode rootNode = new SecondaryIndexNode(pageSize, maxKeys, BTreeNodeType.Leaf);
@@ -346,7 +349,7 @@ public class SecondaryIndexNodeTests
         pageIO.WritePage(rootPageId, rootBuffer);
         pageIO.Flush();
 
-        return new SecondaryIndexBTree(pageIO, pageManager, rootPageId, pageSize, pageSize, maxKeys);
+        return new SecondaryIndexBTree(pageIO, pageManager, pageLockManager, rootPageId, pageSize, pageSize, maxKeys);
     }
 
     [TestMethod]
@@ -358,7 +361,7 @@ public class SecondaryIndexNodeTests
 
         IPageIO pageIO = null;
         PageManager pageManager = null;
-        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(filePath, pageSize, maxKeys, out pageIO, out pageManager);
+        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(filePath, pageSize, maxKeys, out pageIO, out pageManager, out PageLockManager _);
 
         byte[] key = Encoding.UTF8.GetBytes("TestKey");
         byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(key, 1);
@@ -382,7 +385,7 @@ public class SecondaryIndexNodeTests
 
         IPageIO pageIO = null;
         PageManager pageManager = null;
-        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(filePath, pageSize, maxKeys, out pageIO, out pageManager);
+        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(filePath, pageSize, maxKeys, out pageIO, out pageManager, out PageLockManager _);
 
         byte[] key = Encoding.UTF8.GetBytes("NonExistent");
         byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(key, 1);
@@ -403,7 +406,7 @@ public class SecondaryIndexNodeTests
 
         IPageIO pageIO = null;
         PageManager pageManager = null;
-        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(filePath, pageSize, maxKeys, out pageIO, out pageManager);
+        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(filePath, pageSize, maxKeys, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 5; i++)
         {
@@ -443,7 +446,7 @@ public class SecondaryIndexNodeTests
 
         IPageIO pageIO = null;
         PageManager pageManager = null;
-        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(filePath, pageSize, maxKeys, out pageIO, out pageManager);
+        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(filePath, pageSize, maxKeys, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 20; i++)
         {
@@ -497,7 +500,7 @@ public class SecondaryIndexNodeTests
 
         IPageIO pageIO = null;
         PageManager pageManager = null;
-        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(filePath, pageSize, maxKeys, out pageIO, out pageManager);
+        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(filePath, pageSize, maxKeys, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 20; i++)
         {
@@ -559,7 +562,7 @@ public class SecondaryIndexNodeTests
 
         IPageIO pageIO = null;
         PageManager pageManager = null;
-        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(filePath, pageSize, maxKeys, out pageIO, out pageManager);
+        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(filePath, pageSize, maxKeys, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 100; i++)
         {
@@ -608,7 +611,7 @@ public class SecondaryIndexNodeTests
 
         IPageIO pageIO = null;
         PageManager pageManager = null;
-        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(filePath, pageSize, maxKeys, out pageIO, out pageManager);
+        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(filePath, pageSize, maxKeys, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 10; i++)
         {
@@ -649,7 +652,7 @@ public class SecondaryIndexNodeTests
 
         IPageIO pageIO;
         PageManager pageManager;
-        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(dbPath, pageSize, maxKeys, out pageIO, out pageManager);
+        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(dbPath, pageSize, maxKeys, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 200; i++)
         {
@@ -684,7 +687,7 @@ public class SecondaryIndexNodeTests
 
         IPageIO pageIO;
         PageManager pageManager;
-        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(dbPath, pageSize, maxKeys, out pageIO, out pageManager);
+        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(dbPath, pageSize, maxKeys, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 300; i++)
         {
@@ -738,7 +741,7 @@ public class SecondaryIndexNodeTests
 
         IPageIO pageIO;
         PageManager pageManager;
-        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(dbPath, pageSize, maxKeys, out pageIO, out pageManager);
+        SecondaryIndexBTree tree = CreateSecondaryIndexBTree(dbPath, pageSize, maxKeys, out pageIO, out pageManager, out PageLockManager _);
 
         for (int i = 1; i <= 50; i++)
         {

@@ -14,14 +14,18 @@ internal class BTree
 
     private readonly IPageIO _pageIO;
     private readonly PageManager _pageManager;
+    private readonly PageLockManager _pageLockManager;
+    private readonly AsyncReaderWriterLock _rootLock;
     private readonly int _pageSize;
     private readonly int _order;
     private int _rootPageId;
 
-    public BTree(IPageIO pageIO, PageManager pageManager, int rootPageId, int pageSize, int order)
+    public BTree(IPageIO pageIO, PageManager pageManager, PageLockManager pageLockManager, int rootPageId, int pageSize, int order)
     {
         _pageIO = pageIO;
         _pageManager = pageManager;
+        _pageLockManager = pageLockManager;
+        _rootLock = new AsyncReaderWriterLock();
         _rootPageId = rootPageId;
         _pageSize = pageSize;
         _order = order;
@@ -37,9 +41,13 @@ internal class BTree
         byte[] buffer = BufferPool.Rent(_pageSize);
         byte[] childBuffer = BufferPool.Rent(_pageSize);
         BTreeNode newRoot = null;
+        LockStack heldLocks = new LockStack(_pageLockManager, true);
         try
         {
-            _pageIO.ReadPage(_rootPageId, buffer);
+            _rootLock.EnterWriteLock();
+            int rootPageId = _rootPageId;
+            _pageLockManager.AcquireWriteLock(rootPageId);
+            _pageIO.ReadPage(rootPageId, buffer);
 
             if (BTreeNode.IsNodeFull(buffer, _order))
             {
@@ -50,18 +58,24 @@ internal class BTree
                     BTreeNode.DeserializeTo(buffer, root, _order);
 
                     int newRootPageId = _pageManager.AllocatePage();
+                    _pageLockManager.AcquireWriteLock(newRootPageId);
                     newRoot = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Internal);
-                    newRoot.ChildPageIds.Add(_rootPageId);
+                    newRoot.ChildPageIds.Add(rootPageId);
 
                     newRoot.SerializeTo(buffer);
                     _pageIO.WritePage(newRootPageId, buffer);
 
-                    SplitChild(newRootPageId, 0, _rootPageId);
+                    SplitChild(newRootPageId, 0, rootPageId);
                     _rootPageId = newRootPageId;
+                    _rootLock.ExitWriteLock();
+
+                    // Release rootPageId lock - InsertNonFull will acquire child locks as needed
+                    _pageLockManager.ReleaseWriteLock(rootPageId);
+                    heldLocks.Push(newRootPageId);
 
                     // Re-read the new root for InsertNonFull
-                    _pageIO.ReadPage(_rootPageId, buffer);
-                    InsertNonFull(_rootPageId, buffer, childBuffer, docId, location);
+                    _pageIO.ReadPage(newRootPageId, buffer);
+                    InsertNonFull(newRootPageId, buffer, childBuffer, docId, location, heldLocks);
                 }
                 finally
                 {
@@ -70,12 +84,15 @@ internal class BTree
             }
             else
             {
-                // Pass the already-read buffer to InsertNonFull
-                InsertNonFull(_rootPageId, buffer, childBuffer, docId, location);
+                // Root won't change, release root lock but keep page lock
+                _rootLock.ExitWriteLock();
+                heldLocks.Push(rootPageId);
+                InsertNonFull(rootPageId, buffer, childBuffer, docId, location, heldLocks);
             }
         }
         finally
         {
+            heldLocks.ReleaseAll();
             BufferPool.Return(buffer);
             BufferPool.Return(childBuffer);
             BTreeNodePool.Return(newRoot);
@@ -84,7 +101,10 @@ internal class BTree
 
     public DocumentLocation? Search(int docId)
     {
-        return SearchNode(_rootPageId, docId);
+        _rootLock.EnterReadLock();
+        int rootPageId = _rootPageId;
+        _rootLock.ExitReadLock();
+        return SearchNode(rootPageId, docId);
     }
 
     /// <summary>
@@ -95,10 +115,15 @@ internal class BTree
     {
         bool updated = false;
 
+        _rootLock.EnterReadLock();
+        int rootPageId = _rootPageId;
+        _rootLock.ExitReadLock();
+
         byte[] buffer = BufferPool.Rent(_pageSize);
         try
         {
-            int currentPageId = _rootPageId;
+            int currentPageId = rootPageId;
+            _pageLockManager.AcquireWriteLock(currentPageId);
 
             while (currentPageId != 0)
             {
@@ -114,11 +139,15 @@ internal class BTree
                         _pageIO.WritePage(currentPageId, buffer);
                         updated = true;
                     }
-                    break;
+                    _pageLockManager.ReleaseWriteLock(currentPageId);
+                    currentPageId = 0;
                 }
                 else
                 {
-                    currentPageId = BTreeNode.GetChildPageId(buffer, keyCount, pos);
+                    int childPageId = BTreeNode.GetChildPageId(buffer, keyCount, pos);
+                    _pageLockManager.AcquireWriteLock(childPageId);
+                    _pageLockManager.ReleaseWriteLock(currentPageId);
+                    currentPageId = childPageId;
                 }
             }
         }
@@ -134,16 +163,22 @@ internal class BTree
     {
         List<BTreeEntry> results = new List<BTreeEntry>();
 
+        _rootLock.EnterReadLock();
+        int rootPageId = _rootPageId;
+        _rootLock.ExitReadLock();
+
         byte[] buffer = BufferPool.Rent(_pageSize);
         BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
-            int leafPageId = FindLeafForKey(_rootPageId, startDocId, buffer, node);
+            // FindLeafForKey returns with read lock held on the leaf
+            int leafPageId = FindLeafForKey(rootPageId, startDocId, buffer, node);
             int currentPageId = leafPageId;
             bool continueScanning = currentPageId != 0;
 
             while (continueScanning)
             {
+                // Read lock already held on currentPageId from FindLeafForKey or previous iteration
                 _pageIO.ReadPage(currentPageId, buffer);
                 BTreeNode.DeserializeTo(buffer, node, _order);
 
@@ -151,11 +186,15 @@ internal class BTree
 
                 if (exceededEnd || node.NextLeaf == 0)
                 {
+                    _pageLockManager.ReleaseReadLock(currentPageId);
                     continueScanning = false;
                 }
                 else
                 {
-                    currentPageId = node.NextLeaf;
+                    int nextPageId = node.NextLeaf;
+                    _pageLockManager.AcquireReadLock(nextPageId);
+                    _pageLockManager.ReleaseReadLock(currentPageId);
+                    currentPageId = nextPageId;
                 }
             }
         }
@@ -168,9 +207,13 @@ internal class BTree
         return results;
     }
 
+    /// <summary>
+    /// Finds the leaf containing the target key. Returns with read lock held on the leaf.
+    /// </summary>
     private int FindLeafForKey(int pageId, int targetKey, byte[] buffer, BTreeNode node)
     {
         int currentPageId = pageId;
+        _pageLockManager.AcquireReadLock(currentPageId);
 
         while (currentPageId != 0)
         {
@@ -179,6 +222,7 @@ internal class BTree
 
             if (node.NodeType == BTreeNodeType.Leaf)
             {
+                // Return with read lock still held
                 break;
             }
 
@@ -188,7 +232,10 @@ internal class BTree
                 i++;
             }
 
-            currentPageId = node.ChildPageIds[i];
+            int childPageId = node.ChildPageIds[i];
+            _pageLockManager.AcquireReadLock(childPageId);
+            _pageLockManager.ReleaseReadLock(currentPageId);
+            currentPageId = childPageId;
         }
 
         return currentPageId;
@@ -223,23 +270,35 @@ internal class BTree
 
     public bool Delete(int docId)
     {
-        return DeleteFromNode(_rootPageId, docId);
+        _rootLock.EnterWriteLock();
+        int rootPageId = _rootPageId;
+        _rootLock.ExitWriteLock();
+        return DeleteFromNode(rootPageId, docId);
     }
 
     public List<BTreeEntry> GetAllEntries()
     {
+        _rootLock.EnterReadLock();
+        int rootPageId = _rootPageId;
+        _rootLock.ExitReadLock();
+
         List<BTreeEntry> entries = new List<BTreeEntry>();
-        CollectAllEntries(_rootPageId, entries);
+        CollectAllEntries(rootPageId, entries);
         return entries;
     }
 
     public void IterateAll(Func<BTreeEntry, bool> visitor)
     {
+        _rootLock.EnterReadLock();
+        int rootPageId = _rootPageId;
+        _rootLock.ExitReadLock();
+
         byte[] buffer = BufferPool.Rent(_pageSize);
         BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
-            int leafPageId = FindLeftmostLeaf(_rootPageId, buffer, node);
+            // FindLeftmostLeaf returns with read lock held on the leaf
+            int leafPageId = FindLeftmostLeaf(rootPageId, buffer, node);
             int currentPageId = leafPageId;
             bool continueScanning = currentPageId != 0;
 
@@ -262,12 +321,20 @@ internal class BTree
                 {
                     if (node.NextLeaf == 0)
                     {
+                        _pageLockManager.ReleaseReadLock(currentPageId);
                         continueScanning = false;
                     }
                     else
                     {
-                        currentPageId = node.NextLeaf;
+                        int nextPageId = node.NextLeaf;
+                        _pageLockManager.AcquireReadLock(nextPageId);
+                        _pageLockManager.ReleaseReadLock(currentPageId);
+                        currentPageId = nextPageId;
                     }
+                }
+                else
+                {
+                    _pageLockManager.ReleaseReadLock(currentPageId);
                 }
             }
         }
@@ -280,11 +347,16 @@ internal class BTree
 
     public async Task IterateAllAsync(Func<BTreeEntry, bool> visitor, CancellationToken cancellationToken = default)
     {
+        await _rootLock.EnterReadLockAsync(cancellationToken).ConfigureAwait(false);
+        int rootPageId = _rootPageId;
+        _rootLock.ExitReadLock();
+
         byte[] buffer = BufferPool.Rent(_pageSize);
         BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
-            int leafPageId = await FindLeftmostLeafAsync(_rootPageId, buffer, node, cancellationToken).ConfigureAwait(false);
+            // FindLeftmostLeafAsync returns with read lock held on the leaf
+            int leafPageId = await FindLeftmostLeafAsync(rootPageId, buffer, node, cancellationToken).ConfigureAwait(false);
             int currentPageId = leafPageId;
             bool continueScanning = currentPageId != 0;
 
@@ -307,12 +379,20 @@ internal class BTree
                 {
                     if (node.NextLeaf == 0)
                     {
+                        _pageLockManager.ReleaseReadLock(currentPageId);
                         continueScanning = false;
                     }
                     else
                     {
-                        currentPageId = node.NextLeaf;
+                        int nextPageId = node.NextLeaf;
+                        await _pageLockManager.AcquireReadLockAsync(nextPageId, cancellationToken).ConfigureAwait(false);
+                        _pageLockManager.ReleaseReadLock(currentPageId);
+                        currentPageId = nextPageId;
                     }
+                }
+                else
+                {
+                    _pageLockManager.ReleaseReadLock(currentPageId);
                 }
             }
         }
@@ -323,9 +403,13 @@ internal class BTree
         }
     }
 
+    /// <summary>
+    /// Finds the leftmost leaf. Returns with read lock held on the leaf.
+    /// </summary>
     private int FindLeftmostLeaf(int pageId, byte[] buffer, BTreeNode node)
     {
         int currentPageId = pageId;
+        _pageLockManager.AcquireReadLock(currentPageId);
 
         while (currentPageId != 0)
         {
@@ -334,18 +418,26 @@ internal class BTree
 
             if (node.NodeType == BTreeNodeType.Leaf)
             {
+                // Return with read lock still held
                 break;
             }
 
-            currentPageId = node.ChildPageIds[0];
+            int childPageId = node.ChildPageIds[0];
+            _pageLockManager.AcquireReadLock(childPageId);
+            _pageLockManager.ReleaseReadLock(currentPageId);
+            currentPageId = childPageId;
         }
 
         return currentPageId;
     }
 
+    /// <summary>
+    /// Finds the leftmost leaf. Returns with read lock held on the leaf.
+    /// </summary>
     private async Task<int> FindLeftmostLeafAsync(int pageId, byte[] buffer, BTreeNode node, CancellationToken cancellationToken)
     {
         int currentPageId = pageId;
+        await _pageLockManager.AcquireReadLockAsync(currentPageId, cancellationToken).ConfigureAwait(false);
 
         while (currentPageId != 0)
         {
@@ -354,10 +446,14 @@ internal class BTree
 
             if (node.NodeType == BTreeNodeType.Leaf)
             {
+                // Return with read lock still held
                 break;
             }
 
-            currentPageId = node.ChildPageIds[0];
+            int childPageId = node.ChildPageIds[0];
+            await _pageLockManager.AcquireReadLockAsync(childPageId, cancellationToken).ConfigureAwait(false);
+            _pageLockManager.ReleaseReadLock(currentPageId);
+            currentPageId = childPageId;
         }
 
         return currentPageId;
@@ -365,11 +461,15 @@ internal class BTree
 
     public List<int> CollectAllPageIds()
     {
+        _rootLock.EnterReadLock();
+        int rootPageId = _rootPageId;
+        _rootLock.ExitReadLock();
+
         List<int> pageIds = new List<int>();
         byte[] buffer = BufferPool.Rent(_pageSize);
         BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         Stack<int> pageStack = new Stack<int>();
-        pageStack.Push(_rootPageId);
+        pageStack.Push(rootPageId);
 
         try
         {
@@ -378,6 +478,7 @@ internal class BTree
                 int currentPageId = pageStack.Pop();
                 pageIds.Add(currentPageId);
 
+                _pageLockManager.AcquireReadLock(currentPageId);
                 _pageIO.ReadPage(currentPageId, buffer);
                 BTreeNode.DeserializeTo(buffer, node, _order);
 
@@ -388,6 +489,7 @@ internal class BTree
                         pageStack.Push(node.ChildPageIds[i]);
                     }
                 }
+                _pageLockManager.ReleaseReadLock(currentPageId);
             }
         }
         finally
@@ -411,6 +513,7 @@ internal class BTree
             while (pageStack.Count > 0)
             {
                 int currentPageId = pageStack.Pop();
+                _pageLockManager.AcquireReadLock(currentPageId);
                 _pageIO.ReadPage(currentPageId, buffer);
                 BTreeNode.DeserializeTo(buffer, node, _order);
 
@@ -429,6 +532,7 @@ internal class BTree
                         pageStack.Push(node.ChildPageIds[i]);
                     }
                 }
+                _pageLockManager.ReleaseReadLock(currentPageId);
             }
         }
         finally
@@ -445,10 +549,13 @@ internal class BTree
         byte[] buffer = BufferPool.Rent(_pageSize);
         BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         List<DeletePathEntry> path = ListPool<DeletePathEntry>.Rent(MAX_TREE_DEPTH);
+        LockStack heldLocks = new LockStack(_pageLockManager, true);
         try
         {
             int currentPageId = pageId;
             int leafPageId = 0;
+            _pageLockManager.AcquireWriteLock(currentPageId);
+            heldLocks.Push(currentPageId);
 
             while (currentPageId != 0)
             {
@@ -479,18 +586,37 @@ internal class BTree
                 }
                 else
                 {
+                    int childPageId = node.ChildPageIds[i];
+                    _pageLockManager.AcquireWriteLock(childPageId);
+
+                    // Read child to check if it's safe
+                    byte[] childBuffer = BufferPool.Rent(_pageSize);
+                    _pageIO.ReadPage(childPageId, childBuffer);
+
+                    // Safe node optimization: if child won't underflow, release ancestor locks
+                    // but keep parent (currentPageId) for potential rebalancing
+                    if (BTreeNode.IsSafeForDelete(childBuffer, _order))
+                    {
+                        heldLocks.ReleaseAllExcept(currentPageId);
+                        path.Clear();
+                    }
+
+                    BufferPool.Return(childBuffer);
+
                     path.Add(new DeletePathEntry(currentPageId, i));
-                    currentPageId = node.ChildPageIds[i];
+                    heldLocks.Push(childPageId);
+                    currentPageId = childPageId;
                 }
             }
 
-            if (result && leafPageId != 0)
+            if (result && leafPageId != 0 && node.IsUnderflow() && leafPageId != pageId)
             {
-                RebalanceAfterDelete(path, leafPageId, node);
+                RebalanceAfterDelete(path, leafPageId, node, heldLocks);
             }
         }
         finally
         {
+            heldLocks.ReleaseAll();
             BufferPool.Return(buffer);
             BTreeNodePool.Return(node);
             ListPool<DeletePathEntry>.Return(path);
@@ -499,12 +625,13 @@ internal class BTree
         return result;
     }
 
-    private void RebalanceAfterDelete(List<DeletePathEntry> path, int nodePageId, BTreeNode node)
+    private void RebalanceAfterDelete(List<DeletePathEntry> path, int nodePageId, BTreeNode node, LockStack heldLocks)
     {
         byte[] parentBuffer = BufferPool.Rent(_pageSize);
         byte[] siblingBuffer = BufferPool.Rent(_pageSize);
         BTreeNode parent = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Internal);
         BTreeNode sibling = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+        int siblingLockHeld = 0;
 
         try
         {
@@ -525,6 +652,7 @@ internal class BTree
                 if (childIndex > 0)
                 {
                     int leftSiblingPageId = parent.ChildPageIds[childIndex - 1];
+                    AcquireSiblingLock(leftSiblingPageId, heldLocks, ref siblingLockHeld);
                     _pageIO.ReadPage(leftSiblingPageId, siblingBuffer);
                     BTreeNode.DeserializeTo(siblingBuffer, sibling, _order);
 
@@ -535,11 +663,13 @@ internal class BTree
                                               currentPageId, node, childIndex);
                         rebalanced = true;
                     }
+                    ReleaseSiblingLock(ref siblingLockHeld);
                 }
 
                 if (!rebalanced && childIndex < parent.KeyCount)
                 {
                     int rightSiblingPageId = parent.ChildPageIds[childIndex + 1];
+                    AcquireSiblingLock(rightSiblingPageId, heldLocks, ref siblingLockHeld);
                     _pageIO.ReadPage(rightSiblingPageId, siblingBuffer);
                     BTreeNode.DeserializeTo(siblingBuffer, sibling, _order);
 
@@ -551,6 +681,7 @@ internal class BTree
                                                childIndex);
                         rebalanced = true;
                     }
+                    ReleaseSiblingLock(ref siblingLockHeld);
                 }
 
                 if (!rebalanced)
@@ -558,6 +689,7 @@ internal class BTree
                     if (childIndex > 0)
                     {
                         int leftSiblingPageId = parent.ChildPageIds[childIndex - 1];
+                        AcquireSiblingLock(leftSiblingPageId, heldLocks, ref siblingLockHeld);
                         _pageIO.ReadPage(leftSiblingPageId, siblingBuffer);
                         BTreeNode.DeserializeTo(siblingBuffer, sibling, _order);
 
@@ -565,6 +697,7 @@ internal class BTree
                                              leftSiblingPageId, sibling, siblingBuffer,
                                              currentPageId, node, childIndex);
 
+                        ReleaseSiblingLock(ref siblingLockHeld);
                         currentPageId = parentPageId;
                         _pageIO.ReadPage(parentPageId, parentBuffer);
                         BTreeNode.DeserializeTo(parentBuffer, node, _order);
@@ -572,6 +705,7 @@ internal class BTree
                     else
                     {
                         int rightSiblingPageId = parent.ChildPageIds[childIndex + 1];
+                        AcquireSiblingLock(rightSiblingPageId, heldLocks, ref siblingLockHeld);
                         _pageIO.ReadPage(rightSiblingPageId, siblingBuffer);
                         BTreeNode.DeserializeTo(siblingBuffer, sibling, _order);
 
@@ -580,6 +714,7 @@ internal class BTree
                                               rightSiblingPageId, sibling, siblingBuffer,
                                               childIndex);
 
+                        ReleaseSiblingLock(ref siblingLockHeld);
                         currentPageId = parentPageId;
                         _pageIO.ReadPage(parentPageId, parentBuffer);
                         BTreeNode.DeserializeTo(parentBuffer, node, _order);
@@ -595,17 +730,66 @@ internal class BTree
 
             if (pathIndex < 0 && node.NodeType == BTreeNodeType.Internal && node.KeyCount == 0)
             {
+                _rootLock.EnterWriteLock();
                 int newRootPageId = node.ChildPageIds[0];
                 _pageManager.DeallocatePage(_rootPageId);
                 _rootPageId = newRootPageId;
+                _rootLock.ExitWriteLock();
             }
         }
         finally
         {
+            ReleaseSiblingLock(ref siblingLockHeld);
             BufferPool.Return(parentBuffer);
             BufferPool.Return(siblingBuffer);
             BTreeNodePool.Return(parent);
             BTreeNodePool.Return(sibling);
+        }
+    }
+
+    private void AcquireSiblingLock(int siblingPageId, LockStack heldLocks, ref int siblingLockHeld)
+    {
+        // Throw if sibling is already held (would cause deadlock)
+        if (heldLocks.Contains(siblingPageId))
+        {
+            throw new InvalidOperationException($"Sibling page {siblingPageId} is already in heldLocks - this indicates tree corruption (duplicate child pointers)");
+        }
+
+        int minHeld = heldLocks.GetMinPageId();
+        if (siblingPageId < minHeld)
+        {
+            // Need to release all and re-acquire in sorted order
+            int[] pageIds = new int[heldLocks.Count + 1];
+            int count = heldLocks.CopyTo(pageIds);
+
+            // Save original page IDs before AcquireWriteLocks sorts the array
+            int[] originalPageIds = new int[count];
+            Array.Copy(pageIds, originalPageIds, count);
+
+            pageIds[count] = siblingPageId;
+            heldLocks.ReleaseAll();
+
+            _pageLockManager.AcquireWriteLocks(pageIds, count + 1);
+
+            // Rebuild heldLocks from original (without sibling - it's tracked separately)
+            for (int i = 0; i < count; i++)
+            {
+                heldLocks.Push(originalPageIds[i]);
+            }
+        }
+        else
+        {
+            _pageLockManager.AcquireWriteLock(siblingPageId);
+        }
+        siblingLockHeld = siblingPageId;
+    }
+
+    private void ReleaseSiblingLock(ref int siblingLockHeld)
+    {
+        if (siblingLockHeld != 0)
+        {
+            _pageLockManager.ReleaseWriteLock(siblingLockHeld);
+            siblingLockHeld = 0;
         }
     }
 
@@ -819,6 +1003,7 @@ internal class BTree
         try
         {
             int currentPageId = pageId;
+            _pageLockManager.AcquireReadLock(currentPageId);
 
             while (currentPageId != 0)
             {
@@ -832,11 +1017,15 @@ internal class BTree
                     {
                         result = BTreeNode.GetLeafValue(buffer, keyCount, pos);
                     }
+                    _pageLockManager.ReleaseReadLock(currentPageId);
                     break;
                 }
                 else
                 {
-                    currentPageId = BTreeNode.GetChildPageId(buffer, keyCount, pos);
+                    int childPageId = BTreeNode.GetChildPageId(buffer, keyCount, pos);
+                    _pageLockManager.AcquireReadLock(childPageId);
+                    _pageLockManager.ReleaseReadLock(currentPageId);
+                    currentPageId = childPageId;
                 }
             }
         }
@@ -848,7 +1037,7 @@ internal class BTree
         return result;
     }
 
-    private void InsertNonFull(int pageId, byte[] buffer, byte[] childBuffer, int docId, DocumentLocation location)
+    private void InsertNonFull(int pageId, byte[] buffer, byte[] childBuffer, int docId, DocumentLocation location, LockStack heldLocks)
     {
         int currentPageId = pageId;
 
@@ -869,11 +1058,19 @@ internal class BTree
                 int childIndex = BTreeNode.FindChildIndex(buffer, keyCount, docId);
                 int childPageId = BTreeNode.GetChildPageId(buffer, keyCount, childIndex);
 
-                // Read child and check if full
+                // Acquire lock on child before reading
+                _pageLockManager.AcquireWriteLock(childPageId);
                 _pageIO.ReadPage(childPageId, childBuffer);
+
+                // Safe node optimization: if child won't split, release all ancestor locks
+                if (BTreeNode.IsSafeForInsert(childBuffer, _order))
+                {
+                    heldLocks.ReleaseAll();
+                }
+
                 if (BTreeNode.IsNodeFull(childBuffer, _order))
                 {
-                    // Need to split child
+                    // Need to split child - we hold locks on parent and child
                     SplitChild(currentPageId, childIndex, childPageId);
 
                     // Re-read current node after split to get updated key
@@ -881,15 +1078,22 @@ internal class BTree
                     keyCount = BTreeNode.GetKeyCount(buffer);
 
                     // Check which child to descend into after split
+                    int newChildPageId;
                     if (docId > BTreeNode.GetKey(buffer, childIndex))
                     {
                         childIndex++;
+                        newChildPageId = BTreeNode.GetChildPageId(buffer, keyCount, childIndex);
+                        // The new child was created by split, need to acquire its lock
+                        _pageLockManager.AcquireWriteLock(newChildPageId);
+                        _pageLockManager.ReleaseWriteLock(childPageId);
+                        childPageId = newChildPageId;
                     }
-                    childPageId = BTreeNode.GetChildPageId(buffer, keyCount, childIndex);
 
                     // Read the correct child after split
                     _pageIO.ReadPage(childPageId, childBuffer);
                 }
+
+                heldLocks.Push(childPageId);
 
                 // Swap buffers: childBuffer becomes buffer for next iteration
                 byte[] temp = buffer;
@@ -907,6 +1111,7 @@ internal class BTree
         BTreeNode fullChild = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         BTreeNode parent = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         BTreeNode newChild = null;
+        int newChildPageId = 0;
         try
         {
             _pageIO.ReadPage(childPageId, childBuffer);
@@ -915,7 +1120,8 @@ internal class BTree
             _pageIO.ReadPage(parentPageId, parentBuffer);
             BTreeNode.DeserializeTo(parentBuffer, parent, _order);
 
-            int newChildPageId = _pageManager.AllocatePage();
+            newChildPageId = _pageManager.AllocatePage();
+            _pageLockManager.AcquireWriteLock(newChildPageId);
             newChild = BTreeNodePool.Rent(_pageSize, _order, fullChild.NodeType);
 
             int mid = (_order - 1) / 2;
@@ -992,6 +1198,10 @@ internal class BTree
         }
         finally
         {
+            if (newChildPageId != 0)
+            {
+                _pageLockManager.ReleaseWriteLock(newChildPageId);
+            }
             BufferPool.Return(childBuffer);
             BufferPool.Return(parentBuffer);
             BTreeNodePool.Return(fullChild);
@@ -1002,23 +1212,32 @@ internal class BTree
 
     public async Task<DocumentLocation?> SearchAsync(int docId, CancellationToken cancellationToken = default)
     {
-        return await SearchNodeAsync(_rootPageId, docId, cancellationToken).ConfigureAwait(false);
+        await _rootLock.EnterReadLockAsync(cancellationToken).ConfigureAwait(false);
+        int rootPageId = _rootPageId;
+        _rootLock.ExitReadLock();
+        return await SearchNodeAsync(rootPageId, docId, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<List<BTreeEntry>> SearchRangeAsync(int startDocId, int endDocId, bool includeStart, bool includeEnd, CancellationToken cancellationToken = default)
     {
         List<BTreeEntry> results = new List<BTreeEntry>();
 
+        await _rootLock.EnterReadLockAsync(cancellationToken).ConfigureAwait(false);
+        int rootPageId = _rootPageId;
+        _rootLock.ExitReadLock();
+
         byte[] buffer = BufferPool.Rent(_pageSize);
         BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
-            int leafPageId = await FindLeafForKeyAsync(_rootPageId, startDocId, buffer, node, cancellationToken).ConfigureAwait(false);
+            // FindLeafForKeyAsync returns with read lock held on the leaf
+            int leafPageId = await FindLeafForKeyAsync(rootPageId, startDocId, buffer, node, cancellationToken).ConfigureAwait(false);
             int currentPageId = leafPageId;
             bool continueScanning = currentPageId != 0;
 
             while (continueScanning)
             {
+                // Read lock already held on currentPageId
                 await _pageIO.ReadPageAsync(currentPageId, buffer, cancellationToken).ConfigureAwait(false);
                 BTreeNode.DeserializeTo(buffer, node, _order);
 
@@ -1026,11 +1245,15 @@ internal class BTree
 
                 if (exceededEnd || node.NextLeaf == 0)
                 {
+                    _pageLockManager.ReleaseReadLock(currentPageId);
                     continueScanning = false;
                 }
                 else
                 {
-                    currentPageId = node.NextLeaf;
+                    int nextPageId = node.NextLeaf;
+                    await _pageLockManager.AcquireReadLockAsync(nextPageId, cancellationToken).ConfigureAwait(false);
+                    _pageLockManager.ReleaseReadLock(currentPageId);
+                    currentPageId = nextPageId;
                 }
             }
         }
@@ -1043,9 +1266,13 @@ internal class BTree
         return results;
     }
 
+    /// <summary>
+    /// Finds the leaf containing the target key. Returns with read lock held on the leaf.
+    /// </summary>
     private async Task<int> FindLeafForKeyAsync(int pageId, int targetKey, byte[] buffer, BTreeNode node, CancellationToken cancellationToken)
     {
         int currentPageId = pageId;
+        await _pageLockManager.AcquireReadLockAsync(currentPageId, cancellationToken).ConfigureAwait(false);
 
         while (currentPageId != 0)
         {
@@ -1054,6 +1281,7 @@ internal class BTree
 
             if (node.NodeType == BTreeNodeType.Leaf)
             {
+                // Return with read lock still held
                 break;
             }
 
@@ -1063,7 +1291,10 @@ internal class BTree
                 i++;
             }
 
-            currentPageId = node.ChildPageIds[i];
+            int childPageId = node.ChildPageIds[i];
+            await _pageLockManager.AcquireReadLockAsync(childPageId, cancellationToken).ConfigureAwait(false);
+            _pageLockManager.ReleaseReadLock(currentPageId);
+            currentPageId = childPageId;
         }
 
         return currentPageId;
@@ -1074,9 +1305,13 @@ internal class BTree
         byte[] buffer = BufferPool.Rent(_pageSize);
         byte[] childBuffer = BufferPool.Rent(_pageSize);
         BTreeNode newRoot = null;
+        LockStack heldLocks = new LockStack(_pageLockManager, true);
         try
         {
-            await _pageIO.ReadPageAsync(_rootPageId, buffer, cancellationToken).ConfigureAwait(false);
+            await _rootLock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
+            int rootPageId = _rootPageId;
+            await _pageLockManager.AcquireWriteLockAsync(rootPageId, cancellationToken).ConfigureAwait(false);
+            await _pageIO.ReadPageAsync(rootPageId, buffer, cancellationToken).ConfigureAwait(false);
 
             if (BTreeNode.IsNodeFull(buffer, _order))
             {
@@ -1087,18 +1322,24 @@ internal class BTree
                     BTreeNode.DeserializeTo(buffer, root, _order);
 
                     int newRootPageId = _pageManager.AllocatePage();
+                    await _pageLockManager.AcquireWriteLockAsync(newRootPageId, cancellationToken).ConfigureAwait(false);
                     newRoot = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Internal);
-                    newRoot.ChildPageIds.Add(_rootPageId);
+                    newRoot.ChildPageIds.Add(rootPageId);
 
                     newRoot.SerializeTo(buffer);
                     await _pageIO.WritePageAsync(newRootPageId, buffer, cancellationToken).ConfigureAwait(false);
 
-                    await SplitChildAsync(newRootPageId, 0, _rootPageId, cancellationToken).ConfigureAwait(false);
+                    await SplitChildAsync(newRootPageId, 0, rootPageId, cancellationToken).ConfigureAwait(false);
                     _rootPageId = newRootPageId;
+                    _rootLock.ExitWriteLock();
+
+                    // Release rootPageId lock - InsertNonFullAsync will acquire child locks as needed
+                    _pageLockManager.ReleaseWriteLock(rootPageId);
+                    heldLocks.Push(newRootPageId);
 
                     // Re-read the new root for InsertNonFullAsync
-                    await _pageIO.ReadPageAsync(_rootPageId, buffer, cancellationToken).ConfigureAwait(false);
-                    await InsertNonFullAsync(_rootPageId, buffer, childBuffer, docId, location, cancellationToken).ConfigureAwait(false);
+                    await _pageIO.ReadPageAsync(newRootPageId, buffer, cancellationToken).ConfigureAwait(false);
+                    await InsertNonFullAsync(newRootPageId, buffer, childBuffer, docId, location, heldLocks, cancellationToken).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -1107,12 +1348,15 @@ internal class BTree
             }
             else
             {
-                // Pass the already-read buffer to InsertNonFullAsync
-                await InsertNonFullAsync(_rootPageId, buffer, childBuffer, docId, location, cancellationToken).ConfigureAwait(false);
+                // Root won't change, release root lock but keep page lock
+                _rootLock.ExitWriteLock();
+                heldLocks.Push(rootPageId);
+                await InsertNonFullAsync(rootPageId, buffer, childBuffer, docId, location, heldLocks, cancellationToken).ConfigureAwait(false);
             }
         }
         finally
         {
+            heldLocks.ReleaseAll();
             BufferPool.Return(buffer);
             BufferPool.Return(childBuffer);
             BTreeNodePool.Return(newRoot);
@@ -1121,7 +1365,10 @@ internal class BTree
 
     public async Task<bool> DeleteAsync(int docId, CancellationToken cancellationToken = default)
     {
-        return await DeleteFromNodeAsync(_rootPageId, docId, cancellationToken).ConfigureAwait(false);
+        await _rootLock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
+        int rootPageId = _rootPageId;
+        _rootLock.ExitWriteLock();
+        return await DeleteFromNodeAsync(rootPageId, docId, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<DocumentLocation?> SearchNodeAsync(int pageId, int docId, CancellationToken cancellationToken)
@@ -1132,6 +1379,7 @@ internal class BTree
         try
         {
             int currentPageId = pageId;
+            await _pageLockManager.AcquireReadLockAsync(currentPageId, cancellationToken).ConfigureAwait(false);
 
             while (currentPageId != 0)
             {
@@ -1145,11 +1393,15 @@ internal class BTree
                     {
                         result = BTreeNode.GetLeafValue(buffer, keyCount, pos);
                     }
-                    break;
+                    _pageLockManager.ReleaseReadLock(currentPageId);
+                    currentPageId = 0;
                 }
                 else
                 {
-                    currentPageId = BTreeNode.GetChildPageId(buffer, keyCount, pos);
+                    int childPageId = BTreeNode.GetChildPageId(buffer, keyCount, pos);
+                    await _pageLockManager.AcquireReadLockAsync(childPageId, cancellationToken).ConfigureAwait(false);
+                    _pageLockManager.ReleaseReadLock(currentPageId);
+                    currentPageId = childPageId;
                 }
             }
         }
@@ -1161,7 +1413,7 @@ internal class BTree
         return result;
     }
 
-    private async Task InsertNonFullAsync(int pageId, byte[] buffer, byte[] childBuffer, int docId, DocumentLocation location, CancellationToken cancellationToken)
+    private async Task InsertNonFullAsync(int pageId, byte[] buffer, byte[] childBuffer, int docId, DocumentLocation location, LockStack heldLocks, CancellationToken cancellationToken)
     {
         int currentPageId = pageId;
 
@@ -1182,11 +1434,19 @@ internal class BTree
                 int childIndex = BTreeNode.FindChildIndex(buffer, keyCount, docId);
                 int childPageId = BTreeNode.GetChildPageId(buffer, keyCount, childIndex);
 
-                // Read child and check if full
+                // Acquire lock on child before reading
+                await _pageLockManager.AcquireWriteLockAsync(childPageId, cancellationToken).ConfigureAwait(false);
                 await _pageIO.ReadPageAsync(childPageId, childBuffer, cancellationToken).ConfigureAwait(false);
+
+                // Safe node optimization: if child won't split, release all ancestor locks
+                if (BTreeNode.IsSafeForInsert(childBuffer, _order))
+                {
+                    heldLocks.ReleaseAll();
+                }
+
                 if (BTreeNode.IsNodeFull(childBuffer, _order))
                 {
-                    // Need to split child
+                    // Need to split child - we hold locks on parent and child
                     await SplitChildAsync(currentPageId, childIndex, childPageId, cancellationToken).ConfigureAwait(false);
 
                     // Re-read current node after split to get updated key
@@ -1194,15 +1454,22 @@ internal class BTree
                     keyCount = BTreeNode.GetKeyCount(buffer);
 
                     // Check which child to descend into after split
+                    int newChildPageId;
                     if (docId > BTreeNode.GetKey(buffer, childIndex))
                     {
                         childIndex++;
+                        newChildPageId = BTreeNode.GetChildPageId(buffer, keyCount, childIndex);
+                        // The new child was created by split, need to acquire its lock
+                        await _pageLockManager.AcquireWriteLockAsync(newChildPageId, cancellationToken).ConfigureAwait(false);
+                        _pageLockManager.ReleaseWriteLock(childPageId);
+                        childPageId = newChildPageId;
                     }
-                    childPageId = BTreeNode.GetChildPageId(buffer, keyCount, childIndex);
 
                     // Read the correct child after split
                     await _pageIO.ReadPageAsync(childPageId, childBuffer, cancellationToken).ConfigureAwait(false);
                 }
+
+                heldLocks.Push(childPageId);
 
                 // Swap buffers: childBuffer becomes buffer for next iteration
                 byte[] temp = buffer;
@@ -1220,6 +1487,7 @@ internal class BTree
         BTreeNode fullChild = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         BTreeNode parent = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         BTreeNode newChild = null;
+        int newChildPageId = 0;
         try
         {
             await _pageIO.ReadPageAsync(childPageId, childBuffer, cancellationToken).ConfigureAwait(false);
@@ -1228,7 +1496,8 @@ internal class BTree
             await _pageIO.ReadPageAsync(parentPageId, parentBuffer, cancellationToken).ConfigureAwait(false);
             BTreeNode.DeserializeTo(parentBuffer, parent, _order);
 
-            int newChildPageId = _pageManager.AllocatePage();
+            newChildPageId = _pageManager.AllocatePage();
+            await _pageLockManager.AcquireWriteLockAsync(newChildPageId, cancellationToken).ConfigureAwait(false);
             newChild = BTreeNodePool.Rent(_pageSize, _order, fullChild.NodeType);
 
             int mid = (_order - 1) / 2;
@@ -1305,6 +1574,10 @@ internal class BTree
         }
         finally
         {
+            if (newChildPageId != 0)
+            {
+                _pageLockManager.ReleaseWriteLock(newChildPageId);
+            }
             BufferPool.Return(childBuffer);
             BufferPool.Return(parentBuffer);
             BTreeNodePool.Return(fullChild);
@@ -1320,9 +1593,13 @@ internal class BTree
         byte[] buffer = BufferPool.Rent(_pageSize);
         BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         List<DeletePathEntry> path = ListPool<DeletePathEntry>.Rent(MAX_TREE_DEPTH);
+        LockStack heldLocks = new LockStack(_pageLockManager, true);
         try
         {
             int currentPageId = pageId;
+            int leafPageId = 0;
+            await _pageLockManager.AcquireWriteLockAsync(currentPageId, cancellationToken).ConfigureAwait(false);
+            heldLocks.Push(currentPageId);
 
             while (currentPageId != 0)
             {
@@ -1346,24 +1623,44 @@ internal class BTree
                         node.SerializeTo(buffer);
                         await _pageIO.WritePageAsync(currentPageId, buffer, cancellationToken).ConfigureAwait(false);
 
-                        if (node.IsUnderflow() && currentPageId != _rootPageId)
-                        {
-                            await RebalanceAfterDeleteAsync(path, currentPageId, node, cancellationToken).ConfigureAwait(false);
-                        }
-
+                        leafPageId = currentPageId;
                         result = true;
                     }
                     break;
                 }
                 else
                 {
+                    int childPageId = node.ChildPageIds[i];
+                    await _pageLockManager.AcquireWriteLockAsync(childPageId, cancellationToken).ConfigureAwait(false);
+
+                    // Read child to check if it's safe
+                    byte[] childBuffer = BufferPool.Rent(_pageSize);
+                    await _pageIO.ReadPageAsync(childPageId, childBuffer, cancellationToken).ConfigureAwait(false);
+
+                    // Safe node optimization: if child won't underflow, release ancestor locks
+                    // but keep parent (currentPageId) for potential rebalancing
+                    if (BTreeNode.IsSafeForDelete(childBuffer, _order))
+                    {
+                        heldLocks.ReleaseAllExcept(currentPageId);
+                        path.Clear();
+                    }
+
+                    BufferPool.Return(childBuffer);
+
                     path.Add(new DeletePathEntry(currentPageId, i));
-                    currentPageId = node.ChildPageIds[i];
+                    heldLocks.Push(childPageId);
+                    currentPageId = childPageId;
                 }
+            }
+
+            if (result && leafPageId != 0 && node.IsUnderflow() && leafPageId != pageId)
+            {
+                await RebalanceAfterDeleteAsync(path, leafPageId, node, heldLocks, cancellationToken).ConfigureAwait(false);
             }
         }
         finally
         {
+            heldLocks.ReleaseAll();
             BufferPool.Return(buffer);
             BTreeNodePool.Return(node);
             ListPool<DeletePathEntry>.Return(path);
@@ -1372,12 +1669,13 @@ internal class BTree
         return result;
     }
 
-    private async Task RebalanceAfterDeleteAsync(List<DeletePathEntry> path, int nodePageId, BTreeNode node, CancellationToken cancellationToken)
+    private async Task RebalanceAfterDeleteAsync(List<DeletePathEntry> path, int nodePageId, BTreeNode node, LockStack heldLocks, CancellationToken cancellationToken)
     {
         byte[] parentBuffer = BufferPool.Rent(_pageSize);
         byte[] siblingBuffer = BufferPool.Rent(_pageSize);
         BTreeNode parent = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Internal);
         BTreeNode sibling = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+        int siblingLockHeld = 0;
 
         try
         {
@@ -1398,6 +1696,8 @@ internal class BTree
                 if (childIndex > 0)
                 {
                     int leftSiblingPageId = parent.ChildPageIds[childIndex - 1];
+                    await AcquireSiblingLockAsync(leftSiblingPageId, heldLocks, cancellationToken).ConfigureAwait(false);
+                    siblingLockHeld = leftSiblingPageId;
                     await _pageIO.ReadPageAsync(leftSiblingPageId, siblingBuffer, cancellationToken).ConfigureAwait(false);
                     BTreeNode.DeserializeTo(siblingBuffer, sibling, _order);
 
@@ -1408,11 +1708,14 @@ internal class BTree
                                               currentPageId, node, childIndex, cancellationToken).ConfigureAwait(false);
                         rebalanced = true;
                     }
+                    ReleaseSiblingLock(ref siblingLockHeld);
                 }
 
                 if (!rebalanced && childIndex < parent.KeyCount)
                 {
                     int rightSiblingPageId = parent.ChildPageIds[childIndex + 1];
+                    await AcquireSiblingLockAsync(rightSiblingPageId, heldLocks, cancellationToken).ConfigureAwait(false);
+                    siblingLockHeld = rightSiblingPageId;
                     await _pageIO.ReadPageAsync(rightSiblingPageId, siblingBuffer, cancellationToken).ConfigureAwait(false);
                     BTreeNode.DeserializeTo(siblingBuffer, sibling, _order);
 
@@ -1424,6 +1727,7 @@ internal class BTree
                                                childIndex, cancellationToken).ConfigureAwait(false);
                         rebalanced = true;
                     }
+                    ReleaseSiblingLock(ref siblingLockHeld);
                 }
 
                 if (!rebalanced)
@@ -1431,6 +1735,8 @@ internal class BTree
                     if (childIndex > 0)
                     {
                         int leftSiblingPageId = parent.ChildPageIds[childIndex - 1];
+                        await AcquireSiblingLockAsync(leftSiblingPageId, heldLocks, cancellationToken).ConfigureAwait(false);
+                        siblingLockHeld = leftSiblingPageId;
                         await _pageIO.ReadPageAsync(leftSiblingPageId, siblingBuffer, cancellationToken).ConfigureAwait(false);
                         BTreeNode.DeserializeTo(siblingBuffer, sibling, _order);
 
@@ -1438,6 +1744,7 @@ internal class BTree
                                              leftSiblingPageId, sibling, siblingBuffer,
                                              currentPageId, node, childIndex, cancellationToken).ConfigureAwait(false);
 
+                        ReleaseSiblingLock(ref siblingLockHeld);
                         currentPageId = parentPageId;
                         await _pageIO.ReadPageAsync(parentPageId, parentBuffer, cancellationToken).ConfigureAwait(false);
                         BTreeNode.DeserializeTo(parentBuffer, node, _order);
@@ -1445,6 +1752,8 @@ internal class BTree
                     else
                     {
                         int rightSiblingPageId = parent.ChildPageIds[childIndex + 1];
+                        await AcquireSiblingLockAsync(rightSiblingPageId, heldLocks, cancellationToken).ConfigureAwait(false);
+                        siblingLockHeld = rightSiblingPageId;
                         await _pageIO.ReadPageAsync(rightSiblingPageId, siblingBuffer, cancellationToken).ConfigureAwait(false);
                         BTreeNode.DeserializeTo(siblingBuffer, sibling, _order);
 
@@ -1453,6 +1762,7 @@ internal class BTree
                                               rightSiblingPageId, sibling, siblingBuffer,
                                               childIndex, cancellationToken).ConfigureAwait(false);
 
+                        ReleaseSiblingLock(ref siblingLockHeld);
                         currentPageId = parentPageId;
                         await _pageIO.ReadPageAsync(parentPageId, parentBuffer, cancellationToken).ConfigureAwait(false);
                         BTreeNode.DeserializeTo(parentBuffer, node, _order);
@@ -1468,17 +1778,56 @@ internal class BTree
 
             if (pathIndex < 0 && node.NodeType == BTreeNodeType.Internal && node.KeyCount == 0)
             {
+                await _rootLock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
                 int newRootPageId = node.ChildPageIds[0];
                 _pageManager.DeallocatePage(_rootPageId);
                 _rootPageId = newRootPageId;
+                _rootLock.ExitWriteLock();
             }
         }
         finally
         {
+            ReleaseSiblingLock(ref siblingLockHeld);
             BufferPool.Return(parentBuffer);
             BufferPool.Return(siblingBuffer);
             BTreeNodePool.Return(parent);
             BTreeNodePool.Return(sibling);
+        }
+    }
+
+    private async Task AcquireSiblingLockAsync(int siblingPageId, LockStack heldLocks, CancellationToken cancellationToken)
+    {
+        // Throw if sibling is already held (would cause deadlock)
+        if (heldLocks.Contains(siblingPageId))
+        {
+            throw new InvalidOperationException($"Sibling page {siblingPageId} is already in heldLocks - this indicates tree corruption (duplicate child pointers)");
+        }
+
+        int minHeld = heldLocks.GetMinPageId();
+        if (siblingPageId < minHeld)
+        {
+            // Need to release all and re-acquire in sorted order
+            int[] pageIds = new int[heldLocks.Count + 1];
+            int count = heldLocks.CopyTo(pageIds);
+
+            // Save original page IDs before AcquireWriteLocksAsync sorts the array
+            int[] originalPageIds = new int[count];
+            Array.Copy(pageIds, originalPageIds, count);
+
+            pageIds[count] = siblingPageId;
+            heldLocks.ReleaseAll();
+
+            await _pageLockManager.AcquireWriteLocksAsync(pageIds, count + 1, cancellationToken).ConfigureAwait(false);
+
+            // Rebuild heldLocks from original (without sibling - it's tracked separately)
+            for (int i = 0; i < count; i++)
+            {
+                heldLocks.Push(originalPageIds[i]);
+            }
+        }
+        else
+        {
+            await _pageLockManager.AcquireWriteLockAsync(siblingPageId, cancellationToken).ConfigureAwait(false);
         }
     }
 

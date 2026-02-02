@@ -52,7 +52,10 @@ internal class StandardPageIO : IPageIO
 
                 if (bytesRead == 0)
                 {
-                    break;
+                    long fileLength = RandomAccess.GetLength(_fileHandle);
+                    throw new InvalidOperationException(
+                        $"Unexpected end of file reading page {pageId} at offset {offset}. " +
+                        $"Read {totalBytesRead} of {_pageSize} bytes, file length is {fileLength}.");
                 }
 
                 totalBytesRead += bytesRead;
@@ -148,7 +151,10 @@ internal class StandardPageIO : IPageIO
 
                 if (bytesRead == 0)
                 {
-                    break;
+                    long fileLength = RandomAccess.GetLength(_fileHandle);
+                    throw new InvalidOperationException(
+                        $"Unexpected end of file reading page {pageId} at offset {offset}. " +
+                        $"Read {totalBytesRead} of {_pageSize} bytes, file length is {fileLength}.");
                 }
 
                 totalBytesRead += bytesRead;
