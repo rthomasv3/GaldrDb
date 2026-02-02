@@ -1871,8 +1871,15 @@ public class GaldrDb : IGaldrDb
 
             if (commitsSinceLastGC >= _options.GarbageCollectionThreshold)
             {
-                CollectGarbageInternal();
-                _lastGCCommitCount = currentCommitCount;
+                try
+                {
+                    CollectGarbageInternal();
+                    _lastGCCommitCount = currentCommitCount;
+                }
+                catch (PageConflictException)
+                {
+                    // GC encountered a page conflict - skip this run and try again later
+                }
             }
         }
     }
@@ -2165,7 +2172,19 @@ public class GaldrDb : IGaldrDb
 
     internal byte[] ReadDocumentByLocation(DocumentLocation location)
     {
-        return _documentStorage.ReadDocument(location.PageId, location.SlotIndex);
+        byte[] result;
+
+        try
+        {
+            result = _documentStorage.ReadDocument(location.PageId, location.SlotIndex);
+        }
+        catch (DocumentSlotDeletedException)
+        {
+            throw new WriteConflictException(
+                $"Document at page {location.PageId} slot {location.SlotIndex} was deleted by a concurrent transaction");
+        }
+
+        return result;
     }
 
     internal List<int> SearchDocIdRange(string collectionName, int startDocId, int endDocId, bool includeStart, bool includeEnd)
@@ -2413,7 +2432,19 @@ public class GaldrDb : IGaldrDb
 
     internal async Task<byte[]> ReadDocumentByLocationAsync(DocumentLocation location, CancellationToken cancellationToken = default)
     {
-        return await _documentStorage.ReadDocumentAsync(location.PageId, location.SlotIndex, cancellationToken).ConfigureAwait(false);
+        byte[] result;
+
+        try
+        {
+            result = await _documentStorage.ReadDocumentAsync(location.PageId, location.SlotIndex, cancellationToken).ConfigureAwait(false);
+        }
+        catch (DocumentSlotDeletedException)
+        {
+            throw new WriteConflictException(
+                $"Document at page {location.PageId} slot {location.SlotIndex} was deleted by a concurrent transaction");
+        }
+
+        return result;
     }
 
     internal async Task CommitDeleteAsync(string collectionName, int docId, IReadOnlyList<IndexFieldEntry> oldIndexFields, CancellationToken cancellationToken = default)

@@ -176,7 +176,7 @@ internal class DocumentStorage : IDisposable
             _pageIO.ReadPage(pageId, pageBuffer);
 
             // Use fast path for single-page documents (avoids 8KB PageData copy)
-            ReadDocumentResult readResult = DocumentPage.ReadDocumentFromBuffer(pageBuffer, slotIndex);
+            ReadDocumentResult readResult = DocumentPage.ReadDocumentFromBuffer(pageBuffer, slotIndex, pageId);
             SlotEntry entry = readResult.Slot;
 
             if (entry.PageCount == 1)
@@ -577,7 +577,7 @@ internal class DocumentStorage : IDisposable
 
             if (entry.PageCount == 0 || entry.TotalSize == 0)
             {
-                throw new InvalidOperationException("Document slot has been deleted");
+                throw new DocumentSlotDeletedException(pageId, slotIndex);
             }
 
             if (entry.PageCount == 1)

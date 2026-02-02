@@ -134,6 +134,38 @@ public class StressTestState
             return result;
         }
     }
+
+    public bool VerifyHashAndVersion(int docId, byte[] actualHash, int actualVersion)
+    {
+        lock (_lock)
+        {
+            bool result = false;
+
+            if (_expectedDocuments.TryGetValue(docId, out ExpectedDocument expected))
+            {
+                // If versions differ, a concurrent update happened - not corruption
+                if (actualVersion != expected.Version)
+                {
+                    result = true;
+                }
+                else if (expected.ContentHash != null && actualHash != null &&
+                    expected.ContentHash.Length == actualHash.Length)
+                {
+                    result = true;
+                    for (int i = 0; i < expected.ContentHash.Length; i++)
+                    {
+                        if (expected.ContentHash[i] != actualHash[i])
+                        {
+                            result = false;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            return result;
+        }
+    }
 }
 
 public class ExpectedDocument

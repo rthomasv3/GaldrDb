@@ -210,7 +210,8 @@ public class StressTestWorker
 
                 if (expectedHash != null)
                 {
-                    bool hashMatch = _state.VerifyHash(docId.Value, actualHash);
+                    // Use version-aware validation to handle MVCC snapshot differences
+                    bool hashMatch = _state.VerifyHashAndVersion(docId.Value, actualHash, doc.Version);
                     if (!hashMatch)
                     {
                         _stats.RecordValidationError();

@@ -17,7 +17,7 @@ internal class SecondaryIndexBTree
     private readonly int _pageSize;
     private readonly int _usablePageSize;
     private readonly int _maxKeys;
-    private volatile int _rootPageId;
+    private int _rootPageId;
 
     public SecondaryIndexBTree(IPageIO pageIO, PageManager pageManager, PageLockManager pageLockManager, int rootPageId, int pageSize, int usablePageSize, int maxKeys)
     {

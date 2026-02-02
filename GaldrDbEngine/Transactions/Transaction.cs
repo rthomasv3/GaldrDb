@@ -183,14 +183,21 @@ public class Transaction : ITransaction
 
             if (visibleVersion != null)
             {
-                byte[] jsonBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
-                string jsonStr = Encoding.UTF8.GetString(jsonBytes);
-                result = _jsonSerializer.Deserialize<T>(jsonStr, _jsonOptions);
-
-                // Track this read for conflict detection at commit time
-                if (!_readSet.ContainsKey(key))
+                try
                 {
-                    _readSet[key] = visibleVersion.CreatedBy;
+                    byte[] jsonBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
+                    string jsonStr = Encoding.UTF8.GetString(jsonBytes);
+                    result = _jsonSerializer.Deserialize<T>(jsonStr, _jsonOptions);
+
+                    // Track this read for conflict detection at commit time
+                    if (!_readSet.ContainsKey(key))
+                    {
+                        _readSet[key] = visibleVersion.CreatedBy;
+                    }
+                }
+                catch (WriteConflictException)
+                {
+                    // Document slot was deleted by garbage collection - treat as not found
                 }
             }
         }
@@ -666,9 +673,16 @@ public class Transaction : ITransaction
 
             if (visibleVersion != null)
             {
-                byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
-                string jsonStr = Encoding.UTF8.GetString(jsonBytes);
-                result = _jsonSerializer.Deserialize<T>(jsonStr, _jsonOptions);
+                try
+                {
+                    byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
+                    string jsonStr = Encoding.UTF8.GetString(jsonBytes);
+                    result = _jsonSerializer.Deserialize<T>(jsonStr, _jsonOptions);
+                }
+                catch (WriteConflictException)
+                {
+                    // Document slot was deleted by garbage collection - treat as not found
+                }
             }
         }
 
@@ -701,12 +715,19 @@ public class Transaction : ITransaction
 
             if (visibleVersion != null)
             {
-                byte[] jsonBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
-                result = JsonDocument.Parse(jsonBytes);
-
-                if (!_readSet.ContainsKey(key))
+                try
                 {
-                    _readSet[key] = visibleVersion.CreatedBy;
+                    byte[] jsonBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
+                    result = JsonDocument.Parse(jsonBytes);
+
+                    if (!_readSet.ContainsKey(key))
+                    {
+                        _readSet[key] = visibleVersion.CreatedBy;
+                    }
+                }
+                catch (WriteConflictException)
+                {
+                    // Document slot was deleted by garbage collection - treat as not found
                 }
             }
         }
@@ -741,8 +762,15 @@ public class Transaction : ITransaction
 
             if (visibleVersion != null)
             {
-                byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
-                result = JsonDocument.Parse(jsonBytes);
+                try
+                {
+                    byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
+                    result = JsonDocument.Parse(jsonBytes);
+                }
+                catch (WriteConflictException)
+                {
+                    // Document slot was deleted by garbage collection - treat as not found
+                }
             }
         }
 

@@ -162,7 +162,7 @@ public class DocumentStorageTests
 
         storage.DeleteDocument(location.PageId, location.SlotIndex);
 
-        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
+        DocumentSlotDeletedException exception = Assert.Throws<DocumentSlotDeletedException>(() =>
         {
             byte[] readBytes = storage.ReadDocument(location.PageId, location.SlotIndex);
         });

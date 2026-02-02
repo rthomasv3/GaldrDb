@@ -268,7 +268,7 @@ internal class DocumentPage
     /// Use this for read-only operations to avoid the 8KB PageData copy.
     /// Returns the slot entry and continuation page info if needed.
     /// </summary>
-    public static ReadDocumentResult ReadDocumentFromBuffer(byte[] buffer, int slotIndex)
+    public static ReadDocumentResult ReadDocumentFromBuffer(byte[] buffer, int slotIndex, int pageId = -1)
     {
         int offset = 0;
 
@@ -306,7 +306,7 @@ internal class DocumentPage
 
         if (slot.PageCount == 0 || slot.TotalSize == 0)
         {
-            throw new InvalidOperationException("Document slot has been deleted");
+            throw new DocumentSlotDeletedException(pageId, slotIndex);
         }
 
         // Extract document data directly from buffer
