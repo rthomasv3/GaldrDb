@@ -1,21 +1,77 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading;
 using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Storage;
 
 internal class CollectionEntry
 {
+    private int _nextId;
+    private int _documentCount;
+
     public string Name { get; set; }
     public int RootPage { get; set; }
-    public int DocumentCount { get; set; }
-    public int NextId { get; set; }
+
+    public int DocumentCount
+    {
+        get => _documentCount;
+        set => _documentCount = value;
+    }
+
+    public int NextId
+    {
+        get => _nextId;
+        set => _nextId = value;
+    }
+
     public List<IndexDefinition> Indexes { get; set; }
 
     public CollectionEntry()
     {
         Indexes = new List<IndexDefinition>();
+    }
+
+    /// <summary>
+    /// Atomically allocates the next document ID for this collection.
+    /// Thread-safe for concurrent transactions.
+    /// </summary>
+    public int AllocateNextId()
+    {
+        return Interlocked.Increment(ref _nextId) - 1;
+    }
+
+    /// <summary>
+    /// Atomically updates NextId if the given value is higher.
+    /// Called when inserting with explicit IDs to prevent future collisions.
+    /// </summary>
+    public void UpdateNextIdIfHigher(int minNextId)
+    {
+        int current;
+        do
+        {
+            current = _nextId;
+            if (minNextId <= current) return;
+        } while (Interlocked.CompareExchange(ref _nextId, minNextId, current) != current);
+    }
+
+    /// <summary>
+    /// Atomically increments the document count.
+    /// Thread-safe for concurrent transactions.
+    /// </summary>
+    public void IncrementDocumentCount()
+    {
+        Interlocked.Increment(ref _documentCount);
+    }
+
+    /// <summary>
+    /// Atomically decrements the document count.
+    /// Thread-safe for concurrent transactions.
+    /// </summary>
+    public void DecrementDocumentCount()
+    {
+        Interlocked.Decrement(ref _documentCount);
     }
 
     public int SerializeTo(byte[] buffer, int startOffset)

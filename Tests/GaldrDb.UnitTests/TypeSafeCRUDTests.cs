@@ -145,6 +145,24 @@ public class TypeSafeCRUDTests
     }
 
     [TestMethod]
+    public async Task InsertAsync_WithExplicitIdHigherThanNext_UpdatesNextId()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            Person person1 = new Person { Id = 50, Name = "High ID", Age = 30, Email = "high@example.com" };
+            await db.InsertAsync(person1);
+
+            Person person2 = new Person { Name = "Auto After High", Age = 25, Email = "auto@example.com" };
+            int id2 = await db.InsertAsync(person2);
+
+            Assert.AreEqual(51, id2);
+        }
+    }
+
+    [TestMethod]
     public void Insert_WithoutEnsureCollection_AutoCreatesCollection()
     {
         string dbPath = Path.Combine(_testDirectory, "test.db");

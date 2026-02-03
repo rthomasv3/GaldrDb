@@ -27,7 +27,6 @@ public class Transaction : ITransaction
     private readonly GaldrJsonOptions _jsonOptions;
     private readonly Dictionary<DocumentKey, WriteSetEntry> _writeSet;
     private readonly Dictionary<DocumentKey, TxId> _readSet;
-    private readonly Dictionary<string, int> _nextIdByCollection;
     private readonly bool _isReadOnly;
     private bool _disposed;
     private bool _hasActiveWalTransaction;
@@ -69,7 +68,6 @@ public class Transaction : ITransaction
         _jsonOptions = jsonOptions;
         _writeSet = new Dictionary<DocumentKey, WriteSetEntry>();
         _readSet = new Dictionary<DocumentKey, TxId>();
-        _nextIdByCollection = new Dictionary<string, int>();
         State = TransactionState.Active;
         _disposed = false;
     }
@@ -227,12 +225,13 @@ public class Transaction : ITransaction
 
         if (currentId == 0)
         {
-            assignedId = GetNextIdForCollection(collectionName, collection.NextId);
+            assignedId = collection.AllocateNextId();
             typeInfo.IdSetter(document, assignedId);
         }
         else
         {
             assignedId = currentId;
+            collection.UpdateNextIdIfHigher(assignedId + 1);
 
             DocumentVersion existingVersion = _versionIndex.GetLatestVersion(collectionName, assignedId);
             if (existingVersion != null && !existingVersion.IsDeleted)
@@ -534,6 +533,7 @@ public class Transaction : ITransaction
 
             int retryCount = 0;
             List<VersionOperation> versionOps = null;
+            Dictionary<string, int> documentCountDeltas = new Dictionary<string, int>();
 
             // Write pages to WAL with retry on page conflicts.
             // Page conflicts occur when concurrent transactions modify the same BTree pages.
@@ -542,6 +542,7 @@ public class Transaction : ITransaction
             {
                 _db.BeginWalTransaction(TxId.Value);
                 _hasActiveWalTransaction = true;
+                documentCountDeltas.Clear();
 
                 try
                 {
@@ -557,6 +558,11 @@ public class Transaction : ITransaction
                             case WriteOperation.Insert:
                                 location = _db.CommitInsert(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields);
                                 versionOps.Add(VersionOperation.ForInsert(entry.CollectionName, entry.DocumentId, location));
+                                if (!documentCountDeltas.TryGetValue(entry.CollectionName, out int insertDelta))
+                                {
+                                    insertDelta = 0;
+                                }
+                                documentCountDeltas[entry.CollectionName] = insertDelta + 1;
                                 break;
 
                             case WriteOperation.Update:
@@ -567,6 +573,11 @@ public class Transaction : ITransaction
                             case WriteOperation.Delete:
                                 _db.CommitDelete(entry.CollectionName, entry.DocumentId, entry.OldIndexFields);
                                 versionOps.Add(VersionOperation.ForDelete(entry.CollectionName, entry.DocumentId, entry.ReadVersionTxId));
+                                if (!documentCountDeltas.TryGetValue(entry.CollectionName, out int deleteDelta))
+                                {
+                                    deleteDelta = 0;
+                                }
+                                documentCountDeltas[entry.CollectionName] = deleteDelta - 1;
                                 break;
                         }
                     }
@@ -587,6 +598,11 @@ public class Transaction : ITransaction
                         _txManager.MarkAborted(TxId);
                         throw new InvalidOperationException($"Transaction failed after {MAX_PAGE_CONFLICT_RETRIES} page conflict retries");
                     }
+
+                    // Exponential backoff with jitter to reduce livelock
+                    int baseDelayMs = Math.Min(10 * (1 << retryCount), 500); // 20, 40, 80, 160, 320, 500 max
+                    int jitter = Random.Shared.Next(baseDelayMs);
+                    Thread.Sleep(baseDelayMs + jitter);
                 }
                 catch
                 {
@@ -610,6 +626,9 @@ public class Transaction : ITransaction
                 _txManager.MarkAborted(TxId);
                 throw;
             }
+
+            // Apply document count changes only after successful version validation
+            _db.ApplyDocumentCountDeltas(documentCountDeltas);
 
             State = TransactionState.Committed;
             _txManager.MarkCommitted(TxId);
@@ -802,12 +821,13 @@ public class Transaction : ITransaction
 
         if (currentId == 0)
         {
-            assignedId = GetNextIdForCollection(collectionName, collection.NextId);
+            assignedId = collection.AllocateNextId();
             doc.SetInt32("Id", assignedId);
         }
         else
         {
             assignedId = currentId;
+            collection.UpdateNextIdIfHigher(assignedId + 1);
 
             DocumentVersion existingVersion = _versionIndex.GetLatestVersion(collectionName, assignedId);
             if (existingVersion != null && !existingVersion.IsDeleted)
@@ -1260,12 +1280,13 @@ public class Transaction : ITransaction
 
         if (currentId == 0)
         {
-            assignedId = GetNextIdForCollection(collectionName, collection.NextId);
+            assignedId = collection.AllocateNextId();
             typeInfo.IdSetter(document, assignedId);
         }
         else
         {
             assignedId = currentId;
+            collection.UpdateNextIdIfHigher(assignedId + 1);
 
             // Check for write-write conflict on explicit ID insert
             DocumentVersion existingVersion = _versionIndex.GetLatestVersion(collectionName, assignedId);
@@ -1539,6 +1560,7 @@ public class Transaction : ITransaction
 
             int retryCount = 0;
             List<VersionOperation> versionOps = null;
+            Dictionary<string, int> documentCountDeltas = new Dictionary<string, int>();
 
             // Write pages to WAL with retry on page conflicts.
             // Page conflicts occur when concurrent transactions modify the same BTree pages.
@@ -1547,6 +1569,7 @@ public class Transaction : ITransaction
             {
                 _db.BeginWalTransaction(TxId.Value);
                 _hasActiveWalTransaction = true;
+                documentCountDeltas.Clear();
 
                 try
                 {
@@ -1562,6 +1585,11 @@ public class Transaction : ITransaction
                             case WriteOperation.Insert:
                                 location = await _db.CommitInsertAsync(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, cancellationToken).ConfigureAwait(false);
                                 versionOps.Add(VersionOperation.ForInsert(entry.CollectionName, entry.DocumentId, location));
+                                if (!documentCountDeltas.TryGetValue(entry.CollectionName, out int insertDelta))
+                                {
+                                    insertDelta = 0;
+                                }
+                                documentCountDeltas[entry.CollectionName] = insertDelta + 1;
                                 break;
 
                             case WriteOperation.Update:
@@ -1572,6 +1600,11 @@ public class Transaction : ITransaction
                             case WriteOperation.Delete:
                                 await _db.CommitDeleteAsync(entry.CollectionName, entry.DocumentId, entry.OldIndexFields, cancellationToken).ConfigureAwait(false);
                                 versionOps.Add(VersionOperation.ForDelete(entry.CollectionName, entry.DocumentId, entry.ReadVersionTxId));
+                                if (!documentCountDeltas.TryGetValue(entry.CollectionName, out int deleteDelta))
+                                {
+                                    deleteDelta = 0;
+                                }
+                                documentCountDeltas[entry.CollectionName] = deleteDelta - 1;
                                 break;
                         }
                     }
@@ -1592,6 +1625,11 @@ public class Transaction : ITransaction
                         _txManager.MarkAborted(TxId);
                         throw new InvalidOperationException($"Transaction failed after {MAX_PAGE_CONFLICT_RETRIES} page conflict retries");
                     }
+
+                    // Exponential backoff with jitter to reduce livelock
+                    int baseDelayMs = Math.Min(10 * (1 << retryCount), 500); // 20, 40, 80, 160, 320, 500 max
+                    int jitter = Random.Shared.Next(baseDelayMs);
+                    await Task.Delay(baseDelayMs + jitter, cancellationToken).ConfigureAwait(false);
                 }
                 catch
                 {
@@ -1615,6 +1653,9 @@ public class Transaction : ITransaction
                 _txManager.MarkAborted(TxId);
                 throw;
             }
+
+            // Apply document count changes only after successful version validation
+            _db.ApplyDocumentCountDeltas(documentCountDeltas);
 
             State = TransactionState.Committed;
             _txManager.MarkCommitted(TxId);
@@ -1672,23 +1713,6 @@ public class Transaction : ITransaction
         }
     }
 
-    private int GetNextIdForCollection(string collectionName, int collectionNextId)
-    {
-        int nextId;
-
-        if (_nextIdByCollection.TryGetValue(collectionName, out int trackedNextId))
-        {
-            nextId = trackedNextId;
-        }
-        else
-        {
-            nextId = collectionNextId;
-        }
-
-        _nextIdByCollection[collectionName] = nextId + 1;
-
-        return nextId;
-    }
 
     private IReadOnlyList<IndexFieldEntry> ExtractIndexFields<T>(T document, GaldrTypeInfo<T> typeInfo)
     {
@@ -2135,7 +2159,7 @@ public class Transaction : ITransaction
                 {
                     readVersionTxId = visibleVersion.CreatedBy;
                 }
-            }
+        }
         }
 
         if (exists)

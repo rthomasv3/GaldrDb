@@ -376,9 +376,18 @@ public class StressTestRunner
         {
             List<StressTestDocument> docs = _db.Query<StressTestDocument>().ToList();
             count = docs.Count;
+
+            int queryCount = _db.Query<StressTestDocument>().Count();
+
+            if (queryCount != count)
+            {
+                Console.WriteLine($"Warning: Document count mismatch. Query returned {queryCount}, but actual count is {count}.");
+            }
         }
-        catch
+        catch (Exception ex)
         {
+            Console.WriteLine($"GetActualDocumentCount failed: {ex.GetType().Name}: {ex.Message}");
+            Console.WriteLine(ex.StackTrace);
             count = -1;
         }
 

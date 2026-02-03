@@ -116,7 +116,20 @@ internal sealed class VersionScanner
 
     public int GetUnfilteredCount(string collectionName, CollectionEntry collection, Transaction transaction)
     {
-        int count = collection?.DocumentCount ?? 0;
+        // Get visible versions directly from the version index to ensure consistency.
+        // Using DocumentCount would create a race condition: during commit, the version index
+        // is updated before DocumentCount, so a query could see a document marked as deleted
+        // in the version index while DocumentCount still includes it.
+        List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
+
+        // Build a set of visible document IDs for quick lookup
+        HashSet<int> visibleDocIds = new HashSet<int>();
+        foreach (DocumentVersion version in visibleVersions)
+        {
+            visibleDocIds.Add(version.DocumentId);
+        }
+
+        int count = visibleVersions.Count;
         IReadOnlyDictionary<DocumentKey, WriteSetEntry> writeSet = transaction.GetWriteSet();
 
         foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in writeSet)
@@ -124,14 +137,23 @@ internal sealed class VersionScanner
             if (kvp.Key.CollectionName == collectionName)
             {
                 WriteSetEntry entry = kvp.Value;
+                int docId = kvp.Key.DocId;
 
                 if (entry.Operation == WriteOperation.Insert)
                 {
-                    count++;
+                    // Only count if document is not already visible (new insert)
+                    if (!visibleDocIds.Contains(docId))
+                    {
+                        count++;
+                    }
                 }
                 else if (entry.Operation == WriteOperation.Delete)
                 {
-                    count--;
+                    // Only subtract if document is currently visible (being deleted)
+                    if (visibleDocIds.Contains(docId))
+                    {
+                        count--;
+                    }
                 }
             }
         }
@@ -141,30 +163,29 @@ internal sealed class VersionScanner
 
     public bool HasAnyUnfiltered(string collectionName, CollectionEntry collection, Transaction transaction)
     {
-        int snapshotCount = collection?.DocumentCount ?? 0;
         IReadOnlyDictionary<DocumentKey, WriteSetEntry> writeSet = transaction.GetWriteSet();
         bool hasAny = false;
 
-        if (snapshotCount > 0)
+        // Check for any inserts in write set first (quick check)
+        foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in writeSet)
+        {
+            if (kvp.Key.CollectionName == collectionName && kvp.Value.Operation == WriteOperation.Insert)
+            {
+                hasAny = true;
+                break;
+            }
+        }
+
+        // Check visible versions from the version index
+        if (!hasAny)
         {
             List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
 
             foreach (DocumentVersion version in visibleVersions)
             {
                 DocumentKey key = new DocumentKey(collectionName, version.DocumentId);
+                // Found a visible document that is not being deleted in this transaction
                 if (!writeSet.TryGetValue(key, out WriteSetEntry entry) || entry.Operation != WriteOperation.Delete)
-                {
-                    hasAny = true;
-                    break;
-                }
-            }
-        }
-
-        if (!hasAny)
-        {
-            foreach (KeyValuePair<DocumentKey, WriteSetEntry> kvp in writeSet)
-            {
-                if (kvp.Key.CollectionName == collectionName && kvp.Value.Operation == WriteOperation.Insert)
                 {
                     hasAny = true;
                     break;

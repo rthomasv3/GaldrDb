@@ -35,6 +35,7 @@ public class GaldrDb : IGaldrDb
     private readonly GaldrJsonOptions _jsonOptions;
     private readonly HashSet<string> _ensuredCollections;
     private readonly object _ddlLock;
+    private readonly object _documentCountLock;
     private readonly ConcurrentDictionary<string, SecondaryIndexBTree> _secondaryIndexCache;
     private readonly ConcurrentDictionary<string, BTree> _primaryBTreeCache;
     private IPageIO _basePageIO;
@@ -91,6 +92,7 @@ public class GaldrDb : IGaldrDb
         };
         _ensuredCollections = new HashSet<string>();
         _ddlLock = new object();
+        _documentCountLock = new object();
         _secondaryIndexCache = new ConcurrentDictionary<string, SecondaryIndexBTree>();
         _primaryBTreeCache = new ConcurrentDictionary<string, BTree>();
         _pendingRootUpdates = new AsyncLocal<PendingRootUpdates>();
@@ -2121,11 +2123,6 @@ public class GaldrDb : IGaldrDb
             InsertIntoIndexesInternal(collection, docId, location, indexFields);
         }
 
-        collection.DocumentCount++;
-        if (docId >= collection.NextId)
-        {
-            collection.NextId = docId + 1;
-        }
         _collectionsMetadata.UpdateCollection(collection);
         WriteCollectionsMetadataWithGrowth();
 
@@ -2182,8 +2179,11 @@ public class GaldrDb : IGaldrDb
         }
         catch (DocumentSlotDeletedException)
         {
-            throw new WriteConflictException(
-                $"Document at page {location.PageId} slot {location.SlotIndex} was deleted by a concurrent transaction");
+            // Document was GC'd after version was retrieved but before read.
+            // This can happen due to the race window between GC committing physical
+            // deletion and unlinking the version from VersionIndex. Return null to
+            // signal that the document is no longer available.
+            return null;
         }
 
         return result;
@@ -2278,8 +2278,46 @@ public class GaldrDb : IGaldrDb
                 SetPendingCollectionRoot(collection, currentRootPageId);
             }
 
-            collection.DocumentCount--;
             WriteCollectionsMetadataWithGrowth();
+        }
+    }
+
+    /// <summary>
+    /// Applies document count changes after successful version validation.
+    /// Thread-safe and persists the changes atomically.
+    /// </summary>
+    internal void ApplyDocumentCountDeltas(Dictionary<string, int> deltas)
+    {
+        lock (_documentCountLock)
+        {
+            if (deltas != null && deltas.Count > 0)
+            {
+                foreach (KeyValuePair<string, int> kvp in deltas)
+                {
+                    CollectionEntry collection = _collectionsMetadata.FindCollection(kvp.Key);
+                    if (collection != null)
+                    {
+                        if (kvp.Value > 0)
+                        {
+                            for (int i = 0; i < kvp.Value; i++)
+                            {
+                                collection.IncrementDocumentCount();
+                            }
+                        }
+                        else if (kvp.Value < 0)
+                        {
+                            for (int i = 0; i < -kvp.Value; i++)
+                            {
+                                collection.DecrementDocumentCount();
+                            }
+                        }
+
+                        _collectionsMetadata.UpdateCollection(collection);
+                    }
+                }
+
+                WriteCollectionsMetadataWithGrowth();
+            }
         }
     }
 
@@ -2374,11 +2412,6 @@ public class GaldrDb : IGaldrDb
             InsertIntoIndexesInternal(collection, docId, location, indexFields);
         }
 
-        collection.DocumentCount++;
-        if (docId >= collection.NextId)
-        {
-            collection.NextId = docId + 1;
-        }
         _collectionsMetadata.UpdateCollection(collection);
         WriteCollectionsMetadataWithGrowth();
 
@@ -2435,8 +2468,11 @@ public class GaldrDb : IGaldrDb
         }
         catch (DocumentSlotDeletedException)
         {
-            throw new WriteConflictException(
-                $"Document at page {location.PageId} slot {location.SlotIndex} was deleted by a concurrent transaction");
+            // Document was GC'd after version was retrieved but before read.
+            // This can happen due to the race window between GC committing physical
+            // deletion and unlinking the version from VersionIndex. Return null to
+            // signal that the document is no longer available.
+            return null;
         }
 
         return result;
@@ -2469,7 +2505,6 @@ public class GaldrDb : IGaldrDb
                 SetPendingCollectionRoot(collection, currentRootPageId);
             }
 
-            collection.DocumentCount--;
             WriteCollectionsMetadataWithGrowth();
         }
     }
@@ -2506,7 +2541,7 @@ public class GaldrDb : IGaldrDb
             }
         }
 
-        collection.DocumentCount++;
+        collection.IncrementDocumentCount();
         targetDb._collectionsMetadata.UpdateCollection(collection);
         targetDb.WriteCollectionsMetadataWithGrowth();
     }
@@ -2539,7 +2574,7 @@ public class GaldrDb : IGaldrDb
             }
         }
 
-        collection.DocumentCount++;
+        collection.IncrementDocumentCount();
         targetDb._collectionsMetadata.UpdateCollection(collection);
         targetDb.WriteCollectionsMetadataWithGrowth();
     }
