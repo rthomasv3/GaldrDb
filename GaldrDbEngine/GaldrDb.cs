@@ -54,9 +54,6 @@ public class GaldrDb : IGaldrDb
     private long _lastGCCommitCount;
     private byte[] _encryptionKey;
 
-    // Track pending root updates per transaction (applied after WAL commit)
-    private readonly AsyncLocal<PendingRootUpdates> _pendingRootUpdates;
-
     #endregion
 
     #region Internal Properties (for testing)
@@ -97,7 +94,6 @@ public class GaldrDb : IGaldrDb
         _commitSerializationLock = new object();
         _secondaryIndexCache = new ConcurrentDictionary<string, SecondaryIndexBTree>();
         _primaryBTreeCache = new ConcurrentDictionary<string, BTree>();
-        _pendingRootUpdates = new AsyncLocal<PendingRootUpdates>();
     }
 
     #endregion
@@ -1990,7 +1986,6 @@ public class GaldrDb : IGaldrDb
 
     internal void BeginWalWrite()
     {
-        InitPendingRootUpdates();
         if (_walPageIO != null)
         {
             _walPageIO.BeginWrite();
@@ -2003,7 +1998,6 @@ public class GaldrDb : IGaldrDb
         {
             _walPageIO.CommitWrite();
         }
-        ApplyPendingRootUpdates();
     }
 
     internal void AbortWalWrite()
@@ -2012,7 +2006,6 @@ public class GaldrDb : IGaldrDb
         {
             _walPageIO.AbortWrite();
         }
-        ClearPendingRootUpdates();
     }
 
     /// <summary>
@@ -2052,16 +2045,6 @@ public class GaldrDb : IGaldrDb
         EndWalSnapshot();
     }
 
-    private void InitPendingRootUpdates()
-    {
-        _pendingRootUpdates.Value = new PendingRootUpdates();
-    }
-
-    private void ClearPendingRootUpdates()
-    {
-        _pendingRootUpdates.Value = null;
-    }
-
     internal BTree GetPrimaryBTree(CollectionEntry collection)
     {
         return _primaryBTreeCache.GetOrAdd(collection.Name, _ =>
@@ -2073,82 +2056,6 @@ public class GaldrDb : IGaldrDb
         string cacheKey = $"{collectionName}:{indexDef.IndexName}";
         return _secondaryIndexCache.GetOrAdd(cacheKey, _ =>
             new SecondaryIndexBTree(_pageIO, _pageManager, _pageLockManager, indexDef.RootPageId, _options.PageSize, _options.UsablePageSize, SecondaryIndexBTree.CalculateMaxKeys(_options.UsablePageSize)));
-    }
-
-    private void SetPendingCollectionRoot(CollectionEntry collection, int newRootPageId)
-    {
-        PendingRootUpdates pending = _pendingRootUpdates.Value;
-        if (pending != null)
-        {
-            pending.SetCollectionRoot(collection.Name, newRootPageId);
-        }
-        else
-        {
-            // No transaction context - update directly (for non-transactional operations)
-            collection.RootPage = newRootPageId;
-        }
-    }
-
-    private int GetEffectiveIndexRoot(CollectionEntry collection, IndexDefinition indexDef)
-    {
-        int result = indexDef.RootPageId;
-        PendingRootUpdates pending = _pendingRootUpdates.Value;
-        if (pending != null && pending.TryGetIndexRoot(collection.Name, indexDef.IndexName, out int pendingRoot))
-        {
-            result = pendingRoot;
-        }
-        return result;
-    }
-
-    private void SetPendingIndexRoot(CollectionEntry collection, IndexDefinition indexDef, int newRootPageId)
-    {
-        PendingRootUpdates pending = _pendingRootUpdates.Value;
-        if (pending != null)
-        {
-            pending.SetIndexRoot(collection.Name, indexDef.IndexName, newRootPageId);
-        }
-        else
-        {
-            // No transaction context - update directly (for non-transactional operations)
-            indexDef.RootPageId = newRootPageId;
-        }
-    }
-
-    private void ApplyPendingRootUpdates()
-    {
-        PendingRootUpdates pending = _pendingRootUpdates.Value;
-        if (pending != null)
-        {
-            // Apply collection root updates
-            foreach (KeyValuePair<string, int> kvp in pending.CollectionRoots)
-            {
-                CollectionEntry collection = _collectionsMetadata.FindCollection(kvp.Key);
-                if (collection != null)
-                {
-                    collection.RootPage = kvp.Value;
-                }
-            }
-
-            // Apply index root updates
-            foreach (KeyValuePair<string, int> kvp in pending.IndexRoots)
-            {
-                string[] parts = kvp.Key.Split(':');
-                if (parts.Length == 2)
-                {
-                    CollectionEntry collection = _collectionsMetadata.FindCollection(parts[0]);
-                    if (collection != null)
-                    {
-                        IndexDefinition indexDef = collection.FindIndexByName(parts[1]);
-                        if (indexDef != null)
-                        {
-                            indexDef.RootPageId = kvp.Value;
-                        }
-                    }
-                }
-            }
-
-            pending.Clear();
-        }
     }
 
     #endregion
@@ -2171,7 +2078,7 @@ public class GaldrDb : IGaldrDb
         int currentRootPageId = btree.GetRootPageId();
         if (currentRootPageId != collection.RootPage)
         {
-            SetPendingCollectionRoot(collection, currentRootPageId);
+            collection.RootPage = currentRootPageId;
         }
 
         if (indexFields != null && indexFields.Count > 0)
@@ -2210,7 +2117,7 @@ public class GaldrDb : IGaldrDb
         int currentRootPageId = btree.GetRootPageId();
         if (currentRootPageId != collection.RootPage)
         {
-            SetPendingCollectionRoot(collection, currentRootPageId);
+            collection.RootPage = currentRootPageId;
         }
 
         if (newIndexFields != null && newIndexFields.Count > 0)
@@ -2331,7 +2238,7 @@ public class GaldrDb : IGaldrDb
             int currentRootPageId = btree.GetRootPageId();
             if (currentRootPageId != collection.RootPage)
             {
-                SetPendingCollectionRoot(collection, currentRootPageId);
+                collection.RootPage = currentRootPageId;
             }
 
             WriteCollectionsMetadataWithGrowth();
@@ -2403,7 +2310,7 @@ public class GaldrDb : IGaldrDb
                 int currentRootPageId = indexTree.GetRootPageId();
                 if (currentRootPageId != indexDef.RootPageId)
                 {
-                    SetPendingIndexRoot(collection, indexDef, currentRootPageId);
+                    indexDef.RootPageId = currentRootPageId;
                 }
             }
         }
@@ -2434,7 +2341,7 @@ public class GaldrDb : IGaldrDb
                 int currentRootPageId = indexTree.GetRootPageId();
                 if (currentRootPageId != indexDef.RootPageId)
                 {
-                    SetPendingIndexRoot(collection, indexDef, currentRootPageId);
+                    indexDef.RootPageId = currentRootPageId;
                 }
             }
         }
@@ -2460,7 +2367,7 @@ public class GaldrDb : IGaldrDb
         int currentRootPageId = btree.GetRootPageId();
         if (currentRootPageId != collection.RootPage)
         {
-            SetPendingCollectionRoot(collection, currentRootPageId);
+            collection.RootPage = currentRootPageId;
         }
 
         if (indexFields != null && indexFields.Count > 0)
@@ -2500,7 +2407,7 @@ public class GaldrDb : IGaldrDb
         int currentRootPageId = btree.GetRootPageId();
         if (currentRootPageId != collection.RootPage)
         {
-            SetPendingCollectionRoot(collection, currentRootPageId);
+            collection.RootPage = currentRootPageId;
         }
 
         if (newIndexFields != null && newIndexFields.Count > 0)
@@ -2558,7 +2465,7 @@ public class GaldrDb : IGaldrDb
             int currentRootPageId = btree.GetRootPageId();
             if (currentRootPageId != collection.RootPage)
             {
-                SetPendingCollectionRoot(collection, currentRootPageId);
+                collection.RootPage = currentRootPageId;
             }
 
             WriteCollectionsMetadataWithGrowth();
