@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using GaldrDbEngine.IO;
+using GaldrDbEngine.Transactions;
 
 namespace GaldrDb.UnitTests;
 
@@ -30,26 +31,26 @@ internal class OperationTrackingPageIO : IPageIO
     public long LastSetLength => _lastSetLength;
     public bool IsDisposed => _disposed;
 
-    public void ReadPage(int pageId, Span<byte> destination)
+    public void ReadPage(int pageId, Span<byte> destination, TransactionContext context = null)
     {
-        _inner.ReadPage(pageId, destination);
+        _inner.ReadPage(pageId, destination, context);
     }
 
-    public Task ReadPageAsync(int pageId, Memory<byte> destination, CancellationToken cancellationToken = default)
+    public Task ReadPageAsync(int pageId, Memory<byte> destination, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
-        return _inner.ReadPageAsync(pageId, destination, cancellationToken);
+        return _inner.ReadPageAsync(pageId, destination, context, cancellationToken);
     }
 
-    public void WritePage(int pageId, ReadOnlySpan<byte> data)
+    public void WritePage(int pageId, ReadOnlySpan<byte> data, TransactionContext context = null)
     {
         Interlocked.Increment(ref _writeCount);
-        _inner.WritePage(pageId, data);
+        _inner.WritePage(pageId, data, context);
     }
 
-    public Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    public Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref _writeCount);
-        return _inner.WritePageAsync(pageId, data, cancellationToken);
+        return _inner.WritePageAsync(pageId, data, context, cancellationToken);
     }
 
     public void Flush()

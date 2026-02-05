@@ -14,17 +14,20 @@ internal sealed class VersionScanner
     private readonly VersionIndex _versionIndex;
     private readonly TxId _snapshotTxId;
     private readonly SecondaryIndexScanner _indexScanner;
+    private readonly TransactionContext _context;
 
     public VersionScanner(
         GaldrDb db,
         VersionIndex versionIndex,
         TxId snapshotTxId,
-        SecondaryIndexScanner indexScanner)
+        SecondaryIndexScanner indexScanner,
+        TransactionContext context)
     {
         _db = db;
         _versionIndex = versionIndex;
         _snapshotTxId = snapshotTxId;
         _indexScanner = indexScanner;
+        _context = context;
     }
 
     public List<DocumentVersion> GetVersionsForPlan(string collectionName, QueryExecutionPlan plan)
@@ -43,7 +46,7 @@ internal sealed class VersionScanner
         else if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
         {
             PrimaryKeyRangeSpec rangeSpec = plan.PrimaryKeyRange;
-            List<int> docIds = _db.SearchDocIdRange(collectionName, rangeSpec.StartDocId, rangeSpec.EndDocId, rangeSpec.IncludeStart, rangeSpec.IncludeEnd);
+            List<int> docIds = _db.SearchDocIdRange(collectionName, rangeSpec.StartDocId, rangeSpec.EndDocId, rangeSpec.IncludeStart, rangeSpec.IncludeEnd, _context);
             versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, docIds, _snapshotTxId);
         }
         else if (plan.PlanType == QueryPlanType.PrimaryKeyMultiPoint)
@@ -88,7 +91,7 @@ internal sealed class VersionScanner
         else if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
         {
             PrimaryKeyRangeSpec rangeSpec = plan.PrimaryKeyRange;
-            List<int> docIds = await _db.SearchDocIdRangeAsync(collectionName, rangeSpec.StartDocId, rangeSpec.EndDocId, rangeSpec.IncludeStart, rangeSpec.IncludeEnd, cancellationToken).ConfigureAwait(false);
+            List<int> docIds = await _db.SearchDocIdRangeAsync(collectionName, rangeSpec.StartDocId, rangeSpec.EndDocId, rangeSpec.IncludeStart, rangeSpec.IncludeEnd, _context, cancellationToken).ConfigureAwait(false);
             versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, docIds, _snapshotTxId);
         }
         else if (plan.PlanType == QueryPlanType.PrimaryKeyMultiPoint)

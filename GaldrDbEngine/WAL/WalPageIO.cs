@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using GaldrDbEngine.IO;
 using GaldrDbEngine.Pages;
+using GaldrDbEngine.Transactions;
 using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.WAL;
@@ -24,17 +25,6 @@ internal class WalPageIO : IPageIO
     private long _nBackfill;         // Frames checkpointed to database
     private long _writeFrameNumber;  // Current write position (may include uncommitted)
 
-    // Track current transaction per async flow (thread/task)
-    private readonly AsyncLocal<ulong?> _currentTxId;
-
-    // Per-transaction tracking of uncommitted page writes
-    // Key: pageId, Value: PageWriteEntry containing the frame we wrote and what _pageLatestFrame was at write time
-    private readonly AsyncLocal<Dictionary<int, PageWriteEntry>> _txPageWrites;
-
-    // Per-transaction snapshot of _pageLatestFrame at transaction start
-    // Ensures consistent reads within a transaction (no mid-operation changes from other commits)
-    private readonly AsyncLocal<Dictionary<int, long>> _txFrameSnapshot;
-
     // Lock for serializing WAL commits
     private readonly object _commitLock;
 
@@ -45,9 +35,6 @@ internal class WalPageIO : IPageIO
     // Each entry is the _mxFrame at the time a transaction's snapshot was captured.
     // Checkpoint must not push frames beyond min(active snapshots) to the base file.
     private readonly List<long> _activeSnapshotFrames;
-
-    // Per-transaction record of the _mxFrame at snapshot time, used to remove the correct entry on commit/abort
-    private readonly AsyncLocal<long> _txSnapshotMxFrame;
 
     // Reusable lists for CommitTransaction (protected by _commitLock)
     private readonly List<WalFrameEntry> _commitFramesList;
@@ -66,19 +53,15 @@ internal class WalPageIO : IPageIO
         _mxFrame = 0;
         _nBackfill = 0;
         _writeFrameNumber = 0;
-        _currentTxId = new AsyncLocal<ulong?>();
-        _txPageWrites = new AsyncLocal<Dictionary<int, PageWriteEntry>>();
-        _txFrameSnapshot = new AsyncLocal<Dictionary<int, long>>();
         _commitLock = new object();
         _checkpointSemaphore = new SemaphoreSlim(1, 1);
         _activeSnapshotFrames = new List<long>();
-        _txSnapshotMxFrame = new AsyncLocal<long>();
         _commitFramesList = new List<WalFrameEntry>();
         _commitPageIdsList = new List<int>();
         _disposed = false;
     }
 
-    public void BeginSnapshot(ulong txId)
+    public TransactionContext BeginSnapshot(ulong txId)
     {
         // Check if WAL can be reset (all frames checkpointed, no uncommitted writes)
         long currentMxFrame = Interlocked.Read(ref _mxFrame);
@@ -90,44 +73,75 @@ internal class WalPageIO : IPageIO
             ResetWal();
         }
 
-        _currentTxId.Value = txId;
-
         // Capture snapshot of current committed state for consistent reads
         lock (_cacheLock)
         {
             long snapshotMxFrame = Interlocked.Read(ref _mxFrame);
-            _txSnapshotMxFrame.Value = snapshotMxFrame;
             _activeSnapshotFrames.Add(snapshotMxFrame);
-            _txFrameSnapshot.Value = new Dictionary<int, long>(_pageLatestFrame);
+
+            return new TransactionContext
+            {
+                TxId = txId,
+                FrameSnapshot = new Dictionary<int, long>(_pageLatestFrame),
+                SnapshotMxFrame = snapshotMxFrame,
+                PageWrites = null
+            };
         }
     }
 
-    public void EndSnapshot()
+    public void EndSnapshot(TransactionContext context)
     {
-        lock (_cacheLock)
+        if (context != null)
         {
-            _activeSnapshotFrames.Remove(_txSnapshotMxFrame.Value);
+            lock (_cacheLock)
+            {
+                _activeSnapshotFrames.Remove(context.SnapshotMxFrame);
+            }
         }
-
-        _currentTxId.Value = null;
-        _txFrameSnapshot.Value = null;
-        _txSnapshotMxFrame.Value = 0;
     }
 
-    public void BeginWrite()
+    /// <summary>
+    /// Refreshes the transaction's snapshot to the current committed state.
+    /// Used during commit retry after a PageConflictException to ensure
+    /// the transaction sees a consistent view of all pages (not just the conflicted one).
+    /// </summary>
+    public void RefreshSnapshot(TransactionContext context)
     {
-        _txPageWrites.Value = new Dictionary<int, PageWriteEntry>();
-    }
-
-    public void CommitWrite()
-    {
-        ulong? txId = _currentTxId.Value;
-        if (!txId.HasValue)
+        if (context != null)
         {
-            throw new InvalidOperationException("No transaction in progress");
+            lock (_cacheLock)
+            {
+                // Remove old snapshot frame from active list
+                _activeSnapshotFrames.Remove(context.SnapshotMxFrame);
+
+                // Capture new snapshot
+                long newSnapshotMxFrame = Interlocked.Read(ref _mxFrame);
+                long oldSnapshotMxFrame = context.SnapshotMxFrame;
+                context.FrameSnapshot = new Dictionary<int, long>(_pageLatestFrame);
+                context.SnapshotMxFrame = newSnapshotMxFrame;
+
+                // Add new snapshot frame to active list
+                _activeSnapshotFrames.Add(newSnapshotMxFrame);
+            }
+        }
+    }
+
+    public void BeginWrite(TransactionContext context)
+    {
+        if (context != null)
+        {
+            context.PageWrites = new Dictionary<int, PageWriteEntry>();
+        }
+    }
+
+    public void CommitWrite(TransactionContext context)
+    {
+        if (context == null)
+        {
+            throw new InvalidOperationException("No transaction context provided");
         }
 
-        Dictionary<int, PageWriteEntry> txPageWrites = _txPageWrites.Value;
+        Dictionary<int, PageWriteEntry> txPageWrites = context.PageWrites;
 
         lock (_commitLock)
         {
@@ -171,7 +185,7 @@ internal class WalPageIO : IPageIO
                 long walStartFrame = 0;
                 if (_commitFramesList.Count > 0)
                 {
-                    walStartFrame = _wal.WriteFrameEntries(txId.Value, _commitFramesList);
+                    walStartFrame = _wal.WriteFrameEntries(context.TxId, _commitFramesList);
                     _wal.Flush();
                 }
 
@@ -221,15 +235,14 @@ internal class WalPageIO : IPageIO
             }
         }
 
-        _txPageWrites.Value = null;
+        context.PageWrites = null;
     }
 
-    public void AbortWrite()
+    public void AbortWrite(TransactionContext context)
     {
-        ulong? txId = _currentTxId.Value;
-        if (txId.HasValue)
+        if (context != null)
         {
-            Dictionary<int, PageWriteEntry> txPageWrites = _txPageWrites.Value;
+            Dictionary<int, PageWriteEntry> txPageWrites = context.PageWrites;
 
             // Rollback: remove this transaction's uncommitted frames from _walFrames
             lock (_cacheLock)
@@ -248,19 +261,20 @@ internal class WalPageIO : IPageIO
                 }
             }
 
-            _txPageWrites.Value = null;
+            context.PageWrites = null;
         }
     }
 
-    public void ReadPage(int pageId, Span<byte> destination)
+    public void ReadPage(int pageId, Span<byte> destination, TransactionContext context = null)
     {
         bool found = false;
-        ulong? currentTxId = _currentTxId.Value;
+        string readSource = null;
+        long readFrame = 0;
 
         // Step 1: Check transaction's uncommitted writes (read-your-own-writes)
-        if (currentTxId.HasValue)
+        if (context != null)
         {
-            Dictionary<int, PageWriteEntry> txPageWrites = _txPageWrites.Value;
+            Dictionary<int, PageWriteEntry> txPageWrites = context.PageWrites;
             if (txPageWrites != null && txPageWrites.TryGetValue(pageId, out PageWriteEntry writeInfo))
             {
                 lock (_cacheLock)
@@ -269,15 +283,17 @@ internal class WalPageIO : IPageIO
                     {
                         entry.Data.AsSpan().CopyTo(destination);
                         found = true;
+                        readSource = "uncommitted";
+                        readFrame = writeInfo.FrameNum;
                     }
                 }
             }
         }
 
         // Step 2: For transactions, use snapshot for consistent reads within the transaction
-        if (!found && currentTxId.HasValue)
+        if (!found && context != null)
         {
-            Dictionary<int, long> snapshot = _txFrameSnapshot.Value;
+            Dictionary<int, long> snapshot = context.FrameSnapshot;
             if (snapshot != null && snapshot.TryGetValue(pageId, out long frameNum))
             {
                 if (frameNum > 0)
@@ -288,7 +304,7 @@ internal class WalPageIO : IPageIO
         }
 
         // Step 2b: During writes, check live committed state for pages not in snapshot
-        if (!found && currentTxId.HasValue)
+        if (!found && context != null)
         {
             long frameNum;
             lock (_cacheLock)
@@ -303,7 +319,7 @@ internal class WalPageIO : IPageIO
         }
 
         // Step 3: No transaction - use current committed state
-        if (!found && !currentTxId.HasValue)
+        if (!found && context == null)
         {
             long frameNum;
             lock (_cacheLock)
@@ -314,6 +330,11 @@ internal class WalPageIO : IPageIO
             if (frameNum > 0 && frameNum > Interlocked.Read(ref _nBackfill))
             {
                 found = _wal.ReadFrameData(frameNum, destination);
+                if (found)
+                {
+                    readSource = "step3-nocontext";
+                    readFrame = frameNum;
+                }
             }
         }
 
@@ -321,10 +342,12 @@ internal class WalPageIO : IPageIO
         if (!found)
         {
             _innerPageIO.ReadPage(pageId, destination);
+            readSource = "basefile";
+            readFrame = 0;
         }
     }
 
-    public void WritePage(int pageId, ReadOnlySpan<byte> data)
+    public void WritePage(int pageId, ReadOnlySpan<byte> data, TransactionContext context = null)
     {
         byte[] cacheData = BufferPool.Rent(_pageSize);
         bool bufferOwnershipTransferred = false;
@@ -334,8 +357,7 @@ internal class WalPageIO : IPageIO
             data.CopyTo(cacheData);
             byte pageType = DeterminePageType(cacheData);
 
-            ulong? txId = _currentTxId.Value;
-            if (txId.HasValue)
+            if (context != null)
             {
                 // Transaction write: add to cache only, WAL write happens at commit
                 lock (_cacheLock)
@@ -343,7 +365,7 @@ internal class WalPageIO : IPageIO
                     long frameNum = Interlocked.Increment(ref _writeFrameNumber);
 
                     // Return old buffer if this page was already written in this transaction
-                    Dictionary<int, PageWriteEntry> txPageWrites = _txPageWrites.Value;
+                    Dictionary<int, PageWriteEntry> txPageWrites = context.PageWrites;
                     long baseFrame = 0;
                     if (txPageWrites != null && txPageWrites.TryGetValue(pageId, out PageWriteEntry oldWriteInfo))
                     {
@@ -359,7 +381,7 @@ internal class WalPageIO : IPageIO
                     {
                         // First write to this page in this transaction - use snapshot frame as base
                         // so conflict detection catches pages modified after our snapshot
-                        Dictionary<int, long> snapshot = _txFrameSnapshot.Value;
+                        Dictionary<int, long> snapshot = context.FrameSnapshot;
                         if (snapshot != null && snapshot.TryGetValue(pageId, out long snapshotFrame))
                         {
                             baseFrame = snapshotFrame;
@@ -427,15 +449,14 @@ internal class WalPageIO : IPageIO
         _innerPageIO.SetLength(newSize);
     }
 
-    public async Task ReadPageAsync(int pageId, Memory<byte> destination, CancellationToken cancellationToken = default)
+    public async Task ReadPageAsync(int pageId, Memory<byte> destination, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
         bool found = false;
-        ulong? currentTxId = _currentTxId.Value;
 
         // Step 1: Check transaction's uncommitted writes (read-your-own-writes)
-        if (currentTxId.HasValue)
+        if (context != null)
         {
-            Dictionary<int, PageWriteEntry> txPageWrites = _txPageWrites.Value;
+            Dictionary<int, PageWriteEntry> txPageWrites = context.PageWrites;
             if (txPageWrites != null && txPageWrites.TryGetValue(pageId, out PageWriteEntry writeInfo))
             {
                 lock (_cacheLock)
@@ -450,9 +471,9 @@ internal class WalPageIO : IPageIO
         }
 
         // Step 2: For transactions, use snapshot for consistent reads within the transaction
-        if (!found && currentTxId.HasValue)
+        if (!found && context != null)
         {
-            Dictionary<int, long> snapshot = _txFrameSnapshot.Value;
+            Dictionary<int, long> snapshot = context.FrameSnapshot;
             if (snapshot != null && snapshot.TryGetValue(pageId, out long frameNum))
             {
                 if (frameNum > 0)
@@ -462,8 +483,23 @@ internal class WalPageIO : IPageIO
             }
         }
 
+        // Step 2b: During writes, check live committed state for pages not in snapshot
+        if (!found && context != null)
+        {
+            long frameNum;
+            lock (_cacheLock)
+            {
+                _pageLatestFrame.TryGetValue(pageId, out frameNum);
+            }
+
+            if (frameNum > 0 && frameNum > Interlocked.Read(ref _nBackfill))
+            {
+                found = await _wal.ReadFrameDataAsync(frameNum, destination, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         // Step 3: No transaction - use current committed state
-        if (!found && !currentTxId.HasValue)
+        if (!found && context == null)
         {
             long frameNum;
             lock (_cacheLock)
@@ -480,13 +516,13 @@ internal class WalPageIO : IPageIO
         // Step 4: Fall back to base file
         if (!found)
         {
-            await _innerPageIO.ReadPageAsync(pageId, destination, cancellationToken).ConfigureAwait(false);
+            await _innerPageIO.ReadPageAsync(pageId, destination, context, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    public Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    public Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
-        WritePage(pageId, data.Span);
+        WritePage(pageId, data.Span, context);
         return Task.CompletedTask;
     }
 
@@ -644,7 +680,7 @@ internal class WalPageIO : IPageIO
                             cancellationToken.ThrowIfCancellationRequested();
                             if (await _wal.ReadFrameDataAsync(kvp.Value, buffer.AsMemory(), cancellationToken).ConfigureAwait(false))
                             {
-                                await _innerPageIO.WritePageAsync(kvp.Key, buffer, cancellationToken).ConfigureAwait(false);
+                                await _innerPageIO.WritePageAsync(kvp.Key, buffer, null, cancellationToken).ConfigureAwait(false);
                             }
                         }
 

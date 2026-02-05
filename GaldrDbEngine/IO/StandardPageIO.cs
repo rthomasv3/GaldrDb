@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using GaldrDbEngine.Transactions;
 using GaldrDbEngine.Utilities;
 using Microsoft.Win32.SafeHandles;
 
@@ -32,7 +33,7 @@ internal class StandardPageIO : IPageIO
         _fileHandle = File.OpenHandle(filePath, fileMode, FileAccess.ReadWrite, FileShare.Read);
     }
 
-    public void ReadPage(int pageId, Span<byte> destination)
+    public void ReadPage(int pageId, Span<byte> destination, TransactionContext context = null)
     {
         if (destination.Length < _pageSize)
         {
@@ -67,7 +68,7 @@ internal class StandardPageIO : IPageIO
         }
     }
 
-    public void WritePage(int pageId, ReadOnlySpan<byte> data)
+    public void WritePage(int pageId, ReadOnlySpan<byte> data, TransactionContext context = null)
     {
         if (data.Length != _pageSize)
         {
@@ -131,7 +132,7 @@ internal class StandardPageIO : IPageIO
         }
     }
 
-    public async Task ReadPageAsync(int pageId, Memory<byte> destination, CancellationToken cancellationToken = default)
+    public async Task ReadPageAsync(int pageId, Memory<byte> destination, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
         if (destination.Length < _pageSize)
         {
@@ -166,7 +167,7 @@ internal class StandardPageIO : IPageIO
         }
     }
 
-    public async Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    public async Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
         if (data.Length != _pageSize)
         {

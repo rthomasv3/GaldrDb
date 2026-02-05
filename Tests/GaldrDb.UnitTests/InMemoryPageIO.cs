@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using GaldrDbEngine.IO;
+using GaldrDbEngine.Transactions;
 
 namespace GaldrDb.UnitTests;
 
@@ -26,7 +27,7 @@ internal class InMemoryPageIO : IPageIO
         get { lock (_lock) { return _pages.Count; } }
     }
 
-    public void ReadPage(int pageId, Span<byte> destination)
+    public void ReadPage(int pageId, Span<byte> destination, TransactionContext context = null)
     {
         lock (_lock)
         {
@@ -46,7 +47,7 @@ internal class InMemoryPageIO : IPageIO
         }
     }
 
-    public void WritePage(int pageId, ReadOnlySpan<byte> data)
+    public void WritePage(int pageId, ReadOnlySpan<byte> data, TransactionContext context = null)
     {
         lock (_lock)
         {
@@ -94,15 +95,15 @@ internal class InMemoryPageIO : IPageIO
         Dispose();
     }
 
-    public Task ReadPageAsync(int pageId, Memory<byte> destination, CancellationToken cancellationToken = default)
+    public Task ReadPageAsync(int pageId, Memory<byte> destination, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
-        ReadPage(pageId, destination.Span);
+        ReadPage(pageId, destination.Span, context);
         return Task.CompletedTask;
     }
 
-    public Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    public Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
-        WritePage(pageId, data.Span);
+        WritePage(pageId, data.Span, context);
         return Task.CompletedTask;
     }
 

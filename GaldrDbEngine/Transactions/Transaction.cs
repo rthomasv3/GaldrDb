@@ -28,6 +28,7 @@ public class Transaction : ITransaction
     private readonly Dictionary<DocumentKey, WriteSetEntry> _writeSet;
     private readonly Dictionary<DocumentKey, TxId> _readSet;
     private readonly bool _isReadOnly;
+    private readonly TransactionContext _context;
     private bool _disposed;
     private bool _hasActiveWalSnapshot;
     private bool _hasActiveWalWrite;
@@ -57,7 +58,8 @@ public class Transaction : ITransaction
         TxId snapshotTxId,
         bool isReadOnly,
         IGaldrJsonSerializer jsonSerializer,
-        GaldrJsonOptions jsonOptions)
+        GaldrJsonOptions jsonOptions,
+        TransactionContext context)
     {
         _db = db;
         _txManager = txManager;
@@ -67,12 +69,18 @@ public class Transaction : ITransaction
         _isReadOnly = isReadOnly;
         _jsonSerializer = jsonSerializer;
         _jsonOptions = jsonOptions;
+        _context = context;
         _writeSet = new Dictionary<DocumentKey, WriteSetEntry>();
         _readSet = new Dictionary<DocumentKey, TxId>();
         State = TransactionState.Active;
         _disposed = false;
         _hasActiveWalSnapshot = true;
         _hasActiveWalWrite = false;
+    }
+
+    internal TransactionContext Context
+    {
+        get { return _context; }
     }
 
     /// <summary>
@@ -186,7 +194,7 @@ public class Transaction : ITransaction
             {
                 try
                 {
-                    byte[] jsonBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
+                    byte[] jsonBytes = _db.ReadDocumentByLocation(visibleVersion.Location, _context);
                     string jsonStr = Encoding.UTF8.GetString(jsonBytes);
                     result = _jsonSerializer.Deserialize<T>(jsonStr, _jsonOptions);
 
@@ -352,7 +360,7 @@ public class Transaction : ITransaction
                 // Only read document if there are indexes to clean up
                 if (typeInfo.IndexedFieldNames.Count > 0 || typeInfo.CompoundIndexes.Count > 0)
                 {
-                    byte[] docBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
+                    byte[] docBytes = _db.ReadDocumentByLocation(visibleVersion.Location, _context);
                     CollectionEntry collection = _db.GetCollection(collectionName);
                     oldIndexFields = IndexFieldExtractor.ExtractFromBytes(docBytes, collection.Indexes);
                 }
@@ -489,7 +497,7 @@ public class Transaction : ITransaction
                 // Only read document if there are indexes to clean up
                 if (typeInfo.IndexedFieldNames.Count > 0 || typeInfo.CompoundIndexes.Count > 0)
                 {
-                    byte[] docBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
+                    byte[] docBytes = _db.ReadDocumentByLocation(visibleVersion.Location, _context);
                     CollectionEntry collection = _db.GetCollection(collectionName);
                     oldIndexFields = IndexFieldExtractor.ExtractFromBytes(docBytes, collection.Indexes);
                 }
@@ -527,7 +535,7 @@ public class Transaction : ITransaction
 
         if (_isReadOnly)
         {
-            _db.EndWalSnapshot();
+            _db.EndWalSnapshot(_context);
             _hasActiveWalSnapshot = false;
 
             State = TransactionState.Committed;
@@ -546,7 +554,7 @@ public class Transaction : ITransaction
             // This is an internal detail - retries are transparent to the caller.
             while (true)
             {
-                _db.BeginWalWrite();
+                _db.BeginWalWrite(_context);
                 _hasActiveWalWrite = true;
                 documentCountDeltas.Clear();
 
@@ -562,7 +570,7 @@ public class Transaction : ITransaction
                         switch (entry.Operation)
                         {
                             case WriteOperation.Insert:
-                                location = _db.CommitInsert(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields);
+                                location = _db.CommitInsert(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, _context);
                                 versionOps.Add(VersionOperation.ForInsert(entry.CollectionName, entry.DocumentId, location));
                                 if (!documentCountDeltas.TryGetValue(entry.CollectionName, out int insertDelta))
                                 {
@@ -572,12 +580,12 @@ public class Transaction : ITransaction
                                 break;
 
                             case WriteOperation.Update:
-                                location = _db.CommitUpdate(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, entry.OldIndexFields);
+                                location = _db.CommitUpdate(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, entry.OldIndexFields, _context);
                                 versionOps.Add(VersionOperation.ForUpdate(entry.CollectionName, entry.DocumentId, location, entry.ReadVersionTxId));
                                 break;
 
                             case WriteOperation.Delete:
-                                _db.CommitDelete(entry.CollectionName, entry.DocumentId, entry.OldIndexFields);
+                                _db.CommitDelete(entry.CollectionName, entry.DocumentId, entry.OldIndexFields, _context);
                                 versionOps.Add(VersionOperation.ForDelete(entry.CollectionName, entry.DocumentId, entry.ReadVersionTxId));
                                 if (!documentCountDeltas.TryGetValue(entry.CollectionName, out int deleteDelta))
                                 {
@@ -591,14 +599,20 @@ public class Transaction : ITransaction
                     // Atomically validate version conflicts, commit WAL, and add version entries.
                     // This ensures WAL frames are never committed without valid version entries,
                     // and version entries are never added without committed WAL frames.
-                    _db.CommitWalWriteWithVersions(TxId, SnapshotTxId, versionOps);
+                    _db.CommitWalWriteWithVersions(_context, TxId, SnapshotTxId, versionOps);
                     _hasActiveWalWrite = false;
                     break;
                 }
                 catch (PageConflictException)
                 {
-                    _db.AbortWalWrite();
+                    _db.AbortWalWrite(_context);
                     _hasActiveWalWrite = false;
+
+                    // Refresh the entire snapshot to the current committed state so retry sees consistent pages.
+                    // We must refresh ALL pages, not just the conflicted one, because B-tree pages may reference
+                    // child pages that were allocated by the conflicting transaction (e.g., during a split).
+                    // Document-level MVCC validation will catch true conflicts (same document modified).
+                    _db.RefreshWalSnapshot(_context);
 
                     retryCount++;
                     if (retryCount >= MAX_PAGE_CONFLICT_RETRIES)
@@ -615,7 +629,7 @@ public class Transaction : ITransaction
                 }
                 catch
                 {
-                    _db.AbortWalWrite();
+                    _db.AbortWalWrite(_context);
                     _hasActiveWalWrite = false;
                     State = TransactionState.Aborted;
                     _txManager.MarkAborted(TxId);
@@ -624,7 +638,7 @@ public class Transaction : ITransaction
             }
 
             // End WAL snapshot before auto checkpoint so checkpoint can make progress
-            _db.EndWalSnapshot();
+            _db.EndWalSnapshot(_context);
             _hasActiveWalSnapshot = false;
 
             // Apply document count changes only after successful version validation
@@ -648,13 +662,13 @@ public class Transaction : ITransaction
         {
             if (_hasActiveWalWrite)
             {
-                _db.AbortWalWrite();
+                _db.AbortWalWrite(_context);
                 _hasActiveWalWrite = false;
             }
 
             if (_hasActiveWalSnapshot)
             {
-                _db.EndWalSnapshot();
+                _db.EndWalSnapshot(_context);
                 _hasActiveWalSnapshot = false;
             }
 
@@ -699,7 +713,7 @@ public class Transaction : ITransaction
             {
                 try
                 {
-                    byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
+                    byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, _context, cancellationToken).ConfigureAwait(false);
                     string jsonStr = Encoding.UTF8.GetString(jsonBytes);
                     result = _jsonSerializer.Deserialize<T>(jsonStr, _jsonOptions);
                 }
@@ -741,7 +755,7 @@ public class Transaction : ITransaction
             {
                 try
                 {
-                    byte[] jsonBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
+                    byte[] jsonBytes = _db.ReadDocumentByLocation(visibleVersion.Location, _context);
                     result = JsonDocument.Parse(jsonBytes);
 
                     if (!_readSet.ContainsKey(key))
@@ -788,7 +802,7 @@ public class Transaction : ITransaction
             {
                 try
                 {
-                    byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
+                    byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, _context, cancellationToken).ConfigureAwait(false);
                     result = JsonDocument.Parse(jsonBytes);
                 }
                 catch (WriteConflictException)
@@ -936,7 +950,7 @@ public class Transaction : ITransaction
 
                 if (collection.Indexes.Count > 0)
                 {
-                    byte[] docBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
+                    byte[] docBytes = _db.ReadDocumentByLocation(visibleVersion.Location, _context);
                     oldIndexFields = IndexFieldExtractor.ExtractFromBytes(docBytes, collection.Indexes);
                 }
             }
@@ -1032,7 +1046,7 @@ public class Transaction : ITransaction
 
                 if (collection.Indexes.Count > 0)
                 {
-                    byte[] docBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
+                    byte[] docBytes = _db.ReadDocumentByLocation(visibleVersion.Location, _context);
                     oldIndexFields = IndexFieldExtractor.ExtractFromBytes(docBytes, collection.Indexes);
                 }
             }
@@ -1141,7 +1155,7 @@ public class Transaction : ITransaction
 
                 if (collection.Indexes.Count > 0)
                 {
-                    byte[] docBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
+                    byte[] docBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, _context, cancellationToken).ConfigureAwait(false);
                     oldIndexFields = IndexFieldExtractor.ExtractFromBytes(docBytes, collection.Indexes);
                 }
             }
@@ -1236,7 +1250,7 @@ public class Transaction : ITransaction
 
                 if (collection.Indexes.Count > 0)
                 {
-                    byte[] docBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
+                    byte[] docBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, _context, cancellationToken).ConfigureAwait(false);
                     oldIndexFields = IndexFieldExtractor.ExtractFromBytes(docBytes, collection.Indexes);
                 }
             }
@@ -1410,7 +1424,7 @@ public class Transaction : ITransaction
                 // Only read document if there are indexes to clean up
                 if (typeInfo.IndexedFieldNames.Count > 0 || typeInfo.CompoundIndexes.Count > 0)
                 {
-                    byte[] docBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
+                    byte[] docBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, _context, cancellationToken).ConfigureAwait(false);
                     CollectionEntry collection = _db.GetCollection(collectionName);
                     oldIndexFields = IndexFieldExtractor.ExtractFromBytes(docBytes, collection.Indexes);
                 }
@@ -1517,7 +1531,7 @@ public class Transaction : ITransaction
                 // Only read document if there are indexes to clean up
                 if (typeInfo.IndexedFieldNames.Count > 0 || typeInfo.CompoundIndexes.Count > 0)
                 {
-                    byte[] docBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
+                    byte[] docBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, _context, cancellationToken).ConfigureAwait(false);
                     CollectionEntry collection = _db.GetCollection(collectionName);
                     oldIndexFields = IndexFieldExtractor.ExtractFromBytes(docBytes, collection.Indexes);
                 }
@@ -1556,7 +1570,7 @@ public class Transaction : ITransaction
 
         if (_isReadOnly)
         {
-            _db.EndWalSnapshot();
+            _db.EndWalSnapshot(_context);
             _hasActiveWalSnapshot = false;
 
             State = TransactionState.Committed;
@@ -1575,7 +1589,7 @@ public class Transaction : ITransaction
             // This is an internal detail - retries are transparent to the caller.
             while (true)
             {
-                _db.BeginWalWrite();
+                _db.BeginWalWrite(_context);
                 _hasActiveWalWrite = true;
                 documentCountDeltas.Clear();
 
@@ -1591,7 +1605,7 @@ public class Transaction : ITransaction
                         switch (entry.Operation)
                         {
                             case WriteOperation.Insert:
-                                location = await _db.CommitInsertAsync(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, cancellationToken).ConfigureAwait(false);
+                                location = await _db.CommitInsertAsync(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, _context, cancellationToken).ConfigureAwait(false);
                                 versionOps.Add(VersionOperation.ForInsert(entry.CollectionName, entry.DocumentId, location));
                                 if (!documentCountDeltas.TryGetValue(entry.CollectionName, out int insertDelta))
                                 {
@@ -1601,12 +1615,12 @@ public class Transaction : ITransaction
                                 break;
 
                             case WriteOperation.Update:
-                                location = await _db.CommitUpdateAsync(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, entry.OldIndexFields, cancellationToken).ConfigureAwait(false);
+                                location = await _db.CommitUpdateAsync(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, entry.OldIndexFields, _context, cancellationToken).ConfigureAwait(false);
                                 versionOps.Add(VersionOperation.ForUpdate(entry.CollectionName, entry.DocumentId, location, entry.ReadVersionTxId));
                                 break;
 
                             case WriteOperation.Delete:
-                                await _db.CommitDeleteAsync(entry.CollectionName, entry.DocumentId, entry.OldIndexFields, cancellationToken).ConfigureAwait(false);
+                                await _db.CommitDeleteAsync(entry.CollectionName, entry.DocumentId, entry.OldIndexFields, _context, cancellationToken).ConfigureAwait(false);
                                 versionOps.Add(VersionOperation.ForDelete(entry.CollectionName, entry.DocumentId, entry.ReadVersionTxId));
                                 if (!documentCountDeltas.TryGetValue(entry.CollectionName, out int deleteDelta))
                                 {
@@ -1620,14 +1634,20 @@ public class Transaction : ITransaction
                     // Atomically validate version conflicts, commit WAL, and add version entries.
                     // This ensures WAL frames are never committed without valid version entries,
                     // and version entries are never added without committed WAL frames.
-                    _db.CommitWalWriteWithVersions(TxId, SnapshotTxId, versionOps);
+                    _db.CommitWalWriteWithVersions(_context, TxId, SnapshotTxId, versionOps);
                     _hasActiveWalWrite = false;
                     break;
                 }
                 catch (PageConflictException)
                 {
-                    _db.AbortWalWrite();
+                    _db.AbortWalWrite(_context);
                     _hasActiveWalWrite = false;
+
+                    // Refresh the entire snapshot to the current committed state so retry sees consistent pages.
+                    // We must refresh ALL pages, not just the conflicted one, because B-tree pages may reference
+                    // child pages that were allocated by the conflicting transaction (e.g., during a split).
+                    // Document-level MVCC validation will catch true conflicts (same document modified).
+                    _db.RefreshWalSnapshot(_context);
 
                     retryCount++;
                     if (retryCount >= MAX_PAGE_CONFLICT_RETRIES)
@@ -1644,7 +1664,7 @@ public class Transaction : ITransaction
                 }
                 catch
                 {
-                    _db.AbortWalWrite();
+                    _db.AbortWalWrite(_context);
                     _hasActiveWalWrite = false;
                     State = TransactionState.Aborted;
                     _txManager.MarkAborted(TxId);
@@ -1653,7 +1673,7 @@ public class Transaction : ITransaction
             }
 
             // End WAL snapshot before auto checkpoint so checkpoint can make progress
-            _db.EndWalSnapshot();
+            _db.EndWalSnapshot(_context);
             _hasActiveWalSnapshot = false;
 
             // Apply document count changes only after successful version validation
@@ -1687,7 +1707,7 @@ public class Transaction : ITransaction
             // before Dispose was called (e.g., max retry failure in Commit)
             if (_hasActiveWalSnapshot)
             {
-                _db.EndWalSnapshot();
+                _db.EndWalSnapshot(_context);
                 _hasActiveWalSnapshot = false;
             }
         }
@@ -1844,7 +1864,7 @@ public class Transaction : ITransaction
             if (visibleVersion != null)
             {
                 exists = true;
-                existingBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
+                existingBytes = _db.ReadDocumentByLocation(visibleVersion.Location, _context);
 
                 if (_readSet.TryGetValue(key, out TxId trackedReadVersion))
                 {
@@ -1951,7 +1971,7 @@ public class Transaction : ITransaction
             if (visibleVersion != null)
             {
                 exists = true;
-                existingBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
+                existingBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, _context, cancellationToken).ConfigureAwait(false);
 
                 if (_readSet.TryGetValue(key, out TxId trackedReadVersion))
                 {
@@ -2159,7 +2179,7 @@ public class Transaction : ITransaction
             if (visibleVersion != null)
             {
                 exists = true;
-                existingBytes = _db.ReadDocumentByLocation(visibleVersion.Location);
+                existingBytes = _db.ReadDocumentByLocation(visibleVersion.Location, _context);
 
                 if (_readSet.TryGetValue(key, out TxId trackedReadVersion))
                 {
@@ -2258,7 +2278,7 @@ public class Transaction : ITransaction
             if (visibleVersion != null)
             {
                 exists = true;
-                existingBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, cancellationToken).ConfigureAwait(false);
+                existingBytes = await _db.ReadDocumentByLocationAsync(visibleVersion.Location, _context, cancellationToken).ConfigureAwait(false);
 
                 if (_readSet.TryGetValue(key, out TxId trackedReadVersion))
                 {

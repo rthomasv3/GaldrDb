@@ -4,10 +4,11 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using GaldrDbEngine.IO;
+using GaldrDbEngine.Transactions;
 
 namespace GaldrDb.SimulationTests.Core;
 
-public class SimulationPageIO : IPageIO
+internal class SimulationPageIO : IPageIO
 {
     private readonly int _pageSize;
     private readonly Dictionary<int, byte[]> _persistedPages;
@@ -38,7 +39,7 @@ public class SimulationPageIO : IPageIO
         _faultInjector = faultInjector;
     }
 
-    public void ReadPage(int pageId, Span<byte> destination)
+    public void ReadPage(int pageId, Span<byte> destination, TransactionContext context = null)
     {
         if (_disposed)
         {
@@ -90,7 +91,7 @@ public class SimulationPageIO : IPageIO
     // Debug: action called on every write
     public Action<int, byte[]> OnWritePage { get; set; }
 
-    public void WritePage(int pageId, ReadOnlySpan<byte> data)
+    public void WritePage(int pageId, ReadOnlySpan<byte> data, TransactionContext context = null)
     {
         if (_disposed)
         {
@@ -159,15 +160,15 @@ public class SimulationPageIO : IPageIO
         Dispose();
     }
 
-    public Task ReadPageAsync(int pageId, Memory<byte> destination, CancellationToken cancellationToken = default)
+    public Task ReadPageAsync(int pageId, Memory<byte> destination, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
-        ReadPage(pageId, destination.Span);
+        ReadPage(pageId, destination.Span, context);
         return Task.CompletedTask;
     }
 
-    public Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    public Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
-        WritePage(pageId, data.Span);
+        WritePage(pageId, data.Span, context);
         return Task.CompletedTask;
     }
 

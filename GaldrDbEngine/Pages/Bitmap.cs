@@ -2,6 +2,7 @@ using System;
 using System.Buffers.Binary;
 using System.Numerics;
 using GaldrDbEngine.IO;
+using GaldrDbEngine.Transactions;
 using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Pages;
@@ -169,7 +170,7 @@ internal class Bitmap
         _totalPages = newTotalPages;
     }
 
-    public void LoadFromDisk()
+    public void LoadFromDisk(TransactionContext context = null)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
         try
@@ -179,7 +180,7 @@ internal class Bitmap
 
             for (int i = 0; i < _pageCount; i++)
             {
-                _pageIO.ReadPage(_startPage + i, buffer);
+                _pageIO.ReadPage(_startPage + i, buffer, context);
                 int bytesToCopy = Math.Min(_usablePageSize, bitmapSizeBytes - offset);
 
                 Array.Copy(buffer, 0, _bitmap, offset, bytesToCopy);
@@ -192,7 +193,7 @@ internal class Bitmap
         }
     }
 
-    public void WriteToDisk()
+    public void WriteToDisk(TransactionContext context = null)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
         try
@@ -206,7 +207,7 @@ internal class Bitmap
                 int bytesToCopy = Math.Min(_usablePageSize, bitmapSizeBytes - offset);
 
                 Array.Copy(_bitmap, offset, buffer, 0, bytesToCopy);
-                _pageIO.WritePage(_startPage + i, buffer);
+                _pageIO.WritePage(_startPage + i, buffer, context);
 
                 offset += bytesToCopy;
             }

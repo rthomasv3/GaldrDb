@@ -18,6 +18,7 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
     private readonly TypedDocumentReader<T> _reader;
     private readonly VersionScanner _versionScanner;
     private readonly WriteSetOverlay<T> _writeSetOverlay;
+    private readonly TransactionContext _context;
 
     public TransactionQueryExecutor(
         Transaction transaction,
@@ -31,9 +32,10 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
         _transaction = transaction;
         _db = db;
         _typeInfo = typeInfo;
+        _context = transaction.Context;
         _reader = new TypedDocumentReader<T>(typeInfo, jsonSerializer, jsonOptions);
-        SecondaryIndexScanner indexScanner = new SecondaryIndexScanner(db, typeInfo.CollectionName);
-        _versionScanner = new VersionScanner(db, versionIndex, snapshotTxId, indexScanner);
+        SecondaryIndexScanner indexScanner = new SecondaryIndexScanner(db, typeInfo.CollectionName, _context);
+        _versionScanner = new VersionScanner(db, versionIndex, snapshotTxId, indexScanner, _context);
         _writeSetOverlay = new WriteSetOverlay<T>(transaction, typeInfo.CollectionName, _reader);
     }
 
@@ -262,7 +264,7 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
 
         foreach (DocumentVersion version in versions)
         {
-            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location, _context);
             T document = _reader.ReadDocument(jsonBytes);
 
             if (!hasFilters || _reader.PassesFilters(document, filters))
@@ -307,7 +309,7 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
 
         foreach (DocumentVersion version in versions)
         {
-            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, _context, cancellationToken).ConfigureAwait(false);
             T document = _reader.ReadDocument(jsonBytes);
 
             if (!hasFilters || _reader.PassesFilters(document, filters))
@@ -344,7 +346,7 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
         {
             if (hasFilters)
             {
-                byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+                byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location, _context);
                 T document = _reader.ReadDocument(jsonBytes);
 
                 if (_reader.PassesFilters(document, plan.RemainingFilters))
@@ -377,7 +379,7 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
         {
             if (hasFilters)
             {
-                byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+                byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, _context, cancellationToken).ConfigureAwait(false);
                 T document = _reader.ReadDocument(jsonBytes);
 
                 if (_reader.PassesFilters(document, plan.RemainingFilters))
@@ -414,7 +416,7 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
                 break;
             }
 
-            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location, _context);
             T document = _reader.ReadDocument(jsonBytes);
 
             if (_reader.PassesFilters(document, plan.RemainingFilters))
@@ -449,7 +451,7 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
                 break;
             }
 
-            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, _context, cancellationToken).ConfigureAwait(false);
             T document = _reader.ReadDocument(jsonBytes);
 
             if (_reader.PassesFilters(document, plan.RemainingFilters))

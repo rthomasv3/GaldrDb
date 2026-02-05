@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using GaldrDbEngine.IO;
 using GaldrDbEngine.Pages;
+using GaldrDbEngine.Transactions;
 using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Storage;
@@ -25,7 +26,7 @@ internal class DocumentStorage : IDisposable
         _usablePageSize = usablePageSize > 0 ? usablePageSize : pageSize;
     }
 
-    public DocumentLocation WriteDocument(byte[] documentBytes)
+    public DocumentLocation WriteDocument(byte[] documentBytes, TransactionContext context = null)
     {
         int documentSize = documentBytes.Length;
         int usablePageSizeForData = _usablePageSize - DocumentPage.DOCUMENT_PAGE_OVERHEAD;
@@ -49,7 +50,7 @@ internal class DocumentStorage : IDisposable
             DocumentPage page = DocumentPagePool.Rent(_pageSize);
             try
             {
-                _pageIO.ReadPage(pageId, pageBuffer);
+                _pageIO.ReadPage(pageId, pageBuffer, context);
 
                 if (IsPageInitialized(pageBuffer))
                 {
@@ -84,7 +85,7 @@ internal class DocumentStorage : IDisposable
                 int slotIndex = page.AddDocument(documentBytes, pageIds, pagesNeeded, documentSize);
 
                 page.SerializeTo(pageBuffer);
-                _pageIO.WritePage(pageId, pageBuffer);
+                _pageIO.WritePage(pageId, pageBuffer, context);
 
                 UpdateFSMForDocumentPage(pageId, page);
 
@@ -119,7 +120,7 @@ internal class DocumentStorage : IDisposable
                 int slotIndexResult = page.AddDocument(documentBytes.AsSpan(0, firstPageDataSize), pageIds, pagesNeeded, documentSize);
 
                 page.SerializeTo(pageBuffer);
-                _pageIO.WritePage(firstPageId, pageBuffer);
+                _pageIO.WritePage(firstPageId, pageBuffer, context);
 
                 // For multi-page documents, use contiguous free space for FSM since
                 // continuation pages are raw data buffers marked as FreeSpaceLevel.None
@@ -136,7 +137,7 @@ internal class DocumentStorage : IDisposable
                     Array.Clear(pageBuffer, 0, _pageSize);
                     Array.Copy(documentBytes, offset, pageBuffer, 0, chunkSize);
 
-                    _pageIO.WritePage(pageId, pageBuffer);
+                    _pageIO.WritePage(pageId, pageBuffer, context);
 
                     // Continuation pages are raw data buffers, not slotted pages.
                     // Mark as no free space so they won't be found by FindOrAllocatePageForDocument.
@@ -162,7 +163,7 @@ internal class DocumentStorage : IDisposable
         return result;
     }
 
-    public byte[] ReadDocument(int pageId, int slotIndex)
+    public byte[] ReadDocument(int pageId, int slotIndex, TransactionContext context = null)
     {
         byte[] result = null;
         int[] continuationPageIds = null;
@@ -173,7 +174,7 @@ internal class DocumentStorage : IDisposable
         byte[] pageBuffer = BufferPool.Rent(_pageSize);
         try
         {
-            _pageIO.ReadPage(pageId, pageBuffer);
+            _pageIO.ReadPage(pageId, pageBuffer, context);
 
             // Use fast path for single-page documents (avoids 8KB PageData copy)
             ReadDocumentResult readResult = DocumentPage.ReadDocumentFromBuffer(pageBuffer, slotIndex, pageId);
@@ -204,7 +205,7 @@ internal class DocumentStorage : IDisposable
                 for (int i = 1; i < entry.PageCount; i++)
                 {
                     int continuationPageId = entry.PageIds[i];
-                    _pageIO.ReadPage(continuationPageId, pageBuffer);
+                    _pageIO.ReadPage(continuationPageId, pageBuffer, context);
                     int remainingSize = entry.TotalSize - offset;
                     int chunkSize = Math.Min(remainingSize, _usablePageSize);
 
@@ -241,14 +242,14 @@ internal class DocumentStorage : IDisposable
         return result;
     }
 
-    public void DeleteDocument(int pageId, int slotIndex)
+    public void DeleteDocument(int pageId, int slotIndex, TransactionContext context = null)
     {
         _pageLockManager.AcquireWriteLock(pageId);
         byte[] pageBuffer = BufferPool.Rent(_pageSize);
         DocumentPage page = DocumentPagePool.Rent(_pageSize);
         try
         {
-            _pageIO.ReadPage(pageId, pageBuffer);
+            _pageIO.ReadPage(pageId, pageBuffer, context);
             DocumentPage.DeserializeTo(pageBuffer, page, _pageSize, _usablePageSize);
 
             if (slotIndex < 0 || slotIndex >= page.SlotCount)
@@ -282,7 +283,7 @@ internal class DocumentStorage : IDisposable
             };
 
             page.SerializeTo(pageBuffer);
-            _pageIO.WritePage(pageId, pageBuffer);
+            _pageIO.WritePage(pageId, pageBuffer, context);
 
             UpdateFSMForDocumentPage(pageId, page);
         }
@@ -298,7 +299,7 @@ internal class DocumentStorage : IDisposable
     /// Attempts to delete a document. Returns false if slot no longer exists (already deleted/compacted).
     /// Used by GC to gracefully handle stale slot indices.
     /// </summary>
-    public bool TryDeleteDocument(int pageId, int slotIndex)
+    public bool TryDeleteDocument(int pageId, int slotIndex, TransactionContext context = null)
     {
         bool deleted = false;
 
@@ -307,7 +308,7 @@ internal class DocumentStorage : IDisposable
         DocumentPage page = DocumentPagePool.Rent(_pageSize);
         try
         {
-            _pageIO.ReadPage(pageId, pageBuffer);
+            _pageIO.ReadPage(pageId, pageBuffer, context);
             DocumentPage.DeserializeTo(pageBuffer, page, _pageSize, _usablePageSize);
 
             // Graceful handling - slot may have been compacted/deleted
@@ -342,7 +343,7 @@ internal class DocumentStorage : IDisposable
                     };
 
                     page.SerializeTo(pageBuffer);
-                    _pageIO.WritePage(pageId, pageBuffer);
+                    _pageIO.WritePage(pageId, pageBuffer, context);
 
                     UpdateFSMForDocumentPage(pageId, page);
                     deleted = true;
@@ -389,7 +390,7 @@ internal class DocumentStorage : IDisposable
         return pageId;
     }
 
-    private int FindCompactablePageForDocument(int requiredSpace)
+    private int FindCompactablePageForDocument(int requiredSpace, TransactionContext context = null)
     {
         int result = -1;
         int totalPages = _pageManager.Header.TotalPageCount;
@@ -404,7 +405,7 @@ internal class DocumentStorage : IDisposable
                     FreeSpaceLevel level = _pageManager.GetFreeSpaceLevel(pageId);
                     if (level != FreeSpaceLevel.High)
                     {
-                        _pageIO.ReadPage(pageId, pageBuffer);
+                        _pageIO.ReadPage(pageId, pageBuffer, context);
 
                         if (IsPageInitialized(pageBuffer))
                         {
@@ -483,7 +484,7 @@ internal class DocumentStorage : IDisposable
         return pageBytes[0] == PageConstants.PAGE_TYPE_DOCUMENT;
     }
 
-    public async Task<DocumentLocation> WriteDocumentAsync(byte[] documentBytes, CancellationToken cancellationToken = default)
+    public async Task<DocumentLocation> WriteDocumentAsync(byte[] documentBytes, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
         int documentSize = documentBytes.Length;
         int usablePageSizeForData = _usablePageSize - DocumentPage.DOCUMENT_PAGE_OVERHEAD;
@@ -507,7 +508,7 @@ internal class DocumentStorage : IDisposable
             byte[] pageBuffer = BufferPool.Rent(_pageSize);
             try
             {
-                await _pageIO.ReadPageAsync(pageId, pageBuffer, cancellationToken).ConfigureAwait(false);
+                await _pageIO.ReadPageAsync(pageId, pageBuffer, context, cancellationToken).ConfigureAwait(false);
 
                 if (IsPageInitialized(pageBuffer))
                 {
@@ -541,7 +542,7 @@ internal class DocumentStorage : IDisposable
                 int slotIndex = page.AddDocument(documentBytes, pageIds, pagesNeeded, documentSize);
 
                 page.SerializeTo(pageBuffer);
-                await _pageIO.WritePageAsync(pageId, pageBuffer, cancellationToken).ConfigureAwait(false);
+                await _pageIO.WritePageAsync(pageId, pageBuffer, context, cancellationToken).ConfigureAwait(false);
 
                 UpdateFSMForDocumentPage(pageId, page);
 
@@ -576,7 +577,7 @@ internal class DocumentStorage : IDisposable
                 int slotIndexResult = page.AddDocument(documentBytes.AsSpan(0, firstPageDataSize), pageIds, pagesNeeded, documentSize);
 
                 page.SerializeTo(pageBuffer);
-                await _pageIO.WritePageAsync(firstPageId, pageBuffer, cancellationToken).ConfigureAwait(false);
+                await _pageIO.WritePageAsync(firstPageId, pageBuffer, context, cancellationToken).ConfigureAwait(false);
 
                 // For multi-page documents, use contiguous free space for FSM since
                 // continuation pages are raw data buffers marked as FreeSpaceLevel.None
@@ -593,7 +594,7 @@ internal class DocumentStorage : IDisposable
                     Array.Clear(pageBuffer, 0, _pageSize);
                     Array.Copy(documentBytes, offset, pageBuffer, 0, chunkSize);
 
-                    await _pageIO.WritePageAsync(pageId, pageBuffer, cancellationToken).ConfigureAwait(false);
+                    await _pageIO.WritePageAsync(pageId, pageBuffer, context, cancellationToken).ConfigureAwait(false);
 
                     // Continuation pages are raw data buffers, not slotted pages.
                     // Mark as no free space so they won't be found by FindOrAllocatePageForDocument.
@@ -619,7 +620,7 @@ internal class DocumentStorage : IDisposable
         return result;
     }
 
-    public async Task<byte[]> ReadDocumentAsync(int pageId, int slotIndex, CancellationToken cancellationToken = default)
+    public async Task<byte[]> ReadDocumentAsync(int pageId, int slotIndex, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
         byte[] result = null;
         int[] continuationPageIds = null;
@@ -630,7 +631,7 @@ internal class DocumentStorage : IDisposable
         DocumentPage page = DocumentPagePool.Rent(_pageSize);
         try
         {
-            await _pageIO.ReadPageAsync(pageId, pageBuffer, cancellationToken).ConfigureAwait(false);
+            await _pageIO.ReadPageAsync(pageId, pageBuffer, context, cancellationToken).ConfigureAwait(false);
             DocumentPage.DeserializeTo(pageBuffer, page, _pageSize, _usablePageSize);
 
             if (slotIndex < 0 || slotIndex >= page.SlotCount)
@@ -670,7 +671,7 @@ internal class DocumentStorage : IDisposable
                 for (int i = 1; i < entry.PageCount; i++)
                 {
                     int continuationPageId = entry.PageIds[i];
-                    await _pageIO.ReadPageAsync(continuationPageId, pageBuffer, cancellationToken).ConfigureAwait(false);
+                    await _pageIO.ReadPageAsync(continuationPageId, pageBuffer, context, cancellationToken).ConfigureAwait(false);
                     int remainingSize = entry.TotalSize - offset;
                     int chunkSize = Math.Min(remainingSize, _usablePageSize);
 

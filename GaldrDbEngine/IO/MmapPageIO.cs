@@ -3,6 +3,7 @@ using System.IO;
 using System.IO.MemoryMappedFiles;
 using System.Threading;
 using System.Threading.Tasks;
+using GaldrDbEngine.Transactions;
 using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.IO;
@@ -91,7 +92,7 @@ internal class MmapPageIO : IPageIO
         return result;
     }
 
-    public void ReadPage(int pageId, Span<byte> destination)
+    public void ReadPage(int pageId, Span<byte> destination, TransactionContext context = null)
     {
         if (destination.Length < _pageSize)
         {
@@ -129,7 +130,7 @@ internal class MmapPageIO : IPageIO
         }
     }
 
-    public void WritePage(int pageId, ReadOnlySpan<byte> data)
+    public void WritePage(int pageId, ReadOnlySpan<byte> data, TransactionContext context = null)
     {
         if (data.Length != _pageSize)
         {
@@ -259,15 +260,15 @@ internal class MmapPageIO : IPageIO
         }
     }
 
-    public Task ReadPageAsync(int pageId, Memory<byte> destination, CancellationToken cancellationToken = default)
+    public Task ReadPageAsync(int pageId, Memory<byte> destination, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
-        ReadPage(pageId, destination.Span);
+        ReadPage(pageId, destination.Span, context);
         return Task.CompletedTask;
     }
 
-    public Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    public Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
-        WritePage(pageId, data.Span);
+        WritePage(pageId, data.Span, context);
         return Task.CompletedTask;
     }
 

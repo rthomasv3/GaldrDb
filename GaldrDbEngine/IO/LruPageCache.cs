@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using GaldrDbEngine.Transactions;
 
 namespace GaldrDbEngine.IO;
 
@@ -35,7 +36,7 @@ internal class LruPageCache : IPageIO
         _disposed = false;
     }
 
-    public void ReadPage(int pageId, Span<byte> destination)
+    public void ReadPage(int pageId, Span<byte> destination, TransactionContext context = null)
     {
         bool cacheHit = _cache.TryGetValue(pageId, out LruCacheEntry entry);
 
@@ -59,12 +60,12 @@ internal class LruPageCache : IPageIO
         }
         else
         {
-            _innerPageIO.ReadPage(pageId, destination);
+            _innerPageIO.ReadPage(pageId, destination, context);
             AddToCache(pageId, destination);
         }
     }
 
-    public async Task ReadPageAsync(int pageId, Memory<byte> destination, CancellationToken cancellationToken = default)
+    public async Task ReadPageAsync(int pageId, Memory<byte> destination, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
         bool cacheHit = _cache.TryGetValue(pageId, out LruCacheEntry entry);
 
@@ -88,21 +89,21 @@ internal class LruPageCache : IPageIO
         }
         else
         {
-            await _innerPageIO.ReadPageAsync(pageId, destination, cancellationToken).ConfigureAwait(false);
+            await _innerPageIO.ReadPageAsync(pageId, destination, context, cancellationToken).ConfigureAwait(false);
             AddToCache(pageId, destination.Span);
         }
     }
 
-    public void WritePage(int pageId, ReadOnlySpan<byte> data)
+    public void WritePage(int pageId, ReadOnlySpan<byte> data, TransactionContext context = null)
     {
         AddOrUpdateCache(pageId, data);
-        _innerPageIO.WritePage(pageId, data);
+        _innerPageIO.WritePage(pageId, data, context);
     }
 
-    public async Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    public async Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
         AddOrUpdateCache(pageId, data.Span);
-        await _innerPageIO.WritePageAsync(pageId, data, cancellationToken).ConfigureAwait(false);
+        await _innerPageIO.WritePageAsync(pageId, data, context, cancellationToken).ConfigureAwait(false);
     }
 
     public void Flush()

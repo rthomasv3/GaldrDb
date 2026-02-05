@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using GaldrDbEngine.IO;
+using GaldrDbEngine.Transactions;
 
 namespace GaldrDb.UnitTests;
 
@@ -26,12 +27,12 @@ internal class ConcurrencyTrackingPageIO : IPageIO
         get { lock (_lock) { return _maxConcurrentReaders; } }
     }
 
-    public void WritePage(int pageId, ReadOnlySpan<byte> data)
+    public void WritePage(int pageId, ReadOnlySpan<byte> data, TransactionContext context = null)
     {
-        _inner.WritePage(pageId, data);
+        _inner.WritePage(pageId, data, context);
     }
 
-    public void ReadPage(int pageId, Span<byte> destination)
+    public void ReadPage(int pageId, Span<byte> destination, TransactionContext context = null)
     {
         lock (_lock)
         {
@@ -45,7 +46,7 @@ internal class ConcurrencyTrackingPageIO : IPageIO
         try
         {
             Thread.Sleep(_readDelayMs);
-            _inner.ReadPage(pageId, destination);
+            _inner.ReadPage(pageId, destination, context);
         }
         finally
         {
@@ -56,7 +57,7 @@ internal class ConcurrencyTrackingPageIO : IPageIO
         }
     }
 
-    public async Task ReadPageAsync(int pageId, Memory<byte> destination, CancellationToken cancellationToken = default)
+    public async Task ReadPageAsync(int pageId, Memory<byte> destination, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
         lock (_lock)
         {
@@ -70,7 +71,7 @@ internal class ConcurrencyTrackingPageIO : IPageIO
         try
         {
             await Task.Delay(_readDelayMs, cancellationToken).ConfigureAwait(false);
-            _inner.ReadPage(pageId, destination.Span);
+            _inner.ReadPage(pageId, destination.Span, context);
         }
         finally
         {
@@ -81,9 +82,9 @@ internal class ConcurrencyTrackingPageIO : IPageIO
         }
     }
 
-    public Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    public Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
-        _inner.WritePage(pageId, data.Span);
+        _inner.WritePage(pageId, data.Span, context);
         return Task.CompletedTask;
     }
 

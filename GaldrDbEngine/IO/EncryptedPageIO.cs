@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using GaldrDbEngine.Pages;
+using GaldrDbEngine.Transactions;
 using GaldrDbEngine.Utilities;
 using Microsoft.Win32.SafeHandles;
 
@@ -151,7 +152,7 @@ internal sealed class EncryptedPageIO : IPageIO
         return pageSize;
     }
 
-    public void ReadPage(int pageId, Span<byte> destination)
+    public void ReadPage(int pageId, Span<byte> destination, TransactionContext context = null)
     {
         if (destination.Length < _pageSize)
         {
@@ -200,7 +201,7 @@ internal sealed class EncryptedPageIO : IPageIO
         }
     }
 
-    public void WritePage(int pageId, ReadOnlySpan<byte> data)
+    public void WritePage(int pageId, ReadOnlySpan<byte> data, TransactionContext context = null)
     {
         if (data.Length != _pageSize)
         {
@@ -230,7 +231,7 @@ internal sealed class EncryptedPageIO : IPageIO
         }
     }
 
-    public async Task ReadPageAsync(int pageId, Memory<byte> destination, CancellationToken cancellationToken = default)
+    public async Task ReadPageAsync(int pageId, Memory<byte> destination, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
         if (destination.Length < _pageSize)
         {
@@ -279,7 +280,7 @@ internal sealed class EncryptedPageIO : IPageIO
         }
     }
 
-    public async Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    public async Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, TransactionContext context = null, CancellationToken cancellationToken = default)
     {
         if (data.Length != _pageSize)
         {

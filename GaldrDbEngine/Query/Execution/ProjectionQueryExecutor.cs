@@ -21,6 +21,7 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
     private readonly ProjectionDocumentReader _reader;
     private readonly VersionScanner _versionScanner;
     private readonly WriteSetOverlay<object> _writeSetOverlay;
+    private readonly TransactionContext _context;
 
     public ProjectionQueryExecutor(
         Transaction transaction,
@@ -37,9 +38,10 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         _projTypeInfo = projTypeInfo;
         _sourceType = projTypeInfo.SourceType;
         _projectionType = typeof(T);
+        _context = transaction.Context;
         _reader = new ProjectionDocumentReader(projTypeInfo, jsonSerializer, jsonOptions);
-        SecondaryIndexScanner indexScanner = new SecondaryIndexScanner(db, _collectionName);
-        _versionScanner = new VersionScanner(db, versionIndex, snapshotTxId, indexScanner);
+        SecondaryIndexScanner indexScanner = new SecondaryIndexScanner(db, _collectionName, _context);
+        _versionScanner = new VersionScanner(db, versionIndex, snapshotTxId, indexScanner, _context);
         _writeSetOverlay = new WriteSetOverlay<object>(transaction, projTypeInfo.CollectionName, _reader);
     }
 
@@ -323,7 +325,7 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
 
         foreach (DocumentVersion version in versions)
         {
-            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location, _context);
             object document = _reader.ReadDocument(jsonBytes);
 
             if (!hasFilters || _reader.PassesFilters(document, filters))
@@ -367,7 +369,7 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
 
         foreach (DocumentVersion version in versions)
         {
-            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, _context, cancellationToken).ConfigureAwait(false);
             object document = _reader.ReadDocument(jsonBytes);
 
             if (!hasFilters || _reader.PassesFilters(document, filters))
@@ -404,7 +406,7 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         {
             if (hasFilters)
             {
-                byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+                byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location, _context);
                 object document = _reader.ReadDocument(jsonBytes);
 
                 if (_reader.PassesFilters(document, plan.RemainingFilters))
@@ -434,7 +436,7 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         {
             if (hasFilters)
             {
-                byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+                byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, _context, cancellationToken).ConfigureAwait(false);
                 object document = _reader.ReadDocument(jsonBytes);
 
                 if (_reader.PassesFilters(document, plan.RemainingFilters))
@@ -471,7 +473,7 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
                 break;
             }
 
-            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location, _context);
             object document = _reader.ReadDocument(jsonBytes);
 
             if (_reader.PassesFilters(document, plan.RemainingFilters))
@@ -505,7 +507,7 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
                 break;
             }
 
-            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, _context, cancellationToken).ConfigureAwait(false);
             object document = _reader.ReadDocument(jsonBytes);
 
             if (_reader.PassesFilters(document, plan.RemainingFilters))
@@ -566,7 +568,7 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
                 continue;
             }
 
-            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location);
+            byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location, _context);
             object sourceDoc = _reader.ReadDocument(jsonBytes);
 
             if (_reader.PassesFilters(sourceDoc, plan.RemainingFilters))
@@ -600,7 +602,7 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
                 continue;
             }
 
-            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, cancellationToken).ConfigureAwait(false);
+            byte[] jsonBytes = await _db.ReadDocumentByLocationAsync(version.Location, _context, cancellationToken).ConfigureAwait(false);
             object sourceDoc = _reader.ReadDocument(jsonBytes);
 
             if (_reader.PassesFilters(sourceDoc, plan.RemainingFilters))

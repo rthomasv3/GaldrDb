@@ -1,13 +1,14 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using GaldrDbEngine.Transactions;
 
 namespace GaldrDbEngine.IO;
 
 internal interface IPageIO : IDisposable
 {
-    void ReadPage(int pageId, Span<byte> destination);
-    void WritePage(int pageId, ReadOnlySpan<byte> data);
+    void ReadPage(int pageId, Span<byte> destination, TransactionContext context = null);
+    void WritePage(int pageId, ReadOnlySpan<byte> data, TransactionContext context = null);
     void Flush();
     void Close();
 
@@ -17,7 +18,7 @@ internal interface IPageIO : IDisposable
     /// </summary>
     void SetLength(long newSize);
 
-    Task ReadPageAsync(int pageId, Memory<byte> destination, CancellationToken cancellationToken = default);
-    Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default);
+    Task ReadPageAsync(int pageId, Memory<byte> destination, TransactionContext context = null, CancellationToken cancellationToken = default);
+    Task WritePageAsync(int pageId, ReadOnlyMemory<byte> data, TransactionContext context = null, CancellationToken cancellationToken = default);
     Task FlushAsync(CancellationToken cancellationToken = default);
 }

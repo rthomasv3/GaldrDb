@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using GaldrDbEngine.IO;
+using GaldrDbEngine.Transactions;
 using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.Storage;
@@ -24,7 +25,7 @@ internal class CollectionsMetadata
         _collections = new Dictionary<string, CollectionEntry>();
     }
 
-    public void LoadFromDisk()
+    public void LoadFromDisk(TransactionContext context = null)
     {
         int totalBufferSize = _pageCount * _usablePageSize;
         byte[] combinedBuffer = BufferPool.Rent(totalBufferSize);
@@ -35,7 +36,7 @@ internal class CollectionsMetadata
             int bufferOffset = 0;
             for (int i = 0; i < _pageCount; i++)
             {
-                _pageIO.ReadPage(_startPage + i, pageBuffer);
+                _pageIO.ReadPage(_startPage + i, pageBuffer, context);
                 int bytesToCopy = Math.Min(_usablePageSize, totalBufferSize - bufferOffset);
                 Array.Copy(pageBuffer, 0, combinedBuffer, bufferOffset, bytesToCopy);
                 bufferOffset += bytesToCopy;
@@ -62,7 +63,7 @@ internal class CollectionsMetadata
         }
     }
 
-    public void WriteToDisk()
+    public void WriteToDisk(TransactionContext context = null)
     {
         int totalSize = CalculateSerializedSize();
         int pagesNeeded = (totalSize + _usablePageSize - 1) / _usablePageSize;
@@ -97,7 +98,7 @@ internal class CollectionsMetadata
                 Array.Clear(pageBuffer, 0, _pageSize);
                 int bytesToCopy = Math.Min(_usablePageSize, totalBufferSize - bufferOffset);
                 Array.Copy(combinedBuffer, bufferOffset, pageBuffer, 0, bytesToCopy);
-                _pageIO.WritePage(_startPage + i, pageBuffer);
+                _pageIO.WritePage(_startPage + i, pageBuffer, context);
                 bufferOffset += bytesToCopy;
             }
         }
