@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "GaldrDbConsole": {
+      "commandName": "Project"
+    },
+    "Stress Balanced 2": {
+      "commandName": "Project",
+      "commandLineArgs": "-st balanced -t 8 -w 2"
+    }
+  }
+}

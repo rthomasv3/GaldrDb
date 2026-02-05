@@ -29,7 +29,8 @@ public class Transaction : ITransaction
     private readonly Dictionary<DocumentKey, TxId> _readSet;
     private readonly bool _isReadOnly;
     private bool _disposed;
-    private bool _hasActiveWalTransaction;
+    private bool _hasActiveWalSnapshot;
+    private bool _hasActiveWalWrite;
 
     private const int MAX_PAGE_CONFLICT_RETRIES = 10;
 
@@ -70,6 +71,8 @@ public class Transaction : ITransaction
         _readSet = new Dictionary<DocumentKey, TxId>();
         State = TransactionState.Active;
         _disposed = false;
+        _hasActiveWalSnapshot = true;
+        _hasActiveWalWrite = false;
     }
 
     /// <summary>
@@ -524,6 +527,9 @@ public class Transaction : ITransaction
 
         if (_isReadOnly)
         {
+            _db.EndWalSnapshot();
+            _hasActiveWalSnapshot = false;
+
             State = TransactionState.Committed;
             _txManager.MarkCommitted(TxId);
         }
@@ -540,8 +546,8 @@ public class Transaction : ITransaction
             // This is an internal detail - retries are transparent to the caller.
             while (true)
             {
-                _db.BeginWalTransaction(TxId.Value);
-                _hasActiveWalTransaction = true;
+                _db.BeginWalWrite();
+                _hasActiveWalWrite = true;
                 documentCountDeltas.Clear();
 
                 try
@@ -582,14 +588,17 @@ public class Transaction : ITransaction
                         }
                     }
 
-                    _db.CommitWalTransaction();
-                    _hasActiveWalTransaction = false;
+                    // Atomically validate version conflicts, commit WAL, and add version entries.
+                    // This ensures WAL frames are never committed without valid version entries,
+                    // and version entries are never added without committed WAL frames.
+                    _db.CommitWalWriteWithVersions(TxId, SnapshotTxId, versionOps);
+                    _hasActiveWalWrite = false;
                     break;
                 }
                 catch (PageConflictException)
                 {
-                    _db.AbortWalTransaction();
-                    _hasActiveWalTransaction = false;
+                    _db.AbortWalWrite();
+                    _hasActiveWalWrite = false;
 
                     retryCount++;
                     if (retryCount >= MAX_PAGE_CONFLICT_RETRIES)
@@ -606,26 +615,17 @@ public class Transaction : ITransaction
                 }
                 catch
                 {
-                    _db.AbortWalTransaction();
-                    _hasActiveWalTransaction = false;
+                    _db.AbortWalWrite();
+                    _hasActiveWalWrite = false;
                     State = TransactionState.Aborted;
                     _txManager.MarkAborted(TxId);
                     throw;
                 }
             }
 
-            // Validate document versions and add to version index.
-            // This may throw WriteConflictException if another transaction modified the same documents.
-            try
-            {
-                _versionIndex.ValidateAndAddVersions(TxId, SnapshotTxId, versionOps);
-            }
-            catch
-            {
-                State = TransactionState.Aborted;
-                _txManager.MarkAborted(TxId);
-                throw;
-            }
+            // End WAL snapshot before auto checkpoint so checkpoint can make progress
+            _db.EndWalSnapshot();
+            _hasActiveWalSnapshot = false;
 
             // Apply document count changes only after successful version validation
             _db.ApplyDocumentCountDeltas(documentCountDeltas);
@@ -646,11 +646,16 @@ public class Transaction : ITransaction
     {
         if (State != TransactionState.Committed && State != TransactionState.Aborted)
         {
-            // Only abort WAL transaction if this transaction started one
-            if (_hasActiveWalTransaction)
+            if (_hasActiveWalWrite)
             {
-                _db.AbortWalTransaction();
-                _hasActiveWalTransaction = false;
+                _db.AbortWalWrite();
+                _hasActiveWalWrite = false;
+            }
+
+            if (_hasActiveWalSnapshot)
+            {
+                _db.EndWalSnapshot();
+                _hasActiveWalSnapshot = false;
             }
 
             _writeSet.Clear();
@@ -1551,6 +1556,9 @@ public class Transaction : ITransaction
 
         if (_isReadOnly)
         {
+            _db.EndWalSnapshot();
+            _hasActiveWalSnapshot = false;
+
             State = TransactionState.Committed;
             _txManager.MarkCommitted(TxId);
         }
@@ -1567,8 +1575,8 @@ public class Transaction : ITransaction
             // This is an internal detail - retries are transparent to the caller.
             while (true)
             {
-                _db.BeginWalTransaction(TxId.Value);
-                _hasActiveWalTransaction = true;
+                _db.BeginWalWrite();
+                _hasActiveWalWrite = true;
                 documentCountDeltas.Clear();
 
                 try
@@ -1609,14 +1617,17 @@ public class Transaction : ITransaction
                         }
                     }
 
-                    _db.CommitWalTransaction();
-                    _hasActiveWalTransaction = false;
+                    // Atomically validate version conflicts, commit WAL, and add version entries.
+                    // This ensures WAL frames are never committed without valid version entries,
+                    // and version entries are never added without committed WAL frames.
+                    _db.CommitWalWriteWithVersions(TxId, SnapshotTxId, versionOps);
+                    _hasActiveWalWrite = false;
                     break;
                 }
                 catch (PageConflictException)
                 {
-                    _db.AbortWalTransaction();
-                    _hasActiveWalTransaction = false;
+                    _db.AbortWalWrite();
+                    _hasActiveWalWrite = false;
 
                     retryCount++;
                     if (retryCount >= MAX_PAGE_CONFLICT_RETRIES)
@@ -1633,26 +1644,17 @@ public class Transaction : ITransaction
                 }
                 catch
                 {
-                    _db.AbortWalTransaction();
-                    _hasActiveWalTransaction = false;
+                    _db.AbortWalWrite();
+                    _hasActiveWalWrite = false;
                     State = TransactionState.Aborted;
                     _txManager.MarkAborted(TxId);
                     throw;
                 }
             }
 
-            // Validate document versions and add to version index.
-            // This may throw WriteConflictException if another transaction modified the same documents.
-            try
-            {
-                _versionIndex.ValidateAndAddVersions(TxId, SnapshotTxId, versionOps);
-            }
-            catch
-            {
-                State = TransactionState.Aborted;
-                _txManager.MarkAborted(TxId);
-                throw;
-            }
+            // End WAL snapshot before auto checkpoint so checkpoint can make progress
+            _db.EndWalSnapshot();
+            _hasActiveWalSnapshot = false;
 
             // Apply document count changes only after successful version validation
             _db.ApplyDocumentCountDeltas(documentCountDeltas);
@@ -1679,6 +1681,14 @@ public class Transaction : ITransaction
             if (State == TransactionState.Active || State == TransactionState.Committing)
             {
                 Rollback();
+            }
+
+            // Safety net: clean up WAL snapshot even if State was set to Aborted
+            // before Dispose was called (e.g., max retry failure in Commit)
+            if (_hasActiveWalSnapshot)
+            {
+                _db.EndWalSnapshot();
+                _hasActiveWalSnapshot = false;
             }
         }
     }

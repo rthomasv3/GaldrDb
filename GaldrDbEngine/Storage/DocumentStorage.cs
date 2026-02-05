@@ -294,6 +294,71 @@ internal class DocumentStorage : IDisposable
         }
     }
 
+    /// <summary>
+    /// Attempts to delete a document. Returns false if slot no longer exists (already deleted/compacted).
+    /// Used by GC to gracefully handle stale slot indices.
+    /// </summary>
+    public bool TryDeleteDocument(int pageId, int slotIndex)
+    {
+        bool deleted = false;
+
+        _pageLockManager.AcquireWriteLock(pageId);
+        byte[] pageBuffer = BufferPool.Rent(_pageSize);
+        DocumentPage page = DocumentPagePool.Rent(_pageSize);
+        try
+        {
+            _pageIO.ReadPage(pageId, pageBuffer);
+            DocumentPage.DeserializeTo(pageBuffer, page, _pageSize, _usablePageSize);
+
+            // Graceful handling - slot may have been compacted/deleted
+            if (slotIndex >= 0 && slotIndex < page.SlotCount)
+            {
+                SlotEntry entry = page.Slots[slotIndex];
+
+                // Check if slot is already deleted
+                if (entry.PageCount > 0)
+                {
+                    if (entry.PageCount > 1)
+                    {
+                        for (int i = 1; i < entry.PageCount; i++)
+                        {
+                            int continuationPageId = entry.PageIds[i];
+                            _pageManager.DeallocatePage(continuationPageId);
+                        }
+                    }
+
+                    if (entry.PageIds != null)
+                    {
+                        IntArrayPool.Return(entry.PageIds);
+                    }
+
+                    page.Slots[slotIndex] = new SlotEntry
+                    {
+                        PageCount = 0,
+                        PageIds = null,
+                        TotalSize = 0,
+                        Offset = 0,
+                        Length = 0
+                    };
+
+                    page.SerializeTo(pageBuffer);
+                    _pageIO.WritePage(pageId, pageBuffer);
+
+                    UpdateFSMForDocumentPage(pageId, page);
+                    deleted = true;
+                }
+            }
+        }
+        finally
+        {
+            _pageLockManager.ReleaseWriteLock(pageId);
+            DocumentPagePool.Return(page);
+            BufferPool.Return(pageBuffer);
+        }
+
+        return deleted;
+    }
+
     private int FindOrAllocatePageForDocument(int documentSize)
     {
         int slotOverhead = DocumentPage.DOCUMENT_PAGE_OVERHEAD;

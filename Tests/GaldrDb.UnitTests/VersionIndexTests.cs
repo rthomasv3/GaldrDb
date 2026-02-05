@@ -587,10 +587,10 @@ public class VersionIndexTests
 
     #endregion
 
-    #region ValidateAndAddVersions Tests
+    #region ValidateVersions and AddVersions Tests
 
     [TestMethod]
-    public void VersionIndex_ValidateAndAddVersions_NoConflict_Succeeds()
+    public void VersionIndex_ValidateVersions_NoConflict_Succeeds()
     {
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
@@ -604,13 +604,14 @@ public class VersionIndexTests
             new VersionOperation("TestCollection", 2, new DocumentLocation(2, 0), false, null)
         };
 
-        index.ValidateAndAddVersions(tx2, snapshotTxId, operations);
+        index.ValidateVersions(tx2, snapshotTxId, operations);
+        index.AddVersions(tx2, operations);
 
         Assert.IsTrue(index.HasVersion("TestCollection", 2));
     }
 
     [TestMethod]
-    public void VersionIndex_ValidateAndAddVersions_Conflict_Throws()
+    public void VersionIndex_ValidateVersions_Conflict_Throws()
     {
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
@@ -628,8 +629,12 @@ public class VersionIndexTests
 
         Assert.ThrowsExactly<WriteConflictException>(() =>
         {
-            index.ValidateAndAddVersions(tx3, snapshotTxId, operations);
+            index.ValidateVersions(tx3, snapshotTxId, operations);
         });
+
+        // Verify AddVersions was not called - doc 1 should still be at tx2's version
+        DocumentVersion version = index.GetLatestVersion("TestCollection", 1);
+        Assert.AreEqual(tx2, version.CreatedBy);
     }
 
     #endregion

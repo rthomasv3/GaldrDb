@@ -42,9 +42,10 @@ internal class SecondaryIndexBTree
         byte[] buffer = BufferPool.Rent(_pageSize);
         byte[] childBuffer = BufferPool.Rent(_pageSize);
         LockStack heldLocks = new LockStack(_pageLockManager, true);
+
+        _rootLock.EnterWriteLock();
         try
         {
-            _rootLock.EnterWriteLock();
             int rootPageId = _rootPageId;
             _pageLockManager.AcquireWriteLock(rootPageId);
             _pageIO.ReadPage(rootPageId, buffer);
@@ -65,8 +66,6 @@ internal class SecondaryIndexBTree
                     SplitChild(newRootPageId, 0, rootPageId);
                     _rootPageId = newRootPageId;
 
-                    _rootLock.ExitWriteLock();
-
                     _pageLockManager.ReleaseWriteLock(rootPageId);
                     heldLocks.Push(newRootPageId);
 
@@ -80,14 +79,13 @@ internal class SecondaryIndexBTree
             }
             else
             {
-                // Root won't change, release root lock but keep page lock
-                _rootLock.ExitWriteLock();
                 heldLocks.Push(rootPageId);
                 InsertNonFull(rootPageId, buffer, childBuffer, key, location, heldLocks);
             }
         }
         finally
         {
+            _rootLock.ExitWriteLock();
             heldLocks.ReleaseAll();
             BufferPool.Return(buffer);
             BufferPool.Return(childBuffer);
@@ -97,10 +95,16 @@ internal class SecondaryIndexBTree
     public DocumentLocation? Search(byte[] key)
     {
         _rootLock.EnterReadLock();
-        int rootPageId = _rootPageId;
-        _pageLockManager.AcquireReadLock(rootPageId);
-        _rootLock.ExitReadLock();
-        return SearchNode(rootPageId, key, rootAlreadyLocked: true);
+        try
+        {
+            int rootPageId = _rootPageId;
+            _pageLockManager.AcquireReadLock(rootPageId);
+            return SearchNode(rootPageId, key, rootAlreadyLocked: true);
+        }
+        finally
+        {
+            _rootLock.ExitReadLock();
+        }
     }
 
     public List<DocumentLocation> SearchRange(byte[] startKey, byte[] endKey, bool includeStart, bool includeEnd)
@@ -202,49 +206,37 @@ internal class SecondaryIndexBTree
     public bool Delete(byte[] key)
     {
         _rootLock.EnterWriteLock();
-        int rootPageId = _rootPageId;
-        _pageLockManager.AcquireWriteLock(rootPageId);
-        _rootLock.ExitWriteLock();
-        return DeleteFromNode(rootPageId, key, rootAlreadyLocked: true);
+        try
+        {
+            int rootPageId = _rootPageId;
+            _pageLockManager.AcquireWriteLock(rootPageId);
+            return DeleteFromNode(rootPageId, key, rootAlreadyLocked: true);
+        }
+        finally
+        {
+            _rootLock.ExitWriteLock();
+        }
     }
 
     public List<int> CollectAllPageIds()
     {
         _rootLock.EnterReadLock();
-        int rootPageId = _rootPageId;
-        _pageLockManager.AcquireReadLock(rootPageId);
-        _rootLock.ExitReadLock();
-
-        List<int> pageIds = new List<int>();
-        byte[] buffer = BufferPool.Rent(_pageSize);
-        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
-        Stack<int> pageStack = new Stack<int>();
-
         try
         {
-            // Process root page first (already locked)
-            pageIds.Add(rootPageId);
-            _pageIO.ReadPage(rootPageId, buffer);
-            SecondaryIndexNode.DeserializeTo(buffer, node);
-            if (node.NodeType == BTreeNodeType.Internal)
-            {
-                for (int i = node.KeyCount; i >= 0; i--)
-                {
-                    pageStack.Push(node.ChildPageIds[i]);
-                }
-            }
-            _pageLockManager.ReleaseReadLock(rootPageId);
+            int rootPageId = _rootPageId;
+            _pageLockManager.AcquireReadLock(rootPageId);
 
-            // Process remaining pages
-            while (pageStack.Count > 0)
-            {
-                int currentPageId = pageStack.Pop();
-                _pageLockManager.AcquireReadLock(currentPageId);
-                pageIds.Add(currentPageId);
+            List<int> pageIds = new List<int>();
+            byte[] buffer = BufferPool.Rent(_pageSize);
+            SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
+            Stack<int> pageStack = new Stack<int>();
 
-                _pageIO.ReadPage(currentPageId, buffer);
+            try
+            {
+                // Process root page first (already locked)
+                pageIds.Add(rootPageId);
+                _pageIO.ReadPage(rootPageId, buffer);
                 SecondaryIndexNode.DeserializeTo(buffer, node);
-
                 if (node.NodeType == BTreeNodeType.Internal)
                 {
                     for (int i = node.KeyCount; i >= 0; i--)
@@ -252,16 +244,40 @@ internal class SecondaryIndexBTree
                         pageStack.Push(node.ChildPageIds[i]);
                     }
                 }
-                _pageLockManager.ReleaseReadLock(currentPageId);
+                _pageLockManager.ReleaseReadLock(rootPageId);
+
+                // Process remaining pages
+                while (pageStack.Count > 0)
+                {
+                    int currentPageId = pageStack.Pop();
+                    _pageLockManager.AcquireReadLock(currentPageId);
+                    pageIds.Add(currentPageId);
+
+                    _pageIO.ReadPage(currentPageId, buffer);
+                    SecondaryIndexNode.DeserializeTo(buffer, node);
+
+                    if (node.NodeType == BTreeNodeType.Internal)
+                    {
+                        for (int i = node.KeyCount; i >= 0; i--)
+                        {
+                            pageStack.Push(node.ChildPageIds[i]);
+                        }
+                    }
+                    _pageLockManager.ReleaseReadLock(currentPageId);
+                }
             }
+            finally
+            {
+                BufferPool.Return(buffer);
+                SecondaryIndexNodePool.Return(node);
+            }
+
+            return pageIds;
         }
         finally
         {
-            BufferPool.Return(buffer);
-            SecondaryIndexNodePool.Return(node);
+            _rootLock.ExitReadLock();
         }
-
-        return pageIds;
     }
 
     private DocumentLocation? SearchNode(int pageId, byte[] key, bool rootAlreadyLocked = false)
@@ -881,16 +897,13 @@ internal class SecondaryIndexBTree
 
             if (pathIndex < 0 && node.NodeType == BTreeNodeType.Internal && node.KeyCount == 0)
             {
-                _rootLock.EnterWriteLock();
-                // Only shrink root if it hasn't been changed by another thread
-                // (another insert may have added a new root above us)
+                // _rootLock is already held by Delete, no need to re-acquire
                 if (_rootPageId == originalRootPageId)
                 {
                     int newRootPageId = node.ChildPageIds[0];
                     _pageManager.DeallocatePage(originalRootPageId);
                     _rootPageId = newRootPageId;
                 }
-                _rootLock.ExitWriteLock();
             }
         }
         finally
@@ -1247,25 +1260,6 @@ internal class SecondaryIndexBTree
         try
         {
             _pageIO.ReadPage(childPageId, childBuffer);
-
-            // DIAGNOSTIC: Check if page looks valid before deserializing
-            byte pageType = childBuffer[0];
-            byte nodeType = childBuffer[1];
-            ushort keyCount = (ushort)(childBuffer[2] | (childBuffer[3] << 8));
-            ushort maxKeys = (ushort)(childBuffer[8] | (childBuffer[9] << 8));
-            // PAGE_TYPE_SECONDARY_INDEX = 3
-            if (pageType != 3)
-            {
-                // This indicates snapshot inconsistency - another transaction modified the BTree structure
-                // Throw PageConflictException to trigger transaction retry with fresh snapshot
-                throw new PageConflictException(childPageId, 0, 0);
-            }
-            if (keyCount > maxKeys)
-            {
-                // Suspicious data indicates snapshot inconsistency - trigger retry
-                throw new PageConflictException(childPageId, 0, 0);
-            }
-
             SecondaryIndexNode.DeserializeTo(childBuffer, fullChild);
 
             _pageIO.ReadPage(parentPageId, parentBuffer);

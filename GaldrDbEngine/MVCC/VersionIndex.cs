@@ -120,30 +120,7 @@ internal sealed class VersionIndex
         _lock.EnterWriteLock();
         try
         {
-            if (!_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
-            {
-                collection = new SortedDictionary<int, DocumentVersion>();
-                _index[collectionName] = collection;
-            }
-
-            DocumentVersion previousVersion = null;
-            if (collection.TryGetValue(documentId, out DocumentVersion existing))
-            {
-                previousVersion = existing;
-                // Mark the previous version as superseded by this new version
-                previousVersion.MarkDeleted(createdBy);
-
-                // If this document was single-version, it now becomes multi-version
-                if (previousVersion.PreviousVersion == null)
-                {
-                    _multiVersionDocumentCount++;
-                }
-
-                _gcCandidates.Add(new DocumentKey(collectionName, documentId));
-            }
-
-            DocumentVersion newVersion = new DocumentVersion(documentId, createdBy, location, previousVersion);
-            collection[documentId] = newVersion;
+            AddVersionInternal(collectionName, documentId, createdBy, location);
         }
         finally
         {
@@ -151,12 +128,11 @@ internal sealed class VersionIndex
         }
     }
 
-    public void ValidateAndAddVersions(TxId createdBy, TxId snapshotTxId, IReadOnlyList<VersionOperation> operations)
+    public void ValidateVersions(TxId createdBy, TxId snapshotTxId, IReadOnlyList<VersionOperation> operations)
     {
-        _lock.EnterWriteLock();
+        _lock.EnterReadLock();
         try
         {
-            // Phase 1: Validate all operations - if any conflict, throw before modifying anything
             foreach (VersionOperation op in operations)
             {
                 if (_index.TryGetValue(op.CollectionName, out SortedDictionary<int, DocumentVersion> collection))
@@ -188,8 +164,18 @@ internal sealed class VersionIndex
                     }
                 }
             }
+        }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
+    }
 
-            // Phase 2: All validated - now apply all operations
+    public void AddVersions(TxId createdBy, IReadOnlyList<VersionOperation> operations)
+    {
+        _lock.EnterWriteLock();
+        try
+        {
             foreach (VersionOperation op in operations)
             {
                 if (op.IsDelete)

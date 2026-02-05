@@ -41,8 +41,13 @@ internal class WalPageIO : IPageIO
     // Semaphore for checkpoint (only one checkpoint at a time, but doesn't block readers/writers)
     private readonly SemaphoreSlim _checkpointSemaphore;
 
-    // Lock for coordinating base file access during checkpoint
-    private readonly object _rwLock;
+    // Active snapshot tracking for checkpoint safety
+    // Each entry is the _mxFrame at the time a transaction's snapshot was captured.
+    // Checkpoint must not push frames beyond min(active snapshots) to the base file.
+    private readonly List<long> _activeSnapshotFrames;
+
+    // Per-transaction record of the _mxFrame at snapshot time, used to remove the correct entry on commit/abort
+    private readonly AsyncLocal<long> _txSnapshotMxFrame;
 
     // Reusable lists for CommitTransaction (protected by _commitLock)
     private readonly List<WalFrameEntry> _commitFramesList;
@@ -66,13 +71,14 @@ internal class WalPageIO : IPageIO
         _txFrameSnapshot = new AsyncLocal<Dictionary<int, long>>();
         _commitLock = new object();
         _checkpointSemaphore = new SemaphoreSlim(1, 1);
-        _rwLock = new object();
+        _activeSnapshotFrames = new List<long>();
+        _txSnapshotMxFrame = new AsyncLocal<long>();
         _commitFramesList = new List<WalFrameEntry>();
         _commitPageIdsList = new List<int>();
         _disposed = false;
     }
 
-    public void BeginTransaction(ulong txId)
+    public void BeginSnapshot(ulong txId)
     {
         // Check if WAL can be reset (all frames checkpointed, no uncommitted writes)
         long currentMxFrame = Interlocked.Read(ref _mxFrame);
@@ -85,16 +91,35 @@ internal class WalPageIO : IPageIO
         }
 
         _currentTxId.Value = txId;
-        _txPageWrites.Value = new Dictionary<int, PageWriteEntry>();
 
         // Capture snapshot of current committed state for consistent reads
         lock (_cacheLock)
         {
+            long snapshotMxFrame = Interlocked.Read(ref _mxFrame);
+            _txSnapshotMxFrame.Value = snapshotMxFrame;
+            _activeSnapshotFrames.Add(snapshotMxFrame);
             _txFrameSnapshot.Value = new Dictionary<int, long>(_pageLatestFrame);
         }
     }
 
-    public void CommitTransaction()
+    public void EndSnapshot()
+    {
+        lock (_cacheLock)
+        {
+            _activeSnapshotFrames.Remove(_txSnapshotMxFrame.Value);
+        }
+
+        _currentTxId.Value = null;
+        _txFrameSnapshot.Value = null;
+        _txSnapshotMxFrame.Value = 0;
+    }
+
+    public void BeginWrite()
+    {
+        _txPageWrites.Value = new Dictionary<int, PageWriteEntry>();
+    }
+
+    public void CommitWrite()
     {
         ulong? txId = _currentTxId.Value;
         if (!txId.HasValue)
@@ -196,12 +221,10 @@ internal class WalPageIO : IPageIO
             }
         }
 
-        _currentTxId.Value = null;
         _txPageWrites.Value = null;
-        _txFrameSnapshot.Value = null;
     }
 
-    public void AbortTransaction()
+    public void AbortWrite()
     {
         ulong? txId = _currentTxId.Value;
         if (txId.HasValue)
@@ -225,9 +248,7 @@ internal class WalPageIO : IPageIO
                 }
             }
 
-            _currentTxId.Value = null;
             _txPageWrites.Value = null;
-            _txFrameSnapshot.Value = null;
         }
     }
 
@@ -259,23 +280,25 @@ internal class WalPageIO : IPageIO
             Dictionary<int, long> snapshot = _txFrameSnapshot.Value;
             if (snapshot != null && snapshot.TryGetValue(pageId, out long frameNum))
             {
-                if (frameNum > 0 && frameNum > Interlocked.Read(ref _nBackfill))
+                if (frameNum > 0)
                 {
                     found = _wal.ReadFrameData(frameNum, destination);
                 }
             }
-            else
+        }
+
+        // Step 2b: During writes, check live committed state for pages not in snapshot
+        if (!found && currentTxId.HasValue)
+        {
+            long frameNum;
+            lock (_cacheLock)
             {
-                // Page not in snapshot - it was allocated after snapshot was captured.
-                // Check current committed state (it may have been committed but not checkpointed).
-                lock (_cacheLock)
-                {
-                    _pageLatestFrame.TryGetValue(pageId, out frameNum);
-                }
-                if (frameNum > 0 && frameNum > Interlocked.Read(ref _nBackfill))
-                {
-                    found = _wal.ReadFrameData(frameNum, destination);
-                }
+                _pageLatestFrame.TryGetValue(pageId, out frameNum);
+            }
+
+            if (frameNum > 0 && frameNum > Interlocked.Read(ref _nBackfill))
+            {
+                found = _wal.ReadFrameData(frameNum, destination);
             }
         }
 
@@ -297,10 +320,7 @@ internal class WalPageIO : IPageIO
         // Step 4: Fall back to base file
         if (!found)
         {
-            lock (_rwLock)
-            {
-                _innerPageIO.ReadPage(pageId, destination);
-            }
+            _innerPageIO.ReadPage(pageId, destination);
         }
     }
 
@@ -337,8 +357,18 @@ internal class WalPageIO : IPageIO
                     }
                     else
                     {
-                        // First write to this page in this transaction - record current committed frame as base
-                        _pageLatestFrame.TryGetValue(pageId, out baseFrame);
+                        // First write to this page in this transaction - use snapshot frame as base
+                        // so conflict detection catches pages modified after our snapshot
+                        Dictionary<int, long> snapshot = _txFrameSnapshot.Value;
+                        if (snapshot != null && snapshot.TryGetValue(pageId, out long snapshotFrame))
+                        {
+                            baseFrame = snapshotFrame;
+                        }
+                        else
+                        {
+                            // Page not in snapshot (committed after snapshot or non-transactional write)
+                            _pageLatestFrame.TryGetValue(pageId, out baseFrame);
+                        }
                     }
 
                     _walFrames[frameNum] = new WalFrameEntry { PageId = pageId, PageType = pageType, Data = cacheData };
@@ -363,8 +393,16 @@ internal class WalPageIO : IPageIO
                 lock (_cacheLock)
                 {
                     _pageLatestFrame[pageId] = walFrameNum;
-                    Interlocked.Exchange(ref _writeFrameNumber, walFrameNum);
-                    Interlocked.Exchange(ref _mxFrame, walFrameNum);
+
+                    if (walFrameNum > Interlocked.Read(ref _writeFrameNumber))
+                    {
+                        Interlocked.Exchange(ref _writeFrameNumber, walFrameNum);
+                    }
+
+                    if (walFrameNum > Interlocked.Read(ref _mxFrame))
+                    {
+                        Interlocked.Exchange(ref _mxFrame, walFrameNum);
+                    }
                 }
             }
         }
@@ -417,20 +455,7 @@ internal class WalPageIO : IPageIO
             Dictionary<int, long> snapshot = _txFrameSnapshot.Value;
             if (snapshot != null && snapshot.TryGetValue(pageId, out long frameNum))
             {
-                if (frameNum > 0 && frameNum > Interlocked.Read(ref _nBackfill))
-                {
-                    found = await _wal.ReadFrameDataAsync(frameNum, destination, cancellationToken).ConfigureAwait(false);
-                }
-            }
-            else
-            {
-                // Page not in snapshot - it was allocated after snapshot was captured.
-                // Check current committed state (it may have been committed but not checkpointed).
-                lock (_cacheLock)
-                {
-                    _pageLatestFrame.TryGetValue(pageId, out frameNum);
-                }
-                if (frameNum > 0 && frameNum > Interlocked.Read(ref _nBackfill))
+                if (frameNum > 0)
                 {
                     found = await _wal.ReadFrameDataAsync(frameNum, destination, cancellationToken).ConfigureAwait(false);
                 }
@@ -508,8 +533,14 @@ internal class WalPageIO : IPageIO
             {
                 long currentMxFrame = Interlocked.Read(ref _mxFrame);
                 long currentNBackfill = Interlocked.Read(ref _nBackfill);
+                long checkpointLimit;
 
-                if (currentMxFrame > currentNBackfill)
+                lock (_cacheLock)
+                {
+                    checkpointLimit = GetCheckpointLimit(currentMxFrame);
+                }
+
+                if (checkpointLimit > currentNBackfill)
                 {
                     // Collect page IDs and frame numbers to checkpoint
                     List<KeyValuePair<int, long>> pagesToCheckpoint = new List<KeyValuePair<int, long>>();
@@ -518,7 +549,7 @@ internal class WalPageIO : IPageIO
                     {
                         foreach (KeyValuePair<int, long> kvp in _pageLatestFrame)
                         {
-                            if (kvp.Value > currentNBackfill && kvp.Value <= currentMxFrame)
+                            if (kvp.Value > currentNBackfill && kvp.Value <= checkpointLimit)
                             {
                                 pagesToCheckpoint.Add(kvp);
                             }
@@ -529,18 +560,15 @@ internal class WalPageIO : IPageIO
                     byte[] buffer = BufferPool.Rent(_pageSize);
                     try
                     {
-                        lock (_rwLock)
+                        foreach (KeyValuePair<int, long> kvp in pagesToCheckpoint)
                         {
-                            foreach (KeyValuePair<int, long> kvp in pagesToCheckpoint)
+                            if (_wal.ReadFrameData(kvp.Value, buffer))
                             {
-                                if (_wal.ReadFrameData(kvp.Value, buffer))
-                                {
-                                    _innerPageIO.WritePage(kvp.Key, buffer);
-                                }
+                                _innerPageIO.WritePage(kvp.Key, buffer);
                             }
-
-                            _innerPageIO.Flush();
                         }
+
+                        _innerPageIO.Flush();
                     }
                     finally
                     {
@@ -548,7 +576,7 @@ internal class WalPageIO : IPageIO
                     }
 
                     // Update nBackfill
-                    Interlocked.Exchange(ref _nBackfill, currentMxFrame);
+                    Interlocked.Exchange(ref _nBackfill, checkpointLimit);
 
                     // Clear checkpointed entries from _pageLatestFrame
                     lock (_cacheLock)
@@ -584,8 +612,14 @@ internal class WalPageIO : IPageIO
             {
                 long currentMxFrame = Interlocked.Read(ref _mxFrame);
                 long currentNBackfill = Interlocked.Read(ref _nBackfill);
+                long checkpointLimit;
 
-                if (currentMxFrame > currentNBackfill)
+                lock (_cacheLock)
+                {
+                    checkpointLimit = GetCheckpointLimit(currentMxFrame);
+                }
+
+                if (checkpointLimit > currentNBackfill)
                 {
                     // Collect page IDs and frame numbers to checkpoint
                     List<KeyValuePair<int, long>> pagesToCheckpoint = new List<KeyValuePair<int, long>>();
@@ -594,7 +628,7 @@ internal class WalPageIO : IPageIO
                     {
                         foreach (KeyValuePair<int, long> kvp in _pageLatestFrame)
                         {
-                            if (kvp.Value > currentNBackfill && kvp.Value <= currentMxFrame)
+                            if (kvp.Value > currentNBackfill && kvp.Value <= checkpointLimit)
                             {
                                 pagesToCheckpoint.Add(kvp);
                             }
@@ -622,7 +656,7 @@ internal class WalPageIO : IPageIO
                     }
 
                     // Update nBackfill
-                    Interlocked.Exchange(ref _nBackfill, currentMxFrame);
+                    Interlocked.Exchange(ref _nBackfill, checkpointLimit);
 
                     // Clear checkpointed entries from _pageLatestFrame
                     lock (_cacheLock)
@@ -648,26 +682,65 @@ internal class WalPageIO : IPageIO
         return madeProgress;
     }
 
-    private void ResetWal()
+    /// <summary>
+    /// Returns the maximum frame number that checkpoint can safely push to the base file.
+    /// If active snapshots exist, caps at the minimum snapshot frame to preserve snapshot isolation.
+    /// Must be called under _cacheLock.
+    /// </summary>
+    private long GetCheckpointLimit(long currentMxFrame)
     {
-        lock (_cacheLock)
-        {
-            // Clear any remaining frames (should be empty after checkpoint)
-            foreach (KeyValuePair<long, WalFrameEntry> kvp in _walFrames)
-            {
-                BufferPool.Return(kvp.Value.Data);
-            }
-            _walFrames.Clear();
-            _pageLatestFrame.Clear();
+        long limit = currentMxFrame;
 
-            // Reset counters
-            Interlocked.Exchange(ref _mxFrame, 0);
-            Interlocked.Exchange(ref _nBackfill, 0);
-            Interlocked.Exchange(ref _writeFrameNumber, 0);
+        if (_activeSnapshotFrames.Count > 0)
+        {
+            long min = long.MaxValue;
+            for (int i = 0; i < _activeSnapshotFrames.Count; i++)
+            {
+                if (_activeSnapshotFrames[i] < min)
+                {
+                    min = _activeSnapshotFrames[i];
+                }
+            }
+
+            if (min < limit)
+            {
+                limit = min;
+            }
         }
 
-        // Reset WAL file with new salts
-        _wal.Truncate();
+        return limit;
+    }
+
+    private void ResetWal()
+    {
+        lock (_commitLock)
+        {
+            bool shouldTruncate = false;
+
+            lock (_cacheLock)
+            {
+                // Re-verify under lock to prevent TOCTOU race:
+                // another thread may have begun writing frames since we checked
+                long currentMxFrame = Interlocked.Read(ref _mxFrame);
+                long currentNBackfill = Interlocked.Read(ref _nBackfill);
+
+                if (_walFrames.Count == 0 && _activeSnapshotFrames.Count == 0 && currentNBackfill >= currentMxFrame && currentMxFrame > 0)
+                {
+                    _pageLatestFrame.Clear();
+
+                    Interlocked.Exchange(ref _mxFrame, 0);
+                    Interlocked.Exchange(ref _nBackfill, 0);
+                    Interlocked.Exchange(ref _writeFrameNumber, 0);
+
+                    shouldTruncate = true;
+                }
+            }
+
+            if (shouldTruncate)
+            {
+                _wal.Truncate();
+            }
+        }
     }
 
     private static byte DeterminePageType(byte[] pageData)

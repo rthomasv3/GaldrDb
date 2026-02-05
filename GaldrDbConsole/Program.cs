@@ -80,6 +80,10 @@ class Program
                 PrintUsage();
                 break;
         }
+
+#if DEBUG
+        Console.ReadLine();
+#endif
     }
 
     static void RunBenchmarks(string[] args)

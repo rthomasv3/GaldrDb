@@ -36,6 +36,7 @@ public class GaldrDb : IGaldrDb
     private readonly HashSet<string> _ensuredCollections;
     private readonly object _ddlLock;
     private readonly object _documentCountLock;
+    private readonly object _commitSerializationLock;
     private readonly ConcurrentDictionary<string, SecondaryIndexBTree> _secondaryIndexCache;
     private readonly ConcurrentDictionary<string, BTree> _primaryBTreeCache;
     private IPageIO _basePageIO;
@@ -93,6 +94,7 @@ public class GaldrDb : IGaldrDb
         _ensuredCollections = new HashSet<string>();
         _ddlLock = new object();
         _documentCountLock = new object();
+        _commitSerializationLock = new object();
         _secondaryIndexCache = new ConcurrentDictionary<string, SecondaryIndexBTree>();
         _primaryBTreeCache = new ConcurrentDictionary<string, BTree>();
         _pendingRootUpdates = new AsyncLocal<PendingRootUpdates>();
@@ -327,9 +329,12 @@ public class GaldrDb : IGaldrDb
 
             try
             {
+                _garbageCollector.UnlinkVersions(gcResult.CollectableVersions);
+
                 foreach (CollectableVersion collectable in gcResult.CollectableVersions)
                 {
-                    _documentStorage.DeleteDocument(collectable.Location.PageId, collectable.Location.SlotIndex);
+                    // Gracefully handle if slot was already deleted/compacted
+                    _documentStorage.TryDeleteDocument(collectable.Location.PageId, collectable.Location.SlotIndex);
                 }
 
                 CommitWalTransaction();
@@ -339,8 +344,6 @@ public class GaldrDb : IGaldrDb
                 AbortWalTransaction();
                 throw;
             }
-
-            _garbageCollector.UnlinkVersions(gcResult.CollectableVersions);
         }
 
         return gcResult;
@@ -536,8 +539,8 @@ public class GaldrDb : IGaldrDb
         EnsureTransactionManager();
         EnsureVersionIndex();
 
-        TxId txId = _txManager.AllocateTxId();
-        TxId snapshotTxId = _txManager.GetSnapshotTxId();
+        _txManager.AllocateAndRegisterTransaction(out TxId txId, out TxId snapshotTxId);
+        BeginWalSnapshot(txId.Value);
 
         Transaction tx = new Transaction(
             this,
@@ -548,8 +551,6 @@ public class GaldrDb : IGaldrDb
             false,
             _jsonSerializer,
             _jsonOptions);
-
-        _txManager.RegisterTransaction(txId, snapshotTxId);
 
         return tx;
     }
@@ -563,8 +564,8 @@ public class GaldrDb : IGaldrDb
         EnsureTransactionManager();
         EnsureVersionIndex();
 
-        TxId txId = _txManager.AllocateTxId();
-        TxId snapshotTxId = _txManager.GetSnapshotTxId();
+        _txManager.AllocateAndRegisterTransaction(out TxId txId, out TxId snapshotTxId);
+        BeginWalSnapshot(txId.Value);
 
         Transaction tx = new Transaction(
             this,
@@ -575,8 +576,6 @@ public class GaldrDb : IGaldrDb
             true,
             _jsonSerializer,
             _jsonOptions);
-
-        _txManager.RegisterTransaction(txId, snapshotTxId);
 
         return tx;
     }
@@ -1969,31 +1968,88 @@ public class GaldrDb : IGaldrDb
         return level;
     }
 
-    internal void BeginWalTransaction(ulong txId)
+    // Split WAL lifecycle methods for Transaction use:
+    // Snapshot phase: BeginWalSnapshot / EndWalSnapshot
+    // Write phase: BeginWalWrite / CommitWalWrite / AbortWalWrite
+
+    internal void BeginWalSnapshot(ulong txId)
+    {
+        if (_walPageIO != null)
+        {
+            _walPageIO.BeginSnapshot(txId);
+        }
+    }
+
+    internal void EndWalSnapshot()
+    {
+        if (_walPageIO != null)
+        {
+            _walPageIO.EndSnapshot();
+        }
+    }
+
+    internal void BeginWalWrite()
     {
         InitPendingRootUpdates();
         if (_walPageIO != null)
         {
-            _walPageIO.BeginTransaction(txId);
+            _walPageIO.BeginWrite();
         }
     }
 
-    internal void CommitWalTransaction()
+    internal void CommitWalWrite()
     {
         if (_walPageIO != null)
         {
-            _walPageIO.CommitTransaction();
+            _walPageIO.CommitWrite();
         }
         ApplyPendingRootUpdates();
     }
 
-    internal void AbortWalTransaction()
+    internal void AbortWalWrite()
     {
         if (_walPageIO != null)
         {
-            _walPageIO.AbortTransaction();
+            _walPageIO.AbortWrite();
         }
         ClearPendingRootUpdates();
+    }
+
+    /// <summary>
+    /// Atomically validates version conflicts, commits WAL frames, and adds version entries.
+    /// The serialization lock ensures no other transaction can commit between validation and
+    /// version addition, preventing both split-validation bugs and TOCTOU races.
+    /// Does not end the WAL snapshot — the caller is responsible for that.
+    /// </summary>
+    internal void CommitWalWriteWithVersions(TxId txId, TxId snapshotTxId, IReadOnlyList<VersionOperation> versionOps)
+    {
+        lock (_commitSerializationLock)
+        {
+            _versionIndex.ValidateVersions(txId, snapshotTxId, versionOps);
+            CommitWalWrite();
+            _versionIndex.AddVersions(txId, versionOps);
+        }
+    }
+
+    // Convenience methods for internal operations (schema changes, etc.)
+    // that need the full snapshot + write lifecycle in one call.
+
+    internal void BeginWalTransaction(ulong txId)
+    {
+        BeginWalSnapshot(txId);
+        BeginWalWrite();
+    }
+
+    internal void CommitWalTransaction()
+    {
+        CommitWalWrite();
+        EndWalSnapshot();
+    }
+
+    internal void AbortWalTransaction()
+    {
+        AbortWalWrite();
+        EndWalSnapshot();
     }
 
     private void InitPendingRootUpdates()

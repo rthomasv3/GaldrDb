@@ -42,9 +42,10 @@ internal class BTree
         byte[] childBuffer = BufferPool.Rent(_pageSize);
         BTreeNode newRoot = null;
         LockStack heldLocks = new LockStack(_pageLockManager, true);
+
+        _rootLock.EnterWriteLock();
         try
         {
-            _rootLock.EnterWriteLock();
             int rootPageId = _rootPageId;
             _pageLockManager.AcquireWriteLock(rootPageId);
             _pageIO.ReadPage(rootPageId, buffer);
@@ -67,7 +68,6 @@ internal class BTree
 
                     SplitChild(newRootPageId, 0, rootPageId);
                     _rootPageId = newRootPageId;
-                    _rootLock.ExitWriteLock();
 
                     // Release rootPageId lock - InsertNonFull will acquire child locks as needed
                     _pageLockManager.ReleaseWriteLock(rootPageId);
@@ -84,14 +84,14 @@ internal class BTree
             }
             else
             {
-                // Root won't change, release root lock but keep page lock
-                _rootLock.ExitWriteLock();
+                // Root won't change, keep page lock
                 heldLocks.Push(rootPageId);
                 InsertNonFull(rootPageId, buffer, childBuffer, docId, location, heldLocks);
             }
         }
         finally
         {
+            _rootLock.ExitWriteLock();
             heldLocks.ReleaseAll();
             BufferPool.Return(buffer);
             BufferPool.Return(childBuffer);
@@ -102,10 +102,16 @@ internal class BTree
     public DocumentLocation? Search(int docId)
     {
         _rootLock.EnterReadLock();
-        int rootPageId = _rootPageId;
-        _pageLockManager.AcquireReadLock(rootPageId);
-        _rootLock.ExitReadLock();
-        return SearchNode(rootPageId, docId, rootAlreadyLocked: true);
+        try
+        {
+            int rootPageId = _rootPageId;
+            _pageLockManager.AcquireReadLock(rootPageId);
+            return SearchNode(rootPageId, docId, rootAlreadyLocked: true);
+        }
+        finally
+        {
+            _rootLock.ExitReadLock();
+        }
     }
 
     /// <summary>
@@ -116,14 +122,12 @@ internal class BTree
     {
         bool updated = false;
 
-        _rootLock.EnterReadLock();
-        int rootPageId = _rootPageId;
-        _pageLockManager.AcquireWriteLock(rootPageId);
-        _rootLock.ExitReadLock();
-
+        _rootLock.EnterWriteLock();
         byte[] buffer = BufferPool.Rent(_pageSize);
         try
         {
+            int rootPageId = _rootPageId;
+            _pageLockManager.AcquireWriteLock(rootPageId);
             int currentPageId = rootPageId;
 
             while (currentPageId != 0)
@@ -154,6 +158,7 @@ internal class BTree
         }
         finally
         {
+            _rootLock.ExitWriteLock();
             BufferPool.Return(buffer);
         }
 
@@ -165,14 +170,13 @@ internal class BTree
         List<BTreeEntry> results = new List<BTreeEntry>();
 
         _rootLock.EnterReadLock();
-        int rootPageId = _rootPageId;
-        _pageLockManager.AcquireReadLock(rootPageId);
-        _rootLock.ExitReadLock();
-
         byte[] buffer = BufferPool.Rent(_pageSize);
         BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
+            int rootPageId = _rootPageId;
+            _pageLockManager.AcquireReadLock(rootPageId);
+
             // FindLeafForKey returns with read lock held on the leaf
             int leafPageId = FindLeafForKey(rootPageId, startDocId, buffer, node, rootAlreadyLocked: true);
             int currentPageId = leafPageId;
@@ -202,6 +206,7 @@ internal class BTree
         }
         finally
         {
+            _rootLock.ExitReadLock();
             BufferPool.Return(buffer);
             BTreeNodePool.Return(node);
         }
@@ -276,38 +281,49 @@ internal class BTree
     public bool Delete(int docId)
     {
         _rootLock.EnterWriteLock();
-        int rootPageId = _rootPageId;
-        _pageLockManager.AcquireWriteLock(rootPageId);
-        _rootLock.ExitWriteLock();
-        return DeleteFromNode(rootPageId, docId, rootAlreadyLocked: true);
+        try
+        {
+            int rootPageId = _rootPageId;
+            _pageLockManager.AcquireWriteLock(rootPageId);
+            return DeleteFromNode(rootPageId, docId, rootAlreadyLocked: true);
+        }
+        finally
+        {
+            _rootLock.ExitWriteLock();
+        }
     }
 
     public List<BTreeEntry> GetAllEntries()
     {
         _rootLock.EnterReadLock();
-        int rootPageId = _rootPageId;
-        _pageLockManager.AcquireReadLock(rootPageId);
-        _rootLock.ExitReadLock();
+        try
+        {
+            int rootPageId = _rootPageId;
+            _pageLockManager.AcquireReadLock(rootPageId);
 
-        List<BTreeEntry> entries = new List<BTreeEntry>();
-        CollectAllEntries(rootPageId, entries, rootAlreadyLocked: true);
-        return entries;
+            List<BTreeEntry> entries = new List<BTreeEntry>();
+            CollectAllEntries(rootPageId, entries, rootAlreadyLocked: true);
+            return entries;
+        }
+        finally
+        {
+            _rootLock.ExitReadLock();
+        }
     }
 
     public List<int> CollectAllPageIds()
     {
         _rootLock.EnterReadLock();
-        int rootPageId = _rootPageId;
-        _rootLock.ExitReadLock();
-
         List<int> pageIds = new List<int>();
         byte[] buffer = BufferPool.Rent(_pageSize);
         BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         Stack<int> pageStack = new Stack<int>();
-        pageStack.Push(rootPageId);
 
         try
         {
+            int rootPageId = _rootPageId;
+            pageStack.Push(rootPageId);
+
             while (pageStack.Count > 0)
             {
                 int currentPageId = pageStack.Pop();
@@ -329,6 +345,7 @@ internal class BTree
         }
         finally
         {
+            _rootLock.ExitReadLock();
             BufferPool.Return(buffer);
             BTreeNodePool.Return(node);
         }
@@ -576,11 +593,10 @@ internal class BTree
 
             if (pathIndex < 0 && node.NodeType == BTreeNodeType.Internal && node.KeyCount == 0)
             {
-                _rootLock.EnterWriteLock();
+                // Already holding _rootLock from Delete()
                 int newRootPageId = node.ChildPageIds[0];
                 _pageManager.DeallocatePage(_rootPageId);
                 _rootPageId = newRootPageId;
-                _rootLock.ExitWriteLock();
             }
         }
         finally
@@ -1062,10 +1078,16 @@ internal class BTree
     public async Task<DocumentLocation?> SearchAsync(int docId, CancellationToken cancellationToken = default)
     {
         await _rootLock.EnterReadLockAsync(cancellationToken).ConfigureAwait(false);
-        int rootPageId = _rootPageId;
-        await _pageLockManager.AcquireReadLockAsync(rootPageId, cancellationToken).ConfigureAwait(false);
-        _rootLock.ExitReadLock();
-        return await SearchNodeAsync(rootPageId, docId, cancellationToken, rootAlreadyLocked: true).ConfigureAwait(false);
+        try
+        {
+            int rootPageId = _rootPageId;
+            await _pageLockManager.AcquireReadLockAsync(rootPageId, cancellationToken).ConfigureAwait(false);
+            return await SearchNodeAsync(rootPageId, docId, cancellationToken, rootAlreadyLocked: true).ConfigureAwait(false);
+        }
+        finally
+        {
+            _rootLock.ExitReadLock();
+        }
     }
 
     public async Task<List<BTreeEntry>> SearchRangeAsync(int startDocId, int endDocId, bool includeStart, bool includeEnd, CancellationToken cancellationToken = default)
@@ -1073,14 +1095,13 @@ internal class BTree
         List<BTreeEntry> results = new List<BTreeEntry>();
 
         await _rootLock.EnterReadLockAsync(cancellationToken).ConfigureAwait(false);
-        int rootPageId = _rootPageId;
-        await _pageLockManager.AcquireReadLockAsync(rootPageId, cancellationToken).ConfigureAwait(false);
-        _rootLock.ExitReadLock();
-
         byte[] buffer = BufferPool.Rent(_pageSize);
         BTreeNode node = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
         try
         {
+            int rootPageId = _rootPageId;
+            await _pageLockManager.AcquireReadLockAsync(rootPageId, cancellationToken).ConfigureAwait(false);
+
             // FindLeafForKeyAsync returns with read lock held on the leaf
             int leafPageId = await FindLeafForKeyAsync(rootPageId, startDocId, buffer, node, cancellationToken, rootAlreadyLocked: true).ConfigureAwait(false);
             int currentPageId = leafPageId;
@@ -1110,6 +1131,7 @@ internal class BTree
         }
         finally
         {
+            _rootLock.ExitReadLock();
             BufferPool.Return(buffer);
             BTreeNodePool.Return(node);
         }
@@ -1160,9 +1182,10 @@ internal class BTree
         byte[] childBuffer = BufferPool.Rent(_pageSize);
         BTreeNode newRoot = null;
         LockStack heldLocks = new LockStack(_pageLockManager, true);
+
+        await _rootLock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await _rootLock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
             int rootPageId = _rootPageId;
             await _pageLockManager.AcquireWriteLockAsync(rootPageId, cancellationToken).ConfigureAwait(false);
             await _pageIO.ReadPageAsync(rootPageId, buffer, cancellationToken).ConfigureAwait(false);
@@ -1185,7 +1208,6 @@ internal class BTree
 
                     await SplitChildAsync(newRootPageId, 0, rootPageId, cancellationToken).ConfigureAwait(false);
                     _rootPageId = newRootPageId;
-                    _rootLock.ExitWriteLock();
 
                     // Release rootPageId lock - InsertNonFullAsync will acquire child locks as needed
                     _pageLockManager.ReleaseWriteLock(rootPageId);
@@ -1202,14 +1224,14 @@ internal class BTree
             }
             else
             {
-                // Root won't change, release root lock but keep page lock
-                _rootLock.ExitWriteLock();
+                // Root won't change, keep page lock
                 heldLocks.Push(rootPageId);
                 await InsertNonFullAsync(rootPageId, buffer, childBuffer, docId, location, heldLocks, cancellationToken).ConfigureAwait(false);
             }
         }
         finally
         {
+            _rootLock.ExitWriteLock();
             heldLocks.ReleaseAll();
             BufferPool.Return(buffer);
             BufferPool.Return(childBuffer);
@@ -1220,10 +1242,16 @@ internal class BTree
     public async Task<bool> DeleteAsync(int docId, CancellationToken cancellationToken = default)
     {
         await _rootLock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
-        int rootPageId = _rootPageId;
-        await _pageLockManager.AcquireWriteLockAsync(rootPageId, cancellationToken).ConfigureAwait(false);
-        _rootLock.ExitWriteLock();
-        return await DeleteFromNodeAsync(rootPageId, docId, cancellationToken, rootAlreadyLocked: true).ConfigureAwait(false);
+        try
+        {
+            int rootPageId = _rootPageId;
+            await _pageLockManager.AcquireWriteLockAsync(rootPageId, cancellationToken).ConfigureAwait(false);
+            return await DeleteFromNodeAsync(rootPageId, docId, cancellationToken, rootAlreadyLocked: true).ConfigureAwait(false);
+        }
+        finally
+        {
+            _rootLock.ExitWriteLock();
+        }
     }
 
     private async Task<DocumentLocation?> SearchNodeAsync(int pageId, int docId, CancellationToken cancellationToken, bool rootAlreadyLocked = false)
@@ -1639,11 +1667,10 @@ internal class BTree
 
             if (pathIndex < 0 && node.NodeType == BTreeNodeType.Internal && node.KeyCount == 0)
             {
-                await _rootLock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
+                // Already holding _rootLock from DeleteAsync()
                 int newRootPageId = node.ChildPageIds[0];
                 _pageManager.DeallocatePage(_rootPageId);
                 _rootPageId = newRootPageId;
-                _rootLock.ExitWriteLock();
             }
         }
         finally

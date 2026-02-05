@@ -54,6 +54,23 @@ internal class TransactionManager
         }
     }
 
+    /// <summary>
+    /// Atomically allocates a transaction ID, captures snapshot, and registers the transaction.
+    /// This prevents a race where GC could miss the snapshot between GetSnapshotTxId and RegisterTransaction.
+    /// </summary>
+    public void AllocateAndRegisterTransaction(out TxId txId, out TxId snapshotTxId)
+    {
+        lock (_lock)
+        {
+            txId = _nextTxId;
+            _nextTxId++;
+            snapshotTxId = _lastCommittedTxId;
+
+            _activeTransactionIds.Add(txId);
+            _activeSnapshots[txId] = snapshotTxId;
+        }
+    }
+
     public void RegisterTransaction(TxId txId, TxId snapshotTxId)
     {
         lock (_lock)
