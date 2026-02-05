@@ -16,17 +16,17 @@ internal sealed class VersionGarbageCollector
 
     public GarbageCollectionResult Collect()
     {
-        TxId oldestSnapshot = _txManager.GetOldestActiveSnapshot();
+        ulong oldestSnapshotCSN = _txManager.GetOldestActiveSnapshotCSN();
 
-        if (oldestSnapshot == TxId.MaxValue)
+        if (oldestSnapshotCSN == ulong.MaxValue)
         {
-            oldestSnapshot = _txManager.LastCommittedTxId;
+            oldestSnapshotCSN = _txManager.GetCurrentCSN();
         }
 
         List<CollectableVersion> collectableVersions = new List<CollectableVersion>();
 
         // Iterate directly without wrapper objects, skip single-version chains
-        _versionIndex.CollectGarbageVersions(oldestSnapshot, collectableVersions);
+        _versionIndex.CollectGarbageVersions(oldestSnapshotCSN, collectableVersions);
 
         return new GarbageCollectionResult(collectableVersions.Count, _versionIndex.MultiVersionDocumentCount, collectableVersions);
     }

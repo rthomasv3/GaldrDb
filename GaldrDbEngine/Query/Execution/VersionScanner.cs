@@ -12,20 +12,17 @@ internal sealed class VersionScanner
 {
     private readonly GaldrDb _db;
     private readonly VersionIndex _versionIndex;
-    private readonly TxId _snapshotTxId;
     private readonly SecondaryIndexScanner _indexScanner;
     private readonly TransactionContext _context;
 
     public VersionScanner(
         GaldrDb db,
         VersionIndex versionIndex,
-        TxId snapshotTxId,
         SecondaryIndexScanner indexScanner,
         TransactionContext context)
     {
         _db = db;
         _versionIndex = versionIndex;
-        _snapshotTxId = snapshotTxId;
         _indexScanner = indexScanner;
         _context = context;
     }
@@ -41,18 +38,18 @@ internal sealed class VersionScanner
             {
                 docIds.Reverse();
             }
-            versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, docIds, _snapshotTxId);
+            versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, docIds, _context.SnapshotCSN);
         }
         else if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
         {
             PrimaryKeyRangeSpec rangeSpec = plan.PrimaryKeyRange;
             List<int> docIds = _db.SearchDocIdRange(collectionName, rangeSpec.StartDocId, rangeSpec.EndDocId, rangeSpec.IncludeStart, rangeSpec.IncludeEnd, _context);
-            versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, docIds, _snapshotTxId);
+            versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, docIds, _context.SnapshotCSN);
         }
         else if (plan.PlanType == QueryPlanType.PrimaryKeyMultiPoint)
         {
             PrimaryKeyMultiPointSpec multiPointSpec = plan.PrimaryKeyMultiPoint;
-            versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, multiPointSpec.DocIds, _snapshotTxId);
+            versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, multiPointSpec.DocIds, _context.SnapshotCSN);
         }
         else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
         {
@@ -62,11 +59,11 @@ internal sealed class VersionScanner
                 entries.Reverse();
             }
             List<int> docIds = SecondaryIndexScanner.ExtractDocIds(entries);
-            versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, docIds, _snapshotTxId);
+            versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, docIds, _context.SnapshotCSN);
         }
         else
         {
-            versions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
+            versions = _versionIndex.GetAllVisibleVersions(collectionName, _context.SnapshotCSN);
         }
 
         return versions;
@@ -86,18 +83,18 @@ internal sealed class VersionScanner
             {
                 docIds.Reverse();
             }
-            versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, docIds, _snapshotTxId);
+            versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, docIds, _context.SnapshotCSN);
         }
         else if (plan.PlanType == QueryPlanType.PrimaryKeyRange)
         {
             PrimaryKeyRangeSpec rangeSpec = plan.PrimaryKeyRange;
             List<int> docIds = await _db.SearchDocIdRangeAsync(collectionName, rangeSpec.StartDocId, rangeSpec.EndDocId, rangeSpec.IncludeStart, rangeSpec.IncludeEnd, _context, cancellationToken).ConfigureAwait(false);
-            versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, docIds, _snapshotTxId);
+            versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, docIds, _context.SnapshotCSN);
         }
         else if (plan.PlanType == QueryPlanType.PrimaryKeyMultiPoint)
         {
             PrimaryKeyMultiPointSpec multiPointSpec = plan.PrimaryKeyMultiPoint;
-            versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, multiPointSpec.DocIds, _snapshotTxId);
+            versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, multiPointSpec.DocIds, _context.SnapshotCSN);
         }
         else if (plan.PlanType == QueryPlanType.SecondaryIndexScan)
         {
@@ -107,11 +104,11 @@ internal sealed class VersionScanner
                 entries.Reverse();
             }
             List<int> docIds = SecondaryIndexScanner.ExtractDocIds(entries);
-            versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, docIds, _snapshotTxId);
+            versions = _versionIndex.GetVisibleVersionsForDocIds(collectionName, docIds, _context.SnapshotCSN);
         }
         else
         {
-            versions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
+            versions = _versionIndex.GetAllVisibleVersions(collectionName, _context.SnapshotCSN);
         }
 
         return versions;
@@ -123,7 +120,7 @@ internal sealed class VersionScanner
         // Using DocumentCount would create a race condition: during commit, the version index
         // is updated before DocumentCount, so a query could see a document marked as deleted
         // in the version index while DocumentCount still includes it.
-        List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
+        List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _context.SnapshotCSN);
 
         // Build a set of visible document IDs for quick lookup
         HashSet<int> visibleDocIds = new HashSet<int>();
@@ -182,7 +179,7 @@ internal sealed class VersionScanner
         // Check visible versions from the version index
         if (!hasAny)
         {
-            List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _snapshotTxId);
+            List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _context.SnapshotCSN);
 
             foreach (DocumentVersion version in visibleVersions)
             {

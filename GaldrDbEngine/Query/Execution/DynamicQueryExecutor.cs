@@ -25,7 +25,6 @@ internal sealed class DynamicQueryExecutor : IDynamicQueryExecutor
         Transaction transaction,
         GaldrDb db,
         VersionIndex versionIndex,
-        TxId snapshotTxId,
         string collectionName,
         CollectionEntry collection)
     {
@@ -36,7 +35,7 @@ internal sealed class DynamicQueryExecutor : IDynamicQueryExecutor
         _context = transaction.Context;
         _reader = new DynamicDocumentReader();
         SecondaryIndexScanner indexScanner = new SecondaryIndexScanner(db, collectionName, _context);
-        _versionScanner = new VersionScanner(db, versionIndex, snapshotTxId, indexScanner, _context);
+        _versionScanner = new VersionScanner(db, versionIndex, indexScanner, _context);
         _writeSetOverlay = new WriteSetOverlay<JsonDocument>(transaction, collectionName, _reader);
     }
 

@@ -195,12 +195,12 @@ public class CrashDebugTests
                 Console.WriteLine($"Transaction SnapshotTxId: {tx.SnapshotTxId}");
 
                 // Try to get the visible version directly
-                DocumentVersion directVersion = versionIndex.GetVisibleVersion(expectedCollectionName, insertedId, tx.SnapshotTxId);
+                DocumentVersion directVersion = versionIndex.GetVisibleVersion(expectedCollectionName, insertedId, tx.SnapshotCSN);
                 Console.WriteLine($"Direct GetVisibleVersion for '{expectedCollectionName}' ID {insertedId}: {(directVersion != null ? "FOUND" : "NULL")}");
 
                 if (directVersion != null)
                 {
-                    Console.WriteLine($"  Version CreatedBy: {directVersion.CreatedBy}, DeletedBy: {directVersion.DeletedBy}");
+                    Console.WriteLine($"  Version CreatedBy: {directVersion.CreatedBy}, DeletedCSN: {directVersion.DeletedCSN}");
                     Console.WriteLine($"  Version Location: PageId={directVersion.Location.PageId}, SlotIndex={directVersion.Location.SlotIndex}");
                 }
 

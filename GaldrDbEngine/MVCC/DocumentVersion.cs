@@ -7,33 +7,35 @@ internal class DocumentVersion
 {
     public int DocumentId { get; }
     public TxId CreatedBy { get; }
-    public TxId DeletedBy { get; private set; }
+    public ulong CommitCSN { get; }
+    public ulong DeletedCSN { get; private set; }
     public DocumentLocation Location { get; }
     public DocumentVersion PreviousVersion { get; private set; }
 
-    public DocumentVersion(int documentId, TxId createdBy, DocumentLocation location, DocumentVersion previousVersion)
+    public DocumentVersion(int documentId, TxId createdBy, ulong commitCSN, DocumentLocation location, DocumentVersion previousVersion)
     {
         DocumentId = documentId;
         CreatedBy = createdBy;
-        DeletedBy = TxId.MaxValue;
+        CommitCSN = commitCSN;
+        DeletedCSN = ulong.MaxValue;
         Location = location;
         PreviousVersion = previousVersion;
     }
 
-    public void MarkDeleted(TxId deletedBy)
+    public void MarkDeleted(ulong deletedCSN)
     {
-        DeletedBy = deletedBy;
+        DeletedCSN = deletedCSN;
     }
 
     public bool IsDeleted
     {
-        get { return DeletedBy != TxId.MaxValue; }
+        get { return DeletedCSN != ulong.MaxValue; }
     }
 
-    public bool IsVisibleTo(TxId snapshotTxId)
+    public bool IsVisibleTo(ulong snapshotCSN)
     {
-        bool createdBeforeOrAtSnapshot = CreatedBy <= snapshotTxId;
-        bool notDeletedOrDeletedAfterSnapshot = DeletedBy == TxId.MaxValue || DeletedBy > snapshotTxId;
+        bool createdBeforeOrAtSnapshot = CommitCSN <= snapshotCSN;
+        bool notDeletedOrDeletedAfterSnapshot = DeletedCSN == ulong.MaxValue || DeletedCSN > snapshotCSN;
 
         return createdBeforeOrAtSnapshot && notDeletedOrDeletedAfterSnapshot;
     }

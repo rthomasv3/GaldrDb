@@ -15,6 +15,17 @@ internal sealed class TransactionContext
     public ulong TxId { get; init; }
 
     /// <summary>
+    /// The snapshot transaction ID for conflict detection.
+    /// </summary>
+    public ulong SnapshotTxId { get; init; }
+
+    /// <summary>
+    /// The snapshot CSN (Commit Sequence Number) at transaction start.
+    /// Used for MVCC visibility instead of TxId comparison.
+    /// </summary>
+    public ulong SnapshotCSN { get; init; }
+
+    /// <summary>
     /// Snapshot of _pageLatestFrame at transaction start for consistent reads.
     /// Can be refreshed on commit retry after PageConflictException.
     /// </summary>

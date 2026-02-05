@@ -24,7 +24,6 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
         Transaction transaction,
         GaldrDb db,
         VersionIndex versionIndex,
-        TxId snapshotTxId,
         GaldrTypeInfo<T> typeInfo,
         IGaldrJsonSerializer jsonSerializer,
         GaldrJsonOptions jsonOptions)
@@ -35,7 +34,7 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
         _context = transaction.Context;
         _reader = new TypedDocumentReader<T>(typeInfo, jsonSerializer, jsonOptions);
         SecondaryIndexScanner indexScanner = new SecondaryIndexScanner(db, typeInfo.CollectionName, _context);
-        _versionScanner = new VersionScanner(db, versionIndex, snapshotTxId, indexScanner, _context);
+        _versionScanner = new VersionScanner(db, versionIndex, indexScanner, _context);
         _writeSetOverlay = new WriteSetOverlay<T>(transaction, typeInfo.CollectionName, _reader);
     }
 

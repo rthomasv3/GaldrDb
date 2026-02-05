@@ -58,7 +58,7 @@ internal sealed class VersionIndex
         return result;
     }
 
-    public DocumentVersion GetVisibleVersion(string collectionName, int documentId, TxId snapshotTxId)
+    public DocumentVersion GetVisibleVersion(string collectionName, int documentId, ulong snapshotCSN)
     {
         DocumentVersion result = null;
 
@@ -71,7 +71,7 @@ internal sealed class VersionIndex
                 {
                     while (currentVersion != null && result == null)
                     {
-                        if (currentVersion.IsVisibleTo(snapshotTxId))
+                        if (currentVersion.IsVisibleTo(snapshotCSN))
                         {
                             result = currentVersion;
                         }
@@ -115,12 +115,12 @@ internal sealed class VersionIndex
         return result;
     }
 
-    public void AddVersion(string collectionName, int documentId, TxId createdBy, DocumentLocation location)
+    public void AddVersion(string collectionName, int documentId, TxId createdBy, ulong commitCSN, DocumentLocation location)
     {
         _lock.EnterWriteLock();
         try
         {
-            AddVersionInternal(collectionName, documentId, createdBy, location);
+            AddVersionInternal(collectionName, documentId, createdBy, commitCSN, location);
         }
         finally
         {
@@ -171,7 +171,7 @@ internal sealed class VersionIndex
         }
     }
 
-    public void AddVersions(TxId createdBy, IReadOnlyList<VersionOperation> operations)
+    public void AddVersions(TxId createdBy, ulong commitCSN, IReadOnlyList<VersionOperation> operations)
     {
         _lock.EnterWriteLock();
         try
@@ -180,11 +180,11 @@ internal sealed class VersionIndex
             {
                 if (op.IsDelete)
                 {
-                    MarkDeletedInternal(op.CollectionName, op.DocumentId, createdBy);
+                    MarkDeletedInternal(op.CollectionName, op.DocumentId, commitCSN);
                 }
                 else
                 {
-                    AddVersionInternal(op.CollectionName, op.DocumentId, createdBy, op.Location);
+                    AddVersionInternal(op.CollectionName, op.DocumentId, createdBy, commitCSN, op.Location);
                 }
             }
         }
@@ -194,7 +194,7 @@ internal sealed class VersionIndex
         }
     }
 
-    private void AddVersionInternal(string collectionName, int documentId, TxId createdBy, DocumentLocation location)
+    private void AddVersionInternal(string collectionName, int documentId, TxId createdBy, ulong commitCSN, DocumentLocation location)
     {
         if (!_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
         {
@@ -206,7 +206,7 @@ internal sealed class VersionIndex
         if (collection.TryGetValue(documentId, out DocumentVersion existing))
         {
             previousVersion = existing;
-            previousVersion.MarkDeleted(createdBy);
+            previousVersion.MarkDeleted(commitCSN);
 
             if (previousVersion.PreviousVersion == null)
             {
@@ -216,23 +216,23 @@ internal sealed class VersionIndex
             _gcCandidates.Add(new DocumentKey(collectionName, documentId));
         }
 
-        DocumentVersion newVersion = new DocumentVersion(documentId, createdBy, location, previousVersion);
+        DocumentVersion newVersion = new DocumentVersion(documentId, createdBy, commitCSN, location, previousVersion);
         collection[documentId] = newVersion;
     }
 
-    private void MarkDeletedInternal(string collectionName, int documentId, TxId deletedBy)
+    private void MarkDeletedInternal(string collectionName, int documentId, ulong deletedCSN)
     {
         if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
         {
             if (collection.TryGetValue(documentId, out DocumentVersion version))
             {
-                version.MarkDeleted(deletedBy);
+                version.MarkDeleted(deletedCSN);
                 _gcCandidates.Add(new DocumentKey(collectionName, documentId));
             }
         }
     }
 
-    public void MarkDeleted(string collectionName, int documentId, TxId deletedBy)
+    public void MarkDeleted(string collectionName, int documentId, ulong deletedCSN)
     {
         _lock.EnterWriteLock();
         try
@@ -241,7 +241,7 @@ internal sealed class VersionIndex
             {
                 if (collection.TryGetValue(documentId, out DocumentVersion version))
                 {
-                    version.MarkDeleted(deletedBy);
+                    version.MarkDeleted(deletedCSN);
                     _gcCandidates.Add(new DocumentKey(collectionName, documentId));
                 }
             }
@@ -315,7 +315,7 @@ internal sealed class VersionIndex
         }
     }
 
-    public List<DocumentVersion> GetAllVisibleVersions(string collectionName, TxId snapshotTxId)
+    public List<DocumentVersion> GetAllVisibleVersions(string collectionName, ulong snapshotCSN)
     {
         List<DocumentVersion> results = new List<DocumentVersion>();
 
@@ -330,7 +330,7 @@ internal sealed class VersionIndex
 
                     while (currentVersion != null)
                     {
-                        if (currentVersion.IsVisibleTo(snapshotTxId))
+                        if (currentVersion.IsVisibleTo(snapshotCSN))
                         {
                             results.Add(currentVersion);
                             break;
@@ -349,7 +349,7 @@ internal sealed class VersionIndex
         return results;
     }
 
-    public List<DocumentVersion> GetVisibleVersionsForDocIds(string collectionName, IEnumerable<int> docIds, TxId snapshotTxId)
+    public List<DocumentVersion> GetVisibleVersionsForDocIds(string collectionName, IEnumerable<int> docIds, ulong snapshotCSN)
     {
         List<DocumentVersion> results = new List<DocumentVersion>();
 
@@ -364,7 +364,7 @@ internal sealed class VersionIndex
                     {
                         while (currentVersion != null)
                         {
-                            if (currentVersion.IsVisibleTo(snapshotTxId))
+                            if (currentVersion.IsVisibleTo(snapshotCSN))
                             {
                                 results.Add(currentVersion);
                                 break;
@@ -475,7 +475,7 @@ internal sealed class VersionIndex
         }
     }
 
-    public void CollectGarbageVersions(TxId oldestSnapshot, List<CollectableVersion> results)
+    public void CollectGarbageVersions(ulong oldestSnapshotCSN, List<CollectableVersion> results)
     {
         _lock.EnterReadLock();
         try
@@ -495,7 +495,7 @@ internal sealed class VersionIndex
                 // Handle single-version chains - check if deleted and collectable
                 if (head.PreviousVersion == null)
                 {
-                    if (head.DeletedBy != TxId.MaxValue && head.DeletedBy <= oldestSnapshot)
+                    if (head.DeletedCSN != ulong.MaxValue && head.DeletedCSN <= oldestSnapshotCSN)
                     {
                         CollectableVersion collectable = new CollectableVersion(
                             docKey.CollectionName,
@@ -520,18 +520,18 @@ internal sealed class VersionIndex
                     if (foundVisibleVersion)
                     {
                         // Version was superseded - collect if deleted at or before oldest snapshot
-                        if (current.DeletedBy != TxId.MaxValue && current.DeletedBy <= oldestSnapshot)
+                        if (current.DeletedCSN != ulong.MaxValue && current.DeletedCSN <= oldestSnapshotCSN)
                         {
                             canCollect = true;
                         }
                     }
                     else
                     {
-                        if (current.IsVisibleTo(oldestSnapshot))
+                        if (current.IsVisibleTo(oldestSnapshotCSN))
                         {
                             foundVisibleVersion = true;
                         }
-                        else if (current.DeletedBy != TxId.MaxValue && current.DeletedBy <= oldestSnapshot)
+                        else if (current.DeletedCSN != ulong.MaxValue && current.DeletedCSN <= oldestSnapshotCSN)
                         {
                             // Version is not visible to oldest snapshot - safe to collect
                             canCollect = true;

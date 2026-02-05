@@ -381,7 +381,7 @@ public class GaldrDb : IGaldrDb
         long sourceSize = new FileInfo(_filePath).Length;
         int documentsCopied = 0;
         int collectionsCopied = 0;
-        TxId currentSnapshot = _txManager.GetSnapshotTxId();
+        ulong currentSnapshotCSN = _txManager.GetCurrentCSN();
 
         using (GaldrDb targetDb = Create(targetPath, _options))
         {
@@ -399,7 +399,7 @@ public class GaldrDb : IGaldrDb
                     continue;
                 }
 
-                List<DocumentVersion> liveVersions = _versionIndex.GetAllVisibleVersions(collectionName, currentSnapshot);
+                List<DocumentVersion> liveVersions = _versionIndex.GetAllVisibleVersions(collectionName, currentSnapshotCSN);
                 if (liveVersions == null || liveVersions.Count == 0)
                 {
                     continue;
@@ -467,7 +467,7 @@ public class GaldrDb : IGaldrDb
         long sourceSize = new FileInfo(_filePath).Length;
         int documentsCopied = 0;
         int collectionsCopied = 0;
-        TxId currentSnapshot = _txManager.GetSnapshotTxId();
+        ulong currentSnapshotCSN = _txManager.GetCurrentCSN();
 
         using (GaldrDb targetDb = Create(targetPath, _options))
         {
@@ -485,7 +485,7 @@ public class GaldrDb : IGaldrDb
                     continue;
                 }
 
-                List<DocumentVersion> liveVersions = _versionIndex.GetAllVisibleVersions(collectionName, currentSnapshot);
+                List<DocumentVersion> liveVersions = _versionIndex.GetAllVisibleVersions(collectionName, currentSnapshotCSN);
                 if (liveVersions == null || liveVersions.Count == 0)
                 {
                     continue;
@@ -535,15 +535,13 @@ public class GaldrDb : IGaldrDb
         EnsureTransactionManager();
         EnsureVersionIndex();
 
-        _txManager.AllocateAndRegisterTransaction(out TxId txId, out TxId snapshotTxId);
-        TransactionContext ctx = BeginWalSnapshot(txId.Value);
+        _txManager.AllocateAndRegisterTransaction(out TxId txId, out TxId snapshotTxId, out ulong snapshotCSN);
+        TransactionContext ctx = BeginWalSnapshot(txId.Value, snapshotTxId.Value, snapshotCSN);
 
         Transaction tx = new Transaction(
             this,
             _txManager,
             _versionIndex,
-            txId,
-            snapshotTxId,
             false,
             _jsonSerializer,
             _jsonOptions,
@@ -561,15 +559,13 @@ public class GaldrDb : IGaldrDb
         EnsureTransactionManager();
         EnsureVersionIndex();
 
-        _txManager.AllocateAndRegisterTransaction(out TxId txId, out TxId snapshotTxId);
-        TransactionContext ctx = BeginWalSnapshot(txId.Value);
+        _txManager.AllocateAndRegisterTransaction(out TxId txId, out TxId snapshotTxId, out ulong snapshotCSN);
+        TransactionContext ctx = BeginWalSnapshot(txId.Value, snapshotTxId.Value, snapshotCSN);
 
         Transaction tx = new Transaction(
             this,
             _txManager,
             _versionIndex,
-            txId,
-            snapshotTxId,
             true,
             _jsonSerializer,
             _jsonOptions,
@@ -1740,9 +1736,10 @@ public class GaldrDb : IGaldrDb
     {
         EnsureVersionIndex();
 
-        // Use TxId 0 for recovered documents (they existed before current session)
+        // Use TxId 0 and CSN 0 for recovered documents (they existed before current session)
         // This ensures all new transactions will see them in their snapshot
         TxId baseTxId = new TxId(recoveredTxId > 0 ? recoveredTxId : 0);
+        ulong baseCSN = 0;
 
         List<CollectionEntry> collections = _collectionsMetadata.GetAllCollections();
 
@@ -1755,7 +1752,7 @@ public class GaldrDb : IGaldrDb
 
             foreach (BTreeEntry entry in entries)
             {
-                _versionIndex.AddVersion(collection.Name, entry.Key, baseTxId, entry.Location);
+                _versionIndex.AddVersion(collection.Name, entry.Key, baseTxId, baseCSN, entry.Location);
             }
         }
     }
@@ -1970,16 +1967,16 @@ public class GaldrDb : IGaldrDb
     // Snapshot phase: BeginWalSnapshot / EndWalSnapshot
     // Write phase: BeginWalWrite / CommitWalWrite / AbortWalWrite
 
-    internal TransactionContext BeginWalSnapshot(ulong txId)
+    internal TransactionContext BeginWalSnapshot(ulong txId, ulong snapshotTxId, ulong snapshotCSN)
     {
         TransactionContext ctx;
         if (_walPageIO != null)
         {
-            ctx = _walPageIO.BeginSnapshot(txId);
+            ctx = _walPageIO.BeginSnapshot(txId, snapshotTxId, snapshotCSN);
         }
         else
         {
-            ctx = new TransactionContext { TxId = txId };
+            ctx = new TransactionContext { TxId = txId, SnapshotTxId = snapshotTxId, SnapshotCSN = snapshotCSN };
         }
         return ctx;
     }
@@ -2035,8 +2032,9 @@ public class GaldrDb : IGaldrDb
         lock (_commitSerializationLock)
         {
             _versionIndex.ValidateVersions(txId, snapshotTxId, versionOps);
+            ulong commitCSN = _txManager.GetNextCommitCSN();
             CommitWalWrite(ctx);
-            _versionIndex.AddVersions(txId, versionOps);
+            _versionIndex.AddVersions(txId, commitCSN, versionOps);
         }
     }
 
@@ -2045,7 +2043,9 @@ public class GaldrDb : IGaldrDb
 
     internal TransactionContext BeginWalTransaction(ulong txId)
     {
-        TransactionContext ctx = BeginWalSnapshot(txId);
+        // For internal operations, use txId as snapshotTxId and 0 for snapshotCSN
+        // since they don't need MVCC visibility checks
+        TransactionContext ctx = BeginWalSnapshot(txId, txId, 0);
         BeginWalWrite(ctx);
         return ctx;
     }

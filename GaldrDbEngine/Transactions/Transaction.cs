@@ -46,6 +46,11 @@ public class Transaction : ITransaction
     public TxId SnapshotTxId { get; }
 
     /// <summary>
+    /// The snapshot CSN (Commit Sequence Number) that determines visibility of data.
+    /// </summary>
+    public ulong SnapshotCSN => _context.SnapshotCSN;
+
+    /// <summary>
     /// The current state of the transaction.
     /// </summary>
     public TransactionState State { get; private set; }
@@ -54,8 +59,6 @@ public class Transaction : ITransaction
         GaldrDb db,
         TransactionManager txManager,
         VersionIndex versionIndex,
-        TxId txId,
-        TxId snapshotTxId,
         bool isReadOnly,
         IGaldrJsonSerializer jsonSerializer,
         GaldrJsonOptions jsonOptions,
@@ -64,18 +67,19 @@ public class Transaction : ITransaction
         _db = db;
         _txManager = txManager;
         _versionIndex = versionIndex;
-        TxId = txId;
-        SnapshotTxId = snapshotTxId;
         _isReadOnly = isReadOnly;
         _jsonSerializer = jsonSerializer;
         _jsonOptions = jsonOptions;
         _context = context;
         _writeSet = new Dictionary<DocumentKey, WriteSetEntry>();
         _readSet = new Dictionary<DocumentKey, TxId>();
-        State = TransactionState.Active;
         _disposed = false;
         _hasActiveWalSnapshot = true;
         _hasActiveWalWrite = false;
+
+        TxId = new TxId(context.TxId);
+        SnapshotTxId = new TxId(context.SnapshotTxId);
+        State = TransactionState.Active;
     }
 
     internal TransactionContext Context
@@ -117,7 +121,6 @@ public class Transaction : ITransaction
                 this,
                 _db,
                 _versionIndex,
-                SnapshotTxId,
                 projTypeInfo,
                 _jsonSerializer,
                 _jsonOptions);
@@ -128,7 +131,6 @@ public class Transaction : ITransaction
                 this,
                 _db,
                 _versionIndex,
-                SnapshotTxId,
                 (GaldrTypeInfo<T>)typeInfo,
                 _jsonSerializer,
                 _jsonOptions);
@@ -153,7 +155,6 @@ public class Transaction : ITransaction
             this,
             _db,
             _versionIndex,
-            SnapshotTxId,
             collectionName,
             collection);
 
@@ -188,7 +189,7 @@ public class Transaction : ITransaction
         else
         {
             // Check VersionIndex for visible version at our snapshot
-            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, _context.SnapshotCSN);
 
             if (visibleVersion != null)
             {
@@ -340,7 +341,7 @@ public class Transaction : ITransaction
         }
         else
         {
-            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, _context.SnapshotCSN);
 
             if (visibleVersion != null)
             {
@@ -477,7 +478,7 @@ public class Transaction : ITransaction
         }
         else
         {
-            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, _context.SnapshotCSN);
 
             if (visibleVersion != null)
             {
@@ -707,7 +708,7 @@ public class Transaction : ITransaction
         else
         {
             // Check VersionIndex for visible version at our snapshot
-            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, _context.SnapshotCSN);
 
             if (visibleVersion != null)
             {
@@ -749,7 +750,7 @@ public class Transaction : ITransaction
         }
         else
         {
-            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, _context.SnapshotCSN);
 
             if (visibleVersion != null)
             {
@@ -796,7 +797,7 @@ public class Transaction : ITransaction
         }
         else
         {
-            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, _context.SnapshotCSN);
 
             if (visibleVersion != null)
             {
@@ -933,7 +934,7 @@ public class Transaction : ITransaction
         }
         else
         {
-            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, _context.SnapshotCSN);
 
             if (visibleVersion != null)
             {
@@ -1029,7 +1030,7 @@ public class Transaction : ITransaction
         }
         else
         {
-            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, _context.SnapshotCSN);
 
             if (visibleVersion != null)
             {
@@ -1138,7 +1139,7 @@ public class Transaction : ITransaction
         }
         else
         {
-            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, _context.SnapshotCSN);
 
             if (visibleVersion != null)
             {
@@ -1233,7 +1234,7 @@ public class Transaction : ITransaction
         }
         else
         {
-            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, _context.SnapshotCSN);
 
             if (visibleVersion != null)
             {
@@ -1404,7 +1405,7 @@ public class Transaction : ITransaction
         }
         else
         {
-            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, _context.SnapshotCSN);
 
             if (visibleVersion != null)
             {
@@ -1511,7 +1512,7 @@ public class Transaction : ITransaction
         }
         else
         {
-            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, SnapshotTxId);
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, id, _context.SnapshotCSN);
 
             if (visibleVersion != null)
             {
@@ -1859,7 +1860,7 @@ public class Transaction : ITransaction
                     latestVersion.CreatedBy);
             }
 
-            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, documentId, SnapshotTxId);
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, documentId, _context.SnapshotCSN);
 
             if (visibleVersion != null)
             {
@@ -1966,7 +1967,7 @@ public class Transaction : ITransaction
                     latestVersion.CreatedBy);
             }
 
-            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, documentId, SnapshotTxId);
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, documentId, _context.SnapshotCSN);
 
             if (visibleVersion != null)
             {
@@ -2174,7 +2175,7 @@ public class Transaction : ITransaction
                     latestVersion.CreatedBy);
             }
 
-            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, documentId, SnapshotTxId);
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, documentId, _context.SnapshotCSN);
 
             if (visibleVersion != null)
             {
@@ -2273,7 +2274,7 @@ public class Transaction : ITransaction
                     latestVersion.CreatedBy);
             }
 
-            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, documentId, SnapshotTxId);
+            DocumentVersion visibleVersion = _versionIndex.GetVisibleVersion(collectionName, documentId, _context.SnapshotCSN);
 
             if (visibleVersion != null)
             {

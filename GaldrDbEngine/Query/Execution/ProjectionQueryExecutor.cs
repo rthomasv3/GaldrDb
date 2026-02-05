@@ -27,7 +27,6 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         Transaction transaction,
         GaldrDb db,
         VersionIndex versionIndex,
-        TxId snapshotTxId,
         IGaldrProjectionTypeInfo projTypeInfo,
         IGaldrJsonSerializer jsonSerializer,
         GaldrJsonOptions jsonOptions)
@@ -41,7 +40,7 @@ internal sealed class ProjectionQueryExecutor<T> : IQueryExecutor<T>
         _context = transaction.Context;
         _reader = new ProjectionDocumentReader(projTypeInfo, jsonSerializer, jsonOptions);
         SecondaryIndexScanner indexScanner = new SecondaryIndexScanner(db, _collectionName, _context);
-        _versionScanner = new VersionScanner(db, versionIndex, snapshotTxId, indexScanner, _context);
+        _versionScanner = new VersionScanner(db, versionIndex, indexScanner, _context);
         _writeSetOverlay = new WriteSetOverlay<object>(transaction, projTypeInfo.CollectionName, _reader);
     }
 

@@ -101,9 +101,10 @@ public class TransactionTests
         TxId tx1 = txManager.AllocateTxId();
         TxId tx2 = txManager.AllocateTxId();
         TxId snapshot = txManager.GetSnapshotTxId();
+        ulong snapshotCSN = txManager.GetCurrentCSN();
 
-        txManager.RegisterTransaction(tx1, snapshot);
-        txManager.RegisterTransaction(tx2, snapshot);
+        txManager.RegisterTransaction(tx1, snapshot, snapshotCSN);
+        txManager.RegisterTransaction(tx2, snapshot, snapshotCSN);
 
         Assert.AreEqual(2, txManager.ActiveTransactionCount);
         Assert.IsTrue(txManager.IsTransactionActive(tx1));
@@ -123,9 +124,10 @@ public class TransactionTests
         TxId tx1 = txManager.AllocateTxId();
         TxId tx2 = txManager.AllocateTxId();
         TxId snapshot = txManager.GetSnapshotTxId();
+        ulong snapshotCSN = txManager.GetCurrentCSN();
 
-        txManager.RegisterTransaction(tx1, snapshot);
-        txManager.RegisterTransaction(tx2, snapshot);
+        txManager.RegisterTransaction(tx1, snapshot, snapshotCSN);
+        txManager.RegisterTransaction(tx2, snapshot, snapshotCSN);
 
         Assert.AreEqual(TxId.None, txManager.LastCommittedTxId);
 
@@ -147,9 +149,10 @@ public class TransactionTests
         TxId tx2 = txManager.AllocateTxId();
         TxId tx3 = txManager.AllocateTxId();
         TxId snapshot = txManager.GetSnapshotTxId();
+        ulong snapshotCSN = txManager.GetCurrentCSN();
 
-        txManager.RegisterTransaction(tx2, snapshot);
-        txManager.RegisterTransaction(tx3, snapshot);
+        txManager.RegisterTransaction(tx2, snapshot, snapshotCSN);
+        txManager.RegisterTransaction(tx3, snapshot, snapshotCSN);
 
         TxId oldest = txManager.GetOldestActiveTransaction();
 

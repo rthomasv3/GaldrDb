@@ -61,7 +61,7 @@ internal class WalPageIO : IPageIO
         _disposed = false;
     }
 
-    public TransactionContext BeginSnapshot(ulong txId)
+    public TransactionContext BeginSnapshot(ulong txId, ulong snapshotTxId, ulong snapshotCSN)
     {
         // Check if WAL can be reset (all frames checkpointed, no uncommitted writes)
         long currentMxFrame = Interlocked.Read(ref _mxFrame);
@@ -82,6 +82,8 @@ internal class WalPageIO : IPageIO
             return new TransactionContext
             {
                 TxId = txId,
+                SnapshotTxId = snapshotTxId,
+                SnapshotCSN = snapshotCSN,
                 FrameSnapshot = new Dictionary<int, long>(_pageLatestFrame),
                 SnapshotMxFrame = snapshotMxFrame,
                 PageWrites = null
@@ -268,8 +270,6 @@ internal class WalPageIO : IPageIO
     public void ReadPage(int pageId, Span<byte> destination, TransactionContext context = null)
     {
         bool found = false;
-        string readSource = null;
-        long readFrame = 0;
 
         // Step 1: Check transaction's uncommitted writes (read-your-own-writes)
         if (context != null)
@@ -283,8 +283,6 @@ internal class WalPageIO : IPageIO
                     {
                         entry.Data.AsSpan().CopyTo(destination);
                         found = true;
-                        readSource = "uncommitted";
-                        readFrame = writeInfo.FrameNum;
                     }
                 }
             }
@@ -330,11 +328,6 @@ internal class WalPageIO : IPageIO
             if (frameNum > 0 && frameNum > Interlocked.Read(ref _nBackfill))
             {
                 found = _wal.ReadFrameData(frameNum, destination);
-                if (found)
-                {
-                    readSource = "step3-nocontext";
-                    readFrame = frameNum;
-                }
             }
         }
 
@@ -342,8 +335,6 @@ internal class WalPageIO : IPageIO
         if (!found)
         {
             _innerPageIO.ReadPage(pageId, destination);
-            readSource = "basefile";
-            readFrame = 0;
         }
     }
 

@@ -16,11 +16,12 @@ public class VersionIndexTests
     public void DocumentVersion_IsVisibleTo_CreatedBeforeSnapshot_ReturnsTrue()
     {
         TxId createdBy = new TxId(5);
-        TxId snapshotTxId = new TxId(10);
+        ulong commitCSN = 5;
+        ulong snapshotCSN = 10;
         DocumentLocation location = new DocumentLocation(1, 0);
-        DocumentVersion version = new DocumentVersion(1, createdBy, location, null);
+        DocumentVersion version = new DocumentVersion(1, createdBy, commitCSN, location, null);
 
-        bool result = version.IsVisibleTo(snapshotTxId);
+        bool result = version.IsVisibleTo(snapshotCSN);
 
         Assert.IsTrue(result);
     }
@@ -29,11 +30,12 @@ public class VersionIndexTests
     public void DocumentVersion_IsVisibleTo_CreatedAfterSnapshot_ReturnsFalse()
     {
         TxId createdBy = new TxId(15);
-        TxId snapshotTxId = new TxId(10);
+        ulong commitCSN = 15;
+        ulong snapshotCSN = 10;
         DocumentLocation location = new DocumentLocation(1, 0);
-        DocumentVersion version = new DocumentVersion(1, createdBy, location, null);
+        DocumentVersion version = new DocumentVersion(1, createdBy, commitCSN, location, null);
 
-        bool result = version.IsVisibleTo(snapshotTxId);
+        bool result = version.IsVisibleTo(snapshotCSN);
 
         Assert.IsFalse(result);
     }
@@ -42,11 +44,12 @@ public class VersionIndexTests
     public void DocumentVersion_IsVisibleTo_CreatedAtSnapshot_ReturnsTrue()
     {
         TxId createdBy = new TxId(10);
-        TxId snapshotTxId = new TxId(10);
+        ulong commitCSN = 10;
+        ulong snapshotCSN = 10;
         DocumentLocation location = new DocumentLocation(1, 0);
-        DocumentVersion version = new DocumentVersion(1, createdBy, location, null);
+        DocumentVersion version = new DocumentVersion(1, createdBy, commitCSN, location, null);
 
-        bool result = version.IsVisibleTo(snapshotTxId);
+        bool result = version.IsVisibleTo(snapshotCSN);
 
         Assert.IsTrue(result);
     }
@@ -55,13 +58,14 @@ public class VersionIndexTests
     public void DocumentVersion_IsVisibleTo_DeletedAfterSnapshot_ReturnsTrue()
     {
         TxId createdBy = new TxId(5);
-        TxId deletedBy = new TxId(15);
-        TxId snapshotTxId = new TxId(10);
+        ulong commitCSN = 5;
+        ulong deletedCSN = 15;
+        ulong snapshotCSN = 10;
         DocumentLocation location = new DocumentLocation(1, 0);
-        DocumentVersion version = new DocumentVersion(1, createdBy, location, null);
-        version.MarkDeleted(deletedBy);
+        DocumentVersion version = new DocumentVersion(1, createdBy, commitCSN, location, null);
+        version.MarkDeleted(deletedCSN);
 
-        bool result = version.IsVisibleTo(snapshotTxId);
+        bool result = version.IsVisibleTo(snapshotCSN);
 
         Assert.IsTrue(result);
     }
@@ -70,13 +74,14 @@ public class VersionIndexTests
     public void DocumentVersion_IsVisibleTo_DeletedBeforeSnapshot_ReturnsFalse()
     {
         TxId createdBy = new TxId(5);
-        TxId deletedBy = new TxId(8);
-        TxId snapshotTxId = new TxId(10);
+        ulong commitCSN = 5;
+        ulong deletedCSN = 8;
+        ulong snapshotCSN = 10;
         DocumentLocation location = new DocumentLocation(1, 0);
-        DocumentVersion version = new DocumentVersion(1, createdBy, location, null);
-        version.MarkDeleted(deletedBy);
+        DocumentVersion version = new DocumentVersion(1, createdBy, commitCSN, location, null);
+        version.MarkDeleted(deletedCSN);
 
-        bool result = version.IsVisibleTo(snapshotTxId);
+        bool result = version.IsVisibleTo(snapshotCSN);
 
         Assert.IsFalse(result);
     }
@@ -85,13 +90,14 @@ public class VersionIndexTests
     public void DocumentVersion_IsVisibleTo_DeletedAtSnapshot_ReturnsFalse()
     {
         TxId createdBy = new TxId(5);
-        TxId deletedBy = new TxId(10);
-        TxId snapshotTxId = new TxId(10);
+        ulong commitCSN = 5;
+        ulong deletedCSN = 10;
+        ulong snapshotCSN = 10;
         DocumentLocation location = new DocumentLocation(1, 0);
-        DocumentVersion version = new DocumentVersion(1, createdBy, location, null);
-        version.MarkDeleted(deletedBy);
+        DocumentVersion version = new DocumentVersion(1, createdBy, commitCSN, location, null);
+        version.MarkDeleted(deletedCSN);
 
-        bool result = version.IsVisibleTo(snapshotTxId);
+        bool result = version.IsVisibleTo(snapshotCSN);
 
         Assert.IsFalse(result);
     }
@@ -100,8 +106,9 @@ public class VersionIndexTests
     public void DocumentVersion_IsDeleted_NotDeleted_ReturnsFalse()
     {
         TxId createdBy = new TxId(5);
+        ulong commitCSN = 5;
         DocumentLocation location = new DocumentLocation(1, 0);
-        DocumentVersion version = new DocumentVersion(1, createdBy, location, null);
+        DocumentVersion version = new DocumentVersion(1, createdBy, commitCSN, location, null);
 
         Assert.IsFalse(version.IsDeleted);
     }
@@ -110,9 +117,10 @@ public class VersionIndexTests
     public void DocumentVersion_IsDeleted_Deleted_ReturnsTrue()
     {
         TxId createdBy = new TxId(5);
+        ulong commitCSN = 5;
         DocumentLocation location = new DocumentLocation(1, 0);
-        DocumentVersion version = new DocumentVersion(1, createdBy, location, null);
-        version.MarkDeleted(new TxId(10));
+        DocumentVersion version = new DocumentVersion(1, createdBy, commitCSN, location, null);
+        version.MarkDeleted(10ul);
 
         Assert.IsTrue(version.IsDeleted);
     }
@@ -122,11 +130,13 @@ public class VersionIndexTests
     {
         TxId tx1 = new TxId(5);
         TxId tx2 = new TxId(10);
+        ulong csn1 = 5;
+        ulong csn2 = 10;
         DocumentLocation location1 = new DocumentLocation(1, 0);
         DocumentLocation location2 = new DocumentLocation(2, 0);
 
-        DocumentVersion version1 = new DocumentVersion(1, tx1, location1, null);
-        DocumentVersion version2 = new DocumentVersion(1, tx2, location2, version1);
+        DocumentVersion version1 = new DocumentVersion(1, tx1, csn1, location1, null);
+        DocumentVersion version2 = new DocumentVersion(1, tx2, csn2, location2, version1);
 
         Assert.IsNull(version1.PreviousVersion);
         Assert.AreEqual(version1, version2.PreviousVersion);
@@ -137,9 +147,10 @@ public class VersionIndexTests
     {
         VersionIndex index = new VersionIndex();
         TxId txId = new TxId(5);
+        ulong commitCSN = 5;
         DocumentLocation location = new DocumentLocation(1, 0);
 
-        index.AddVersion("TestCollection", 1, txId, location);
+        index.AddVersion("TestCollection", 1, txId, commitCSN, location);
 
         Assert.IsTrue(index.HasVersion("TestCollection", 1));
     }
@@ -150,11 +161,13 @@ public class VersionIndexTests
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
         TxId tx2 = new TxId(10);
+        ulong csn1 = 5;
+        ulong csn2 = 10;
         DocumentLocation location1 = new DocumentLocation(1, 0);
         DocumentLocation location2 = new DocumentLocation(2, 0);
 
-        index.AddVersion("TestCollection", 1, tx1, location1);
-        index.AddVersion("TestCollection", 1, tx2, location2);
+        index.AddVersion("TestCollection", 1, tx1, csn1, location1);
+        index.AddVersion("TestCollection", 1, tx2, csn2, location2);
 
         DocumentVersion latest = index.GetLatestVersion("TestCollection", 1);
 
@@ -177,7 +190,7 @@ public class VersionIndexTests
     public void VersionIndex_GetLatestVersion_NonExistentDocument_ReturnsNull()
     {
         VersionIndex index = new VersionIndex();
-        index.AddVersion("TestCollection", 1, new TxId(5), new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 1, new TxId(5), 5ul, new DocumentLocation(1, 0));
 
         DocumentVersion result = index.GetLatestVersion("TestCollection", 999);
 
@@ -189,12 +202,13 @@ public class VersionIndexTests
     {
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
+        ulong csn1 = 5;
         DocumentLocation location1 = new DocumentLocation(1, 0);
-        TxId snapshotTxId = new TxId(10);
+        ulong snapshotCSN = 10;
 
-        index.AddVersion("TestCollection", 1, tx1, location1);
+        index.AddVersion("TestCollection", 1, tx1, csn1, location1);
 
-        DocumentVersion result = index.GetVisibleVersion("TestCollection", 1, snapshotTxId);
+        DocumentVersion result = index.GetVisibleVersion("TestCollection", 1, snapshotCSN);
 
         Assert.IsNotNull(result);
         Assert.AreEqual(tx1, result.CreatedBy);
@@ -206,14 +220,16 @@ public class VersionIndexTests
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
         TxId tx2 = new TxId(15);
+        ulong csn1 = 5;
+        ulong csn2 = 15;
         DocumentLocation location1 = new DocumentLocation(1, 0);
         DocumentLocation location2 = new DocumentLocation(2, 0);
-        TxId snapshotTxId = new TxId(10);
+        ulong snapshotCSN = 10;
 
-        index.AddVersion("TestCollection", 1, tx1, location1);
-        index.AddVersion("TestCollection", 1, tx2, location2);
+        index.AddVersion("TestCollection", 1, tx1, csn1, location1);
+        index.AddVersion("TestCollection", 1, tx2, csn2, location2);
 
-        DocumentVersion result = index.GetVisibleVersion("TestCollection", 1, snapshotTxId);
+        DocumentVersion result = index.GetVisibleVersion("TestCollection", 1, snapshotCSN);
 
         Assert.IsNotNull(result);
         Assert.AreEqual(tx1, result.CreatedBy);
@@ -226,14 +242,16 @@ public class VersionIndexTests
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(15);
         TxId tx2 = new TxId(20);
+        ulong csn1 = 15;
+        ulong csn2 = 20;
         DocumentLocation location1 = new DocumentLocation(1, 0);
         DocumentLocation location2 = new DocumentLocation(2, 0);
-        TxId snapshotTxId = new TxId(10);
+        ulong snapshotCSN = 10;
 
-        index.AddVersion("TestCollection", 1, tx1, location1);
-        index.AddVersion("TestCollection", 1, tx2, location2);
+        index.AddVersion("TestCollection", 1, tx1, csn1, location1);
+        index.AddVersion("TestCollection", 1, tx2, csn2, location2);
 
-        DocumentVersion result = index.GetVisibleVersion("TestCollection", 1, snapshotTxId);
+        DocumentVersion result = index.GetVisibleVersion("TestCollection", 1, snapshotCSN);
 
         Assert.IsNull(result);
     }
@@ -243,14 +261,15 @@ public class VersionIndexTests
     {
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
-        TxId deletedBy = new TxId(8);
+        ulong csn1 = 5;
+        ulong deletedCSN = 8;
         DocumentLocation location1 = new DocumentLocation(1, 0);
-        TxId snapshotTxId = new TxId(10);
+        ulong snapshotCSN = 10;
 
-        index.AddVersion("TestCollection", 1, tx1, location1);
-        index.MarkDeleted("TestCollection", 1, deletedBy);
+        index.AddVersion("TestCollection", 1, tx1, csn1, location1);
+        index.MarkDeleted("TestCollection", 1, deletedCSN);
 
-        DocumentVersion result = index.GetVisibleVersion("TestCollection", 1, snapshotTxId);
+        DocumentVersion result = index.GetVisibleVersion("TestCollection", 1, snapshotCSN);
 
         Assert.IsNull(result);
     }
@@ -260,14 +279,15 @@ public class VersionIndexTests
     {
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
-        TxId deletedBy = new TxId(15);
+        ulong csn1 = 5;
+        ulong deletedCSN = 15;
         DocumentLocation location1 = new DocumentLocation(1, 0);
-        TxId snapshotTxId = new TxId(10);
+        ulong snapshotCSN = 10;
 
-        index.AddVersion("TestCollection", 1, tx1, location1);
-        index.MarkDeleted("TestCollection", 1, deletedBy);
+        index.AddVersion("TestCollection", 1, tx1, csn1, location1);
+        index.MarkDeleted("TestCollection", 1, deletedCSN);
 
-        DocumentVersion result = index.GetVisibleVersion("TestCollection", 1, snapshotTxId);
+        DocumentVersion result = index.GetVisibleVersion("TestCollection", 1, snapshotCSN);
 
         Assert.IsNotNull(result);
         Assert.AreEqual(tx1, result.CreatedBy);
@@ -278,16 +298,17 @@ public class VersionIndexTests
     {
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
-        TxId deletedBy = new TxId(10);
+        ulong csn1 = 5;
+        ulong deletedCSN = 10;
         DocumentLocation location1 = new DocumentLocation(1, 0);
 
-        index.AddVersion("TestCollection", 1, tx1, location1);
-        index.MarkDeleted("TestCollection", 1, deletedBy);
+        index.AddVersion("TestCollection", 1, tx1, csn1, location1);
+        index.MarkDeleted("TestCollection", 1, deletedCSN);
 
         DocumentVersion latest = index.GetLatestVersion("TestCollection", 1);
 
         Assert.IsTrue(latest.IsDeleted);
-        Assert.AreEqual(deletedBy, latest.DeletedBy);
+        Assert.AreEqual(deletedCSN, latest.DeletedCSN);
     }
 
     [TestMethod]
@@ -295,7 +316,7 @@ public class VersionIndexTests
     {
         VersionIndex index = new VersionIndex();
 
-        index.MarkDeleted("TestCollection", 999, new TxId(10));
+        index.MarkDeleted("TestCollection", 999, 10ul);
 
         Assert.IsFalse(index.HasVersion("TestCollection", 999));
     }
@@ -307,11 +328,14 @@ public class VersionIndexTests
         TxId tx1 = new TxId(5);
         TxId tx2 = new TxId(10);
         TxId tx3 = new TxId(15);
+        ulong csn1 = 5;
+        ulong csn2 = 10;
+        ulong csn3 = 15;
         DocumentLocation location = new DocumentLocation(1, 0);
 
-        index.AddVersion("TestCollection", 1, tx1, location);
-        index.AddVersion("TestCollection", 1, tx2, location);
-        index.AddVersion("TestCollection", 1, tx3, location);
+        index.AddVersion("TestCollection", 1, tx1, csn1, location);
+        index.AddVersion("TestCollection", 1, tx2, csn2, location);
+        index.AddVersion("TestCollection", 1, tx3, csn3, location);
 
         int count = index.GetVersionCount("TestCollection", 1);
 
@@ -332,7 +356,7 @@ public class VersionIndexTests
     public void VersionIndex_HasVersion_ExistingDocument_ReturnsTrue()
     {
         VersionIndex index = new VersionIndex();
-        index.AddVersion("TestCollection", 1, new TxId(5), new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 1, new TxId(5), 5ul, new DocumentLocation(1, 0));
 
         bool result = index.HasVersion("TestCollection", 1);
 
@@ -355,7 +379,7 @@ public class VersionIndexTests
         VersionIndex index = new VersionIndex();
 
         index.EnsureCollection("NewCollection");
-        index.AddVersion("NewCollection", 1, new TxId(5), new DocumentLocation(1, 0));
+        index.AddVersion("NewCollection", 1, new TxId(5), 5ul, new DocumentLocation(1, 0));
 
         Assert.IsTrue(index.HasVersion("NewCollection", 1));
     }
@@ -365,11 +389,12 @@ public class VersionIndexTests
     {
         VersionIndex index = new VersionIndex();
         TxId txId = new TxId(5);
+        ulong csn = 5;
         DocumentLocation location1 = new DocumentLocation(1, 0);
         DocumentLocation location2 = new DocumentLocation(2, 0);
 
-        index.AddVersion("Collection1", 1, txId, location1);
-        index.AddVersion("Collection2", 1, txId, location2);
+        index.AddVersion("Collection1", 1, txId, csn, location1);
+        index.AddVersion("Collection2", 1, txId, csn, location2);
 
         DocumentVersion version1 = index.GetLatestVersion("Collection1", 1);
         DocumentVersion version2 = index.GetLatestVersion("Collection2", 1);
@@ -385,13 +410,16 @@ public class VersionIndexTests
         TxId tx1 = new TxId(5);
         TxId tx2 = new TxId(10);
         TxId tx3 = new TxId(15);
+        ulong csn1 = 5;
+        ulong csn2 = 10;
+        ulong csn3 = 15;
         DocumentLocation location1 = new DocumentLocation(1, 0);
         DocumentLocation location2 = new DocumentLocation(2, 0);
         DocumentLocation location3 = new DocumentLocation(3, 0);
 
-        index.AddVersion("TestCollection", 1, tx1, location1);
-        index.AddVersion("TestCollection", 1, tx2, location2);
-        index.AddVersion("TestCollection", 1, tx3, location3);
+        index.AddVersion("TestCollection", 1, tx1, csn1, location1);
+        index.AddVersion("TestCollection", 1, tx2, csn2, location2);
+        index.AddVersion("TestCollection", 1, tx3, csn3, location3);
 
         DocumentVersion latest = index.GetLatestVersion("TestCollection", 1);
 
@@ -409,12 +437,14 @@ public class VersionIndexTests
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
         TxId tx2 = new TxId(10);
-        TxId snapshotTxId = new TxId(15);
+        ulong csn1 = 5;
+        ulong csn2 = 10;
+        ulong snapshotCSN = 15;
 
-        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
-        index.AddVersion("TestCollection", 2, tx2, new DocumentLocation(2, 0));
+        index.AddVersion("TestCollection", 1, tx1, csn1, new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 2, tx2, csn2, new DocumentLocation(2, 0));
 
-        List<DocumentVersion> versions = index.GetAllVisibleVersions("TestCollection", snapshotTxId);
+        List<DocumentVersion> versions = index.GetAllVisibleVersions("TestCollection", snapshotCSN);
 
         Assert.HasCount(2, versions);
     }
@@ -424,14 +454,15 @@ public class VersionIndexTests
     {
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
-        TxId deletedBy = new TxId(10);
-        TxId snapshotTxId = new TxId(15);
+        ulong csn1 = 5;
+        ulong deletedCSN = 10;
+        ulong snapshotCSN = 15;
 
-        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
-        index.AddVersion("TestCollection", 2, tx1, new DocumentLocation(2, 0));
-        index.MarkDeleted("TestCollection", 1, deletedBy);
+        index.AddVersion("TestCollection", 1, tx1, csn1, new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 2, tx1, csn1, new DocumentLocation(2, 0));
+        index.MarkDeleted("TestCollection", 1, deletedCSN);
 
-        List<DocumentVersion> versions = index.GetAllVisibleVersions("TestCollection", snapshotTxId);
+        List<DocumentVersion> versions = index.GetAllVisibleVersions("TestCollection", snapshotCSN);
 
         Assert.HasCount(1, versions);
         Assert.AreEqual(2, versions[0].DocumentId);
@@ -441,9 +472,9 @@ public class VersionIndexTests
     public void VersionIndex_GetAllVisibleVersions_EmptyCollection_ReturnsEmptyList()
     {
         VersionIndex index = new VersionIndex();
-        TxId snapshotTxId = new TxId(10);
+        ulong snapshotCSN = 10;
 
-        List<DocumentVersion> versions = index.GetAllVisibleVersions("NonExistent", snapshotTxId);
+        List<DocumentVersion> versions = index.GetAllVisibleVersions("NonExistent", snapshotCSN);
 
         Assert.IsEmpty(versions);
     }
@@ -457,14 +488,15 @@ public class VersionIndexTests
     {
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
-        TxId snapshotTxId = new TxId(10);
+        ulong csn1 = 5;
+        ulong snapshotCSN = 10;
 
-        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
-        index.AddVersion("TestCollection", 2, tx1, new DocumentLocation(2, 0));
-        index.AddVersion("TestCollection", 3, tx1, new DocumentLocation(3, 0));
+        index.AddVersion("TestCollection", 1, tx1, csn1, new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 2, tx1, csn1, new DocumentLocation(2, 0));
+        index.AddVersion("TestCollection", 3, tx1, csn1, new DocumentLocation(3, 0));
 
         List<int> docIds = new List<int> { 1, 3 };
-        List<DocumentVersion> versions = index.GetVisibleVersionsForDocIds("TestCollection", docIds, snapshotTxId);
+        List<DocumentVersion> versions = index.GetVisibleVersionsForDocIds("TestCollection", docIds, snapshotCSN);
 
         Assert.HasCount(2, versions);
     }
@@ -474,12 +506,13 @@ public class VersionIndexTests
     {
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
-        TxId snapshotTxId = new TxId(10);
+        ulong csn1 = 5;
+        ulong snapshotCSN = 10;
 
-        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 1, tx1, csn1, new DocumentLocation(1, 0));
 
         List<int> docIds = new List<int> { 99, 100 };
-        List<DocumentVersion> versions = index.GetVisibleVersionsForDocIds("TestCollection", docIds, snapshotTxId);
+        List<DocumentVersion> versions = index.GetVisibleVersionsForDocIds("TestCollection", docIds, snapshotCSN);
 
         Assert.IsEmpty(versions);
     }
@@ -493,10 +526,11 @@ public class VersionIndexTests
     {
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
+        ulong csn1 = 5;
 
-        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
-        index.AddVersion("TestCollection", 5, tx1, new DocumentLocation(2, 0));
-        index.AddVersion("TestCollection", 10, tx1, new DocumentLocation(3, 0));
+        index.AddVersion("TestCollection", 1, tx1, csn1, new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 5, tx1, csn1, new DocumentLocation(2, 0));
+        index.AddVersion("TestCollection", 10, tx1, csn1, new DocumentLocation(3, 0));
 
         List<int> docIds = index.GetDocumentIds("TestCollection");
 
@@ -525,10 +559,11 @@ public class VersionIndexTests
     {
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
+        ulong csn1 = 5;
 
-        index.AddVersion("Collection1", 1, tx1, new DocumentLocation(1, 0));
-        index.AddVersion("Collection2", 1, tx1, new DocumentLocation(2, 0));
-        index.AddVersion("Collection3", 1, tx1, new DocumentLocation(3, 0));
+        index.AddVersion("Collection1", 1, tx1, csn1, new DocumentLocation(1, 0));
+        index.AddVersion("Collection2", 1, tx1, csn1, new DocumentLocation(2, 0));
+        index.AddVersion("Collection3", 1, tx1, csn1, new DocumentLocation(3, 0));
 
         List<string> names = index.GetCollectionNames();
 
@@ -543,10 +578,11 @@ public class VersionIndexTests
     {
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
+        ulong csn1 = 5;
 
-        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
-        index.AddVersion("TestCollection", 2, tx1, new DocumentLocation(2, 0));
-        index.AddVersion("TestCollection", 3, tx1, new DocumentLocation(3, 0));
+        index.AddVersion("TestCollection", 1, tx1, csn1, new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 2, tx1, csn1, new DocumentLocation(2, 0));
+        index.AddVersion("TestCollection", 3, tx1, csn1, new DocumentLocation(3, 0));
 
         int count = index.GetDocumentCount("TestCollection");
 
@@ -569,19 +605,21 @@ public class VersionIndexTests
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
         TxId tx2 = new TxId(10);
+        ulong csn1 = 5;
+        ulong csn2 = 10;
 
         Assert.AreEqual(0, index.MultiVersionDocumentCount);
 
-        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 1, tx1, csn1, new DocumentLocation(1, 0));
         Assert.AreEqual(0, index.MultiVersionDocumentCount);
 
-        index.AddVersion("TestCollection", 1, tx2, new DocumentLocation(2, 0));
+        index.AddVersion("TestCollection", 1, tx2, csn2, new DocumentLocation(2, 0));
         Assert.AreEqual(1, index.MultiVersionDocumentCount);
 
-        index.AddVersion("TestCollection", 2, tx1, new DocumentLocation(3, 0));
+        index.AddVersion("TestCollection", 2, tx1, csn1, new DocumentLocation(3, 0));
         Assert.AreEqual(1, index.MultiVersionDocumentCount);
 
-        index.AddVersion("TestCollection", 2, tx2, new DocumentLocation(4, 0));
+        index.AddVersion("TestCollection", 2, tx2, csn2, new DocumentLocation(4, 0));
         Assert.AreEqual(2, index.MultiVersionDocumentCount);
     }
 
@@ -596,8 +634,10 @@ public class VersionIndexTests
         TxId tx1 = new TxId(5);
         TxId tx2 = new TxId(10);
         TxId snapshotTxId = new TxId(8);
+        ulong csn1 = 5;
+        ulong csn2 = 10;
 
-        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 1, tx1, csn1, new DocumentLocation(1, 0));
 
         List<VersionOperation> operations = new List<VersionOperation>
         {
@@ -605,7 +645,7 @@ public class VersionIndexTests
         };
 
         index.ValidateVersions(tx2, snapshotTxId, operations);
-        index.AddVersions(tx2, operations);
+        index.AddVersions(tx2, csn2, operations);
 
         Assert.IsTrue(index.HasVersion("TestCollection", 2));
     }
@@ -618,9 +658,11 @@ public class VersionIndexTests
         TxId tx2 = new TxId(10);
         TxId tx3 = new TxId(15);
         TxId snapshotTxId = new TxId(8);
+        ulong csn1 = 5;
+        ulong csn2 = 10;
 
-        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
-        index.AddVersion("TestCollection", 1, tx2, new DocumentLocation(2, 0));
+        index.AddVersion("TestCollection", 1, tx1, csn1, new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 1, tx2, csn2, new DocumentLocation(2, 0));
 
         List<VersionOperation> operations = new List<VersionOperation>
         {
@@ -647,9 +689,11 @@ public class VersionIndexTests
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
         TxId tx2 = new TxId(10);
+        ulong csn1 = 5;
+        ulong csn2 = 10;
 
-        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
-        index.AddVersion("TestCollection", 1, tx2, new DocumentLocation(2, 0));
+        index.AddVersion("TestCollection", 1, tx1, csn1, new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 1, tx2, csn2, new DocumentLocation(2, 0));
 
         DocumentVersion latest = index.GetLatestVersion("TestCollection", 1);
         DocumentVersion previous = latest.PreviousVersion;
@@ -666,8 +710,9 @@ public class VersionIndexTests
     {
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
+        ulong csn1 = 5;
 
-        index.AddVersion("TestCollection", 1, tx1, new DocumentLocation(1, 0));
+        index.AddVersion("TestCollection", 1, tx1, csn1, new DocumentLocation(1, 0));
 
         DocumentVersion version = index.GetLatestVersion("TestCollection", 1);
 
@@ -685,11 +730,12 @@ public class VersionIndexTests
     {
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
-        TxId snapshotTxId = new TxId(10);
+        ulong csn1 = 5;
+        ulong snapshotCSN = 10;
 
         for (int i = 0; i < 100; i++)
         {
-            index.AddVersion("TestCollection", i, tx1, new DocumentLocation(i, 0));
+            index.AddVersion("TestCollection", i, tx1, csn1, new DocumentLocation(i, 0));
         }
 
         int errors = 0;
@@ -701,7 +747,7 @@ public class VersionIndexTests
             {
                 for (int j = 0; j < 100; j++)
                 {
-                    DocumentVersion version = index.GetVisibleVersion("TestCollection", j % 100, snapshotTxId);
+                    DocumentVersion version = index.GetVisibleVersion("TestCollection", j % 100, snapshotCSN);
                     if (version == null)
                     {
                         Interlocked.Increment(ref errors);
@@ -719,13 +765,13 @@ public class VersionIndexTests
     public void VersionIndex_ConcurrentReadsAndWrites_NoExceptions()
     {
         VersionIndex index = new VersionIndex();
-        TxId snapshotTxId = new TxId(1000);
+        ulong snapshotCSN = 1000;
         int nextTxId = 1;
         object txIdLock = new object();
 
         for (int i = 0; i < 50; i++)
         {
-            index.AddVersion("TestCollection", i, new TxId((ulong)i + 1), new DocumentLocation(i, 0));
+            index.AddVersion("TestCollection", i, new TxId((ulong)i + 1), (ulong)i + 1, new DocumentLocation(i, 0));
         }
         nextTxId = 51;
 
@@ -740,8 +786,8 @@ public class VersionIndexTests
                 {
                     try
                     {
-                        index.GetVisibleVersion("TestCollection", j, snapshotTxId);
-                        index.GetAllVisibleVersions("TestCollection", snapshotTxId);
+                        index.GetVisibleVersion("TestCollection", j, snapshotCSN);
+                        index.GetAllVisibleVersions("TestCollection", snapshotCSN);
                         index.GetDocumentIds("TestCollection");
                         index.HasVersion("TestCollection", j);
                         int unused = index.MultiVersionDocumentCount;
@@ -769,7 +815,7 @@ public class VersionIndexTests
                             txId = nextTxId++;
                         }
                         int docId = (writerIndex * 20 + j) % 50;
-                        index.AddVersion("TestCollection", docId, new TxId((ulong)txId), new DocumentLocation(txId, 0));
+                        index.AddVersion("TestCollection", docId, new TxId((ulong)txId), (ulong)txId, new DocumentLocation(txId, 0));
                     }
                     catch
                     {
@@ -789,12 +835,13 @@ public class VersionIndexTests
     {
         VersionIndex index = new VersionIndex();
         TxId tx1 = new TxId(5);
-        TxId snapshotTxId = new TxId(10);
+        ulong csn1 = 5;
+        ulong snapshotCSN = 10;
         int documentCount = 100;
 
         for (int i = 0; i < documentCount; i++)
         {
-            index.AddVersion("TestCollection", i, tx1, new DocumentLocation(i, 0));
+            index.AddVersion("TestCollection", i, tx1, csn1, new DocumentLocation(i, 0));
         }
 
         int inconsistencies = 0;
@@ -806,7 +853,7 @@ public class VersionIndexTests
             {
                 for (int j = 0; j < 50; j++)
                 {
-                    List<DocumentVersion> versions = index.GetAllVisibleVersions("TestCollection", snapshotTxId);
+                    List<DocumentVersion> versions = index.GetAllVisibleVersions("TestCollection", snapshotCSN);
                     if (versions.Count != documentCount)
                     {
                         Interlocked.Increment(ref inconsistencies);
@@ -845,7 +892,7 @@ public class VersionIndexTests
                     {
                         txId = nextTxId++;
                     }
-                    index.AddVersion("TestCollection", writerIndex, new TxId((ulong)txId), new DocumentLocation(txId, 0));
+                    index.AddVersion("TestCollection", writerIndex, new TxId((ulong)txId), (ulong)txId, new DocumentLocation(txId, 0));
                     Interlocked.Increment(ref completedOperations);
                 }
             }));
@@ -863,11 +910,11 @@ public class VersionIndexTests
         VersionIndex index = new VersionIndex();
         int nextTxId = 1;
         object txIdLock = new object();
-        TxId snapshotTxId = new TxId(100000);
+        ulong snapshotCSN = 100000;
 
         for (int i = 0; i < 50; i++)
         {
-            index.AddVersion("TestCollection", i, new TxId((ulong)(i + 1)), new DocumentLocation(i, 0));
+            index.AddVersion("TestCollection", i, new TxId((ulong)(i + 1)), (ulong)(i + 1), new DocumentLocation(i, 0));
         }
         nextTxId = 51;
 
@@ -882,7 +929,7 @@ public class VersionIndexTests
                 {
                     try
                     {
-                        index.GetVisibleVersion("TestCollection", j % 50, snapshotTxId);
+                        index.GetVisibleVersion("TestCollection", j % 50, snapshotCSN);
                     }
                     catch
                     {
@@ -900,7 +947,7 @@ public class VersionIndexTests
                 {
                     try
                     {
-                        index.GetAllVisibleVersions("TestCollection", snapshotTxId);
+                        index.GetAllVisibleVersions("TestCollection", snapshotCSN);
                     }
                     catch
                     {
@@ -924,7 +971,7 @@ public class VersionIndexTests
                         {
                             txId = nextTxId++;
                         }
-                        index.AddVersion("TestCollection", writerIndex * 10 + (j % 10), new TxId((ulong)txId), new DocumentLocation(txId, 0));
+                        index.AddVersion("TestCollection", writerIndex * 10 + (j % 10), new TxId((ulong)txId), (ulong)txId, new DocumentLocation(txId, 0));
                     }
                     catch
                     {

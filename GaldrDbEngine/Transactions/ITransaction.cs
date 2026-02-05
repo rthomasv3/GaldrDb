@@ -24,6 +24,11 @@ public interface ITransaction : IDisposable
     TxId SnapshotTxId { get; }
 
     /// <summary>
+    /// The snapshot CSN (Commit Sequence Number) that determines visibility of data.
+    /// </summary>
+    ulong SnapshotCSN { get; }
+
+    /// <summary>
     /// The current state of the transaction.
     /// </summary>
     TransactionState State { get; }
