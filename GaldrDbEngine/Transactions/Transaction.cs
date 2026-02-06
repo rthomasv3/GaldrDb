@@ -624,7 +624,7 @@ public class Transaction : ITransaction
                     }
 
                     // Exponential backoff with jitter to reduce livelock
-                    int baseDelayMs = Math.Min(10 * (1 << retryCount), 500); // 20, 40, 80, 160, 320, 500 max
+                    int baseDelayMs = Math.Min(5 * (1 << retryCount), 500); // 10, 20, 40, 80, 160, 320, 500 max
                     int jitter = Random.Shared.Next(baseDelayMs);
                     Thread.Sleep(baseDelayMs + jitter);
                 }
@@ -1659,7 +1659,7 @@ public class Transaction : ITransaction
                     }
 
                     // Exponential backoff with jitter to reduce livelock
-                    int baseDelayMs = Math.Min(10 * (1 << retryCount), 500); // 20, 40, 80, 160, 320, 500 max
+                    int baseDelayMs = Math.Min(5 * (1 << retryCount), 500); // 10, 20, 40, 80, 160, 320, 500 max
                     int jitter = Random.Shared.Next(baseDelayMs);
                     await Task.Delay(baseDelayMs + jitter, cancellationToken).ConfigureAwait(false);
                 }

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using GaldrDbEngine.WAL;
 
 namespace GaldrDbEngine.Transactions;
@@ -29,7 +30,7 @@ internal sealed class TransactionContext
     /// Snapshot of _pageLatestFrame at transaction start for consistent reads.
     /// Can be refreshed on commit retry after PageConflictException.
     /// </summary>
-    public Dictionary<int, long> FrameSnapshot { get; set; }
+    public ImmutableDictionary<int, long> FrameSnapshot { get; set; }
 
     /// <summary>
     /// The _mxFrame value at the time the snapshot was captured.

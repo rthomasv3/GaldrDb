@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Threading;
 using System.Threading.Tasks;
 using GaldrDbEngine.IO;
@@ -17,7 +18,7 @@ internal class WalPageIO : IPageIO
 
     // Frame tracking (replaces _walPageCache)
     private readonly Dictionary<long, WalFrameEntry> _walFrames;
-    private readonly Dictionary<int, long> _pageLatestFrame;
+    private ImmutableDictionary<int, long> _pageLatestFrame;
     private readonly object _cacheLock;
 
     // Frame counters
@@ -48,7 +49,7 @@ internal class WalPageIO : IPageIO
         _wal = wal;
         _pageSize = pageSize;
         _walFrames = new Dictionary<long, WalFrameEntry>();
-        _pageLatestFrame = new Dictionary<int, long>();
+        _pageLatestFrame = ImmutableDictionary<int, long>.Empty;
         _cacheLock = new object();
         _mxFrame = 0;
         _nBackfill = 0;
@@ -84,7 +85,7 @@ internal class WalPageIO : IPageIO
                 TxId = txId,
                 SnapshotTxId = snapshotTxId,
                 SnapshotCSN = snapshotCSN,
-                FrameSnapshot = new Dictionary<int, long>(_pageLatestFrame),
+                FrameSnapshot = _pageLatestFrame,
                 SnapshotMxFrame = snapshotMxFrame,
                 PageWrites = null
             };
@@ -119,7 +120,7 @@ internal class WalPageIO : IPageIO
                 // Capture new snapshot
                 long newSnapshotMxFrame = Interlocked.Read(ref _mxFrame);
                 long oldSnapshotMxFrame = context.SnapshotMxFrame;
-                context.FrameSnapshot = new Dictionary<int, long>(_pageLatestFrame);
+                context.FrameSnapshot = _pageLatestFrame;
                 context.SnapshotMxFrame = newSnapshotMxFrame;
 
                 // Add new snapshot frame to active list
@@ -205,12 +206,14 @@ internal class WalPageIO : IPageIO
                     }
 
                     // Update _pageLatestFrame with actual WAL frame numbers
+                    ImmutableDictionary<int, long>.Builder builder = _pageLatestFrame.ToBuilder();
                     for (int i = 0; i < _commitPageIdsList.Count; i++)
                     {
                         int pageId = _commitPageIdsList[i];
                         long actualWalFrame = walStartFrame + i;
-                        _pageLatestFrame[pageId] = actualWalFrame;
+                        builder[pageId] = actualWalFrame;
                     }
+                    _pageLatestFrame = builder.ToImmutable();
 
                     // Update _writeFrameNumber to match WAL's frame counter
                     if (walStartFrame > 0)
@@ -291,7 +294,7 @@ internal class WalPageIO : IPageIO
         // Step 2: For transactions, use snapshot for consistent reads within the transaction
         if (!found && context != null)
         {
-            Dictionary<int, long> snapshot = context.FrameSnapshot;
+            ImmutableDictionary<int, long> snapshot = context.FrameSnapshot;
             if (snapshot != null && snapshot.TryGetValue(pageId, out long frameNum))
             {
                 if (frameNum > 0)
@@ -372,7 +375,7 @@ internal class WalPageIO : IPageIO
                     {
                         // First write to this page in this transaction - use snapshot frame as base
                         // so conflict detection catches pages modified after our snapshot
-                        Dictionary<int, long> snapshot = context.FrameSnapshot;
+                        ImmutableDictionary<int, long> snapshot = context.FrameSnapshot;
                         if (snapshot != null && snapshot.TryGetValue(pageId, out long snapshotFrame))
                         {
                             baseFrame = snapshotFrame;
@@ -405,7 +408,7 @@ internal class WalPageIO : IPageIO
 
                 lock (_cacheLock)
                 {
-                    _pageLatestFrame[pageId] = walFrameNum;
+                    _pageLatestFrame = _pageLatestFrame.SetItem(pageId, walFrameNum);
 
                     if (walFrameNum > Interlocked.Read(ref _writeFrameNumber))
                     {
@@ -464,7 +467,7 @@ internal class WalPageIO : IPageIO
         // Step 2: For transactions, use snapshot for consistent reads within the transaction
         if (!found && context != null)
         {
-            Dictionary<int, long> snapshot = context.FrameSnapshot;
+            ImmutableDictionary<int, long> snapshot = context.FrameSnapshot;
             if (snapshot != null && snapshot.TryGetValue(pageId, out long frameNum))
             {
                 if (frameNum > 0)
@@ -542,7 +545,7 @@ internal class WalPageIO : IPageIO
                     BufferPool.Return(kvp.Value.Data);
                 }
                 _walFrames.Clear();
-                _pageLatestFrame.Clear();
+                _pageLatestFrame = ImmutableDictionary<int, long>.Empty;
             }
 
             _checkpointSemaphore.Dispose();
@@ -608,13 +611,15 @@ internal class WalPageIO : IPageIO
                     // Clear checkpointed entries from _pageLatestFrame
                     lock (_cacheLock)
                     {
+                        ImmutableDictionary<int, long>.Builder checkpointBuilder = _pageLatestFrame.ToBuilder();
                         foreach (KeyValuePair<int, long> kvp in pagesToCheckpoint)
                         {
-                            if (_pageLatestFrame.TryGetValue(kvp.Key, out long latestFrame) && latestFrame == kvp.Value)
+                            if (checkpointBuilder.TryGetValue(kvp.Key, out long latestFrame) && latestFrame == kvp.Value)
                             {
-                                _pageLatestFrame.Remove(kvp.Key);
+                                checkpointBuilder.Remove(kvp.Key);
                             }
                         }
+                        _pageLatestFrame = checkpointBuilder.ToImmutable();
                     }
 
                     madeProgress = true;
@@ -688,13 +693,15 @@ internal class WalPageIO : IPageIO
                     // Clear checkpointed entries from _pageLatestFrame
                     lock (_cacheLock)
                     {
+                        ImmutableDictionary<int, long>.Builder checkpointBuilder = _pageLatestFrame.ToBuilder();
                         foreach (KeyValuePair<int, long> kvp in pagesToCheckpoint)
                         {
-                            if (_pageLatestFrame.TryGetValue(kvp.Key, out long latestFrame) && latestFrame == kvp.Value)
+                            if (checkpointBuilder.TryGetValue(kvp.Key, out long latestFrame) && latestFrame == kvp.Value)
                             {
-                                _pageLatestFrame.Remove(kvp.Key);
+                                checkpointBuilder.Remove(kvp.Key);
                             }
                         }
+                        _pageLatestFrame = checkpointBuilder.ToImmutable();
                     }
 
                     madeProgress = true;
@@ -753,7 +760,7 @@ internal class WalPageIO : IPageIO
 
                 if (_walFrames.Count == 0 && _activeSnapshotFrames.Count == 0 && currentNBackfill >= currentMxFrame && currentMxFrame > 0)
                 {
-                    _pageLatestFrame.Clear();
+                    _pageLatestFrame = ImmutableDictionary<int, long>.Empty;
 
                     Interlocked.Exchange(ref _mxFrame, 0);
                     Interlocked.Exchange(ref _nBackfill, 0);
