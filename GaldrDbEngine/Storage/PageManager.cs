@@ -150,7 +150,7 @@ internal class PageManager
 
         _fsm.SetFreeSpaceLevel(pageId, FreeSpaceLevel.None);
         _bitmap.WriteToDisk(context);
-        _fsm.WriteToDisk(context);
+        _fsm.WriteToDisk();
 
         return pageId;
     }
@@ -198,7 +198,7 @@ internal class PageManager
         }
 
         _bitmap.WriteToDisk(context);
-        _fsm.WriteToDisk(context);
+        _fsm.WriteToDisk();
 
         return pageIds;
     }
@@ -217,7 +217,7 @@ internal class PageManager
 
         _fsm.SetFreeSpaceLevel(pageId, FreeSpaceLevel.High);
         _bitmap.WriteToDisk(context);
-        _fsm.WriteToDisk(context);
+        _fsm.WriteToDisk();
     }
 
     public bool IsAllocated(int pageId)
@@ -233,7 +233,7 @@ internal class PageManager
     public void SetFreeSpaceLevel(int pageId, FreeSpaceLevel level, TransactionContext context = null)
     {
         _fsm.SetFreeSpaceLevel(pageId, level);
-        _fsm.WriteToDisk(context);
+        _fsm.WriteToDisk();
     }
 
     public int FindPageWithSpace(FreeSpaceLevel minLevel)
@@ -278,7 +278,7 @@ internal class PageManager
             _pageIO.WritePage(0, headerBytes, context);
 
             _bitmap.WriteToDisk(context);
-            _fsm.WriteToDisk(context);
+            _fsm.WriteToDisk();
 
             collectionsMetadata.SetPageAllocation(currentStartPage, newPageCount);
         }
@@ -335,7 +335,7 @@ internal class PageManager
                 _pageIO.WritePage(0, headerBytes, context);
 
                 _bitmap.WriteToDisk(context);
-                _fsm.WriteToDisk(context);
+                _fsm.WriteToDisk();
 
                 collectionsMetadata.SetPageAllocation(newStartPage, newPageCount);
             }
@@ -375,7 +375,7 @@ internal class PageManager
         _fsm.Resize(newTotalPages);
 
         _bitmap.WriteToDisk(context);
-        _fsm.WriteToDisk(context);
+        _fsm.WriteToDisk();
     }
 
     private void GrowBitmapAndFsm(int requiredTotalPages, int maxPagesPerBitmapPage, int maxPagesPerFsmPage, TransactionContext context = null)

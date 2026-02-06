@@ -246,6 +246,49 @@ public class SchemaManagementTests
         }
     }
 
+    [TestMethod]
+    public void DropCollection_WithDocuments_WithDeleteFlag_RemovesCollectionAndDocuments_Wal()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Test1", Age = 25, Email = "test1@example.com" });
+            db.Insert(new Person { Name = "Test2", Age = 30, Email = "test2@example.com" });
+
+            int countBefore = db.GetCollectionNames().Count;
+
+            db.DropCollection("Person", deleteDocuments: true);
+
+            int countAfter = db.GetCollectionNames().Count;
+            Assert.AreEqual(countBefore - 1, countAfter);
+            Assert.IsFalse(db.GetCollectionNames().Contains("Person"));
+        }
+    }
+
+    [TestMethod]
+    public void DropCollection_AlsoDropsIndexes_Wal()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = true };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            db.Insert(new Person { Name = "Test", Age = 25, Email = "test@example.com" });
+
+            IReadOnlyList<string> indexesBefore = db.GetIndexNames("Person");
+            Assert.HasCount(1, indexesBefore);
+
+            db.DropCollection("Person", deleteDocuments: true);
+
+            Assert.Throws<InvalidOperationException>(() =>
+            {
+                db.GetIndexNames("Person");
+            });
+        }
+    }
+
     #endregion
 
     #region GetOrphanedSchema Tests

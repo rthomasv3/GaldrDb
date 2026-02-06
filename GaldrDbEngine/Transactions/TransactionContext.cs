@@ -4,7 +4,7 @@ using System.Collections.Immutable;
 namespace GaldrDbEngine.Transactions;
 
 /// <summary>
-/// Holds per-transaction WAL state. Passed explicitly through the call stack
+/// Holds per-transaction write strategy state. Passed explicitly through the call stack
 /// to replace AsyncLocal-based ambient state.
 /// </summary>
 internal sealed class TransactionContext

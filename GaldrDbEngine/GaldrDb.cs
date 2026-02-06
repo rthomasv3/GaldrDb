@@ -43,7 +43,7 @@ public class GaldrDb : IGaldrDb
     private LruPageCache _pageCache;
     private IPageIO _pageIO;
     private WriteAheadLog _wal;
-    private WalPageIO _walPageIO;
+    private IWriteStrategy _writeStrategy;
     private PageManager _pageManager;
     private DocumentStorage _documentStorage;
     private PageLockManager _pageLockManager;
@@ -263,7 +263,7 @@ public class GaldrDb : IGaldrDb
         }
 
         _pageIO = null;
-        _walPageIO = null;
+        _writeStrategy = null;
 
         if (_encryptionKey != null)
         {
@@ -277,10 +277,10 @@ public class GaldrDb : IGaldrDb
     /// </summary>
     public void Checkpoint()
     {
-        if (_walPageIO != null)
+        if (_writeStrategy != null)
         {
             _pageManager.PersistHeader();
-            _walPageIO.Checkpoint();
+            _writeStrategy.Checkpoint();
         }
     }
 
@@ -290,10 +290,10 @@ public class GaldrDb : IGaldrDb
     /// <param name="cancellationToken">Cancellation token.</param>
     public async Task CheckpointAsync(CancellationToken cancellationToken = default)
     {
-        if (_walPageIO != null)
+        if (_writeStrategy != null)
         {
             _pageManager.PersistHeader();
-            await _walPageIO.CheckpointAsync(cancellationToken).ConfigureAwait(false);
+            await _writeStrategy.CheckpointAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -1493,8 +1493,12 @@ public class GaldrDb : IGaldrDb
         {
             InitializeWalFile();
         }
-        
-        // future page writes should go through WAL, if configured
+        else
+        {
+            InitializeBufferedIO();
+        }
+
+        // future page writes should go through the write strategy
         _pageManager.SetPageIO(_pageIO);
         
         _collectionsMetadata = new CollectionsMetadata(_pageIO, _pageManager.Header.CollectionsMetadataStartPage, _pageManager.Header.CollectionsMetadataPageCount, _options.PageSize, _options.UsablePageSize);
@@ -1550,6 +1554,8 @@ public class GaldrDb : IGaldrDb
         }
         else
         {
+            InitializeBufferedIO();
+
             _pageManager = new PageManager(_pageIO, _options.PageSize, _options.ExpansionPageCount, _options.UsablePageSize);
             _pageManager.Load();
 
@@ -1646,8 +1652,17 @@ public class GaldrDb : IGaldrDb
         _wal.Create();
 
         IPageIO innerIO = _pageCache ?? _basePageIO;
-        _walPageIO = new WalPageIO(innerIO, _wal, _options.PageSize);
-        _pageIO = _walPageIO;
+        WalPageIO walPageIO = new WalPageIO(innerIO, _wal, _options.PageSize);
+        _writeStrategy = walPageIO;
+        _pageIO = walPageIO;
+    }
+
+    private void InitializeBufferedIO()
+    {
+        IPageIO innerIO = _pageCache ?? _basePageIO;
+        BufferedPageIO bufferedIO = new BufferedPageIO(innerIO, _options.PageSize);
+        _writeStrategy = bufferedIO;
+        _pageIO = bufferedIO;
     }
 
     private void RecoverFromWal()
@@ -1704,8 +1719,9 @@ public class GaldrDb : IGaldrDb
 
         // Set up WAL page IO for future operations
         IPageIO innerIO = _pageCache ?? _basePageIO;
-        _walPageIO = new WalPageIO(innerIO, _wal, _options.PageSize);
-        _pageIO = _walPageIO;
+        WalPageIO walPageIO = new WalPageIO(innerIO, _wal, _options.PageSize);
+        _writeStrategy = walPageIO;
+        _pageIO = walPageIO;
         
         _pageManager = new PageManager(_pageIO, _options.PageSize, _options.ExpansionPageCount, _options.UsablePageSize);
         _pageManager.Load();
@@ -1962,9 +1978,9 @@ public class GaldrDb : IGaldrDb
     internal TransactionContext BeginSnapshot(ulong txId, ulong snapshotTxId, ulong snapshotCSN)
     {
         TransactionContext ctx;
-        if (_walPageIO != null)
+        if (_writeStrategy != null)
         {
-            ctx = _walPageIO.BeginSnapshot(txId, snapshotTxId, snapshotCSN);
+            ctx = _writeStrategy.BeginSnapshot(txId, snapshotTxId, snapshotCSN);
         }
         else
         {
@@ -1975,49 +1991,49 @@ public class GaldrDb : IGaldrDb
 
     internal void EndSnapshot(TransactionContext ctx)
     {
-        if (_walPageIO != null && ctx != null)
+        if (_writeStrategy != null && ctx != null)
         {
-            _walPageIO.EndSnapshot(ctx);
+            _writeStrategy.EndSnapshot(ctx);
         }
     }
 
     internal void RefreshSnapshot(TransactionContext ctx)
     {
-        if (_walPageIO != null && ctx != null)
+        if (_writeStrategy != null && ctx != null)
         {
-            _walPageIO.RefreshSnapshot(ctx);
+            _writeStrategy.RefreshSnapshot(ctx);
         }
     }
 
     internal void BeginWrite(TransactionContext ctx)
     {
-        if (_walPageIO != null && ctx != null)
+        if (_writeStrategy != null && ctx != null)
         {
-            _walPageIO.BeginWrite(ctx);
+            _writeStrategy.BeginWrite(ctx);
         }
     }
 
     internal void CommitWrite(TransactionContext ctx)
     {
-        if (_walPageIO != null && ctx != null)
+        if (_writeStrategy != null && ctx != null)
         {
-            _walPageIO.CommitWrite(ctx);
+            _writeStrategy.CommitWrite(ctx);
         }
     }
 
     internal void AbortWrite(TransactionContext ctx)
     {
-        if (_walPageIO != null && ctx != null)
+        if (_writeStrategy != null && ctx != null)
         {
-            _walPageIO.AbortWrite(ctx);
+            _writeStrategy.AbortWrite(ctx);
         }
     }
 
     /// <summary>
-    /// Atomically validates version conflicts, commits WAL frames, and adds version entries.
+    /// Atomically validates version conflicts, commits buffered writes, and adds version entries.
     /// The serialization lock ensures no other transaction can commit between validation and
     /// version addition, preventing both split-validation bugs and TOCTOU races.
-    /// Does not end the WAL snapshot — the caller is responsible for that.
+    /// Does not end the snapshot — the caller is responsible for that.
     /// </summary>
     internal void CommitWriteWithVersions(TransactionContext ctx, TxId txId, TxId snapshotTxId, IReadOnlyList<VersionOperation> versionOps)
     {

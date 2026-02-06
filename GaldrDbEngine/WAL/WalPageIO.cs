@@ -10,7 +10,7 @@ using GaldrDbEngine.Utilities;
 
 namespace GaldrDbEngine.WAL;
 
-internal class WalPageIO : IPageIO
+internal class WalPageIO : IWriteStrategy
 {
     private readonly IPageIO _innerPageIO;
     private readonly WriteAheadLog _wal;
