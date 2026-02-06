@@ -320,8 +320,8 @@ public class GaldrDb : IGaldrDb
 
         if (gcResult.VersionsCollected > 0)
         {
-            ulong walTxId = _txManager.AllocateTxId().Value;
-            TransactionContext ctx = BeginWalTransaction(walTxId);
+            ulong internalTxId = _txManager.AllocateTxId().Value;
+            TransactionContext ctx = BeginInternalTransaction(internalTxId);
 
             try
             {
@@ -333,11 +333,11 @@ public class GaldrDb : IGaldrDb
                     _documentStorage.TryDeleteDocument(collectable.Location.PageId, collectable.Location.SlotIndex, ctx);
                 }
 
-                CommitWalTransaction(ctx);
+                CommitInternalTransaction(ctx);
             }
             catch
             {
-                AbortWalTransaction(ctx);
+                AbortInternalTransaction(ctx);
                 throw;
             }
         }
@@ -536,7 +536,7 @@ public class GaldrDb : IGaldrDb
         EnsureVersionIndex();
 
         _txManager.AllocateAndRegisterTransaction(out TxId txId, out TxId snapshotTxId, out ulong snapshotCSN);
-        TransactionContext ctx = BeginWalSnapshot(txId.Value, snapshotTxId.Value, snapshotCSN);
+        TransactionContext ctx = BeginSnapshot(txId.Value, snapshotTxId.Value, snapshotCSN);
 
         Transaction tx = new Transaction(
             this,
@@ -560,7 +560,7 @@ public class GaldrDb : IGaldrDb
         EnsureVersionIndex();
 
         _txManager.AllocateAndRegisterTransaction(out TxId txId, out TxId snapshotTxId, out ulong snapshotCSN);
-        TransactionContext ctx = BeginWalSnapshot(txId.Value, snapshotTxId.Value, snapshotCSN);
+        TransactionContext ctx = BeginSnapshot(txId.Value, snapshotTxId.Value, snapshotCSN);
 
         Transaction tx = new Transaction(
             this,
@@ -583,8 +583,8 @@ public class GaldrDb : IGaldrDb
         }
 
         EnsureTransactionManager();
-        ulong walTxId = _txManager.AllocateTxId().Value;
-        TransactionContext ctx = BeginWalTransaction(walTxId);
+        ulong internalTxId = _txManager.AllocateTxId().Value;
+        TransactionContext ctx = BeginInternalTransaction(internalTxId);
 
         try
         {
@@ -608,11 +608,11 @@ public class GaldrDb : IGaldrDb
 
             _pageManager.SetFreeSpaceLevel(rootPageId, FreeSpaceLevel.None, ctx);
 
-            CommitWalTransaction(ctx);
+            CommitInternalTransaction(ctx);
         }
         catch
         {
-            AbortWalTransaction(ctx);
+            AbortInternalTransaction(ctx);
             throw;
         }
     }
@@ -747,8 +747,8 @@ public class GaldrDb : IGaldrDb
             }
 
             EnsureTransactionManager();
-            ulong walTxId = _txManager.AllocateTxId().Value;
-            TransactionContext ctx = BeginWalTransaction(walTxId);
+            ulong internalTxId = _txManager.AllocateTxId().Value;
+            TransactionContext ctx = BeginInternalTransaction(internalTxId);
 
             try
             {
@@ -767,11 +767,11 @@ public class GaldrDb : IGaldrDb
                 _collectionsMetadata.UpdateCollection(collection);
                 WriteCollectionsMetadataWithGrowth(ctx);
 
-                CommitWalTransaction(ctx);
+                CommitInternalTransaction(ctx);
             }
             catch
             {
-                AbortWalTransaction(ctx);
+                AbortInternalTransaction(ctx);
                 throw;
             }
         }
@@ -799,8 +799,8 @@ public class GaldrDb : IGaldrDb
             }
 
             EnsureTransactionManager();
-            ulong walTxId = _txManager.AllocateTxId().Value;
-            TransactionContext ctx = BeginWalTransaction(walTxId);
+            ulong internalTxId = _txManager.AllocateTxId().Value;
+            TransactionContext ctx = BeginInternalTransaction(internalTxId);
 
             try
             {
@@ -843,11 +843,11 @@ public class GaldrDb : IGaldrDb
                 _ensuredCollections.Remove(collectionName);
                 _primaryBTreeCache.TryRemove(collectionName, out _);
 
-                CommitWalTransaction(ctx);
+                CommitInternalTransaction(ctx);
             }
             catch
             {
-                AbortWalTransaction(ctx);
+                AbortInternalTransaction(ctx);
                 throw;
             }
         }
@@ -1327,8 +1327,8 @@ public class GaldrDb : IGaldrDb
         if (newIndexes.Count > 0)
         {
             EnsureTransactionManager();
-            ulong walTxId = _txManager.AllocateTxId().Value;
-            TransactionContext ctx = BeginWalTransaction(walTxId);
+            ulong internalTxId = _txManager.AllocateTxId().Value;
+            TransactionContext ctx = BeginInternalTransaction(internalTxId);
 
             byte[] rootBuffer = BufferPool.Rent(_options.PageSize);
             try
@@ -1349,11 +1349,11 @@ public class GaldrDb : IGaldrDb
                 _collectionsMetadata.UpdateCollection(collection);
                 WriteCollectionsMetadataWithGrowth(ctx);
 
-                CommitWalTransaction(ctx);
+                CommitInternalTransaction(ctx);
             }
             catch
             {
-                AbortWalTransaction(ctx);
+                AbortInternalTransaction(ctx);
                 throw;
             }
             finally
@@ -1377,8 +1377,8 @@ public class GaldrDb : IGaldrDb
         }
 
         EnsureTransactionManager();
-        ulong walTxId = _txManager.AllocateTxId().Value;
-        TransactionContext ctx = BeginWalTransaction(walTxId);
+        ulong internalTxId = _txManager.AllocateTxId().Value;
+        TransactionContext ctx = BeginInternalTransaction(internalTxId);
 
         byte[] rootBuffer = BufferPool.Rent(_options.PageSize);
         try
@@ -1395,11 +1395,11 @@ public class GaldrDb : IGaldrDb
             _collectionsMetadata.UpdateCollection(collection);
             WriteCollectionsMetadataWithGrowth(ctx);
 
-            CommitWalTransaction(ctx);
+            CommitInternalTransaction(ctx);
         }
         catch
         {
-            AbortWalTransaction(ctx);
+            AbortInternalTransaction(ctx);
             throw;
         }
         finally
@@ -1884,12 +1884,8 @@ public class GaldrDb : IGaldrDb
 
     internal void TryRunAutoCheckpoint()
     {
-        if (!_options.AutoCheckpoint || _wal == null)
-        {
-            return;
-        }
-
-        if (_wal.CurrentFrameNumber >= _options.WalCheckpointThreshold)
+        if (_options.AutoCheckpoint && _wal != null && 
+            _wal.CurrentFrameNumber >= _options.WalCheckpointThreshold)
         {
             Checkpoint();
         }
@@ -1963,11 +1959,7 @@ public class GaldrDb : IGaldrDb
         return level;
     }
 
-    // Split WAL lifecycle methods for Transaction use:
-    // Snapshot phase: BeginWalSnapshot / EndWalSnapshot
-    // Write phase: BeginWalWrite / CommitWalWrite / AbortWalWrite
-
-    internal TransactionContext BeginWalSnapshot(ulong txId, ulong snapshotTxId, ulong snapshotCSN)
+    internal TransactionContext BeginSnapshot(ulong txId, ulong snapshotTxId, ulong snapshotCSN)
     {
         TransactionContext ctx;
         if (_walPageIO != null)
@@ -1981,7 +1973,7 @@ public class GaldrDb : IGaldrDb
         return ctx;
     }
 
-    internal void EndWalSnapshot(TransactionContext ctx)
+    internal void EndSnapshot(TransactionContext ctx)
     {
         if (_walPageIO != null && ctx != null)
         {
@@ -1989,7 +1981,7 @@ public class GaldrDb : IGaldrDb
         }
     }
 
-    internal void RefreshWalSnapshot(TransactionContext ctx)
+    internal void RefreshSnapshot(TransactionContext ctx)
     {
         if (_walPageIO != null && ctx != null)
         {
@@ -1997,7 +1989,7 @@ public class GaldrDb : IGaldrDb
         }
     }
 
-    internal void BeginWalWrite(TransactionContext ctx)
+    internal void BeginWrite(TransactionContext ctx)
     {
         if (_walPageIO != null && ctx != null)
         {
@@ -2005,7 +1997,7 @@ public class GaldrDb : IGaldrDb
         }
     }
 
-    internal void CommitWalWrite(TransactionContext ctx)
+    internal void CommitWrite(TransactionContext ctx)
     {
         if (_walPageIO != null && ctx != null)
         {
@@ -2013,7 +2005,7 @@ public class GaldrDb : IGaldrDb
         }
     }
 
-    internal void AbortWalWrite(TransactionContext ctx)
+    internal void AbortWrite(TransactionContext ctx)
     {
         if (_walPageIO != null && ctx != null)
         {
@@ -2027,39 +2019,36 @@ public class GaldrDb : IGaldrDb
     /// version addition, preventing both split-validation bugs and TOCTOU races.
     /// Does not end the WAL snapshot — the caller is responsible for that.
     /// </summary>
-    internal void CommitWalWriteWithVersions(TransactionContext ctx, TxId txId, TxId snapshotTxId, IReadOnlyList<VersionOperation> versionOps)
+    internal void CommitWriteWithVersions(TransactionContext ctx, TxId txId, TxId snapshotTxId, IReadOnlyList<VersionOperation> versionOps)
     {
         lock (_commitSerializationLock)
         {
             _versionIndex.ValidateVersions(txId, snapshotTxId, versionOps);
             ulong commitCSN = _txManager.GetNextCommitCSN();
-            CommitWalWrite(ctx);
+            CommitWrite(ctx);
             _versionIndex.AddVersions(txId, commitCSN, versionOps);
         }
     }
 
-    // Convenience methods for internal operations (schema changes, etc.)
-    // that need the full snapshot + write lifecycle in one call.
-
-    internal TransactionContext BeginWalTransaction(ulong txId)
+    internal TransactionContext BeginInternalTransaction(ulong txId)
     {
         // For internal operations, use txId as snapshotTxId and 0 for snapshotCSN
         // since they don't need MVCC visibility checks
-        TransactionContext ctx = BeginWalSnapshot(txId, txId, 0);
-        BeginWalWrite(ctx);
+        TransactionContext ctx = BeginSnapshot(txId, txId, 0);
+        BeginWrite(ctx);
         return ctx;
     }
 
-    internal void CommitWalTransaction(TransactionContext ctx)
+    internal void CommitInternalTransaction(TransactionContext ctx)
     {
-        CommitWalWrite(ctx);
-        EndWalSnapshot(ctx);
+        CommitWrite(ctx);
+        EndSnapshot(ctx);
     }
 
-    internal void AbortWalTransaction(TransactionContext ctx)
+    internal void AbortInternalTransaction(TransactionContext ctx)
     {
-        AbortWalWrite(ctx);
-        EndWalSnapshot(ctx);
+        AbortWrite(ctx);
+        EndSnapshot(ctx);
     }
 
     internal BTree GetPrimaryBTree(CollectionEntry collection)

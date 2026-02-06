@@ -85,8 +85,8 @@ internal class WalPageIO : IPageIO
                 TxId = txId,
                 SnapshotTxId = snapshotTxId,
                 SnapshotCSN = snapshotCSN,
-                FrameSnapshot = _pageLatestFrame,
-                SnapshotMxFrame = snapshotMxFrame,
+                PageVersionSnapshot = _pageLatestFrame,
+                SnapshotVersion = snapshotMxFrame,
                 PageWrites = null
             };
         }
@@ -98,7 +98,7 @@ internal class WalPageIO : IPageIO
         {
             lock (_cacheLock)
             {
-                _activeSnapshotFrames.Remove(context.SnapshotMxFrame);
+                _activeSnapshotFrames.Remove(context.SnapshotVersion);
             }
         }
     }
@@ -115,13 +115,13 @@ internal class WalPageIO : IPageIO
             lock (_cacheLock)
             {
                 // Remove old snapshot frame from active list
-                _activeSnapshotFrames.Remove(context.SnapshotMxFrame);
+                _activeSnapshotFrames.Remove(context.SnapshotVersion);
 
                 // Capture new snapshot
                 long newSnapshotMxFrame = Interlocked.Read(ref _mxFrame);
-                long oldSnapshotMxFrame = context.SnapshotMxFrame;
-                context.FrameSnapshot = _pageLatestFrame;
-                context.SnapshotMxFrame = newSnapshotMxFrame;
+                long oldSnapshotMxFrame = context.SnapshotVersion;
+                context.PageVersionSnapshot = _pageLatestFrame;
+                context.SnapshotVersion = newSnapshotMxFrame;
 
                 // Add new snapshot frame to active list
                 _activeSnapshotFrames.Add(newSnapshotMxFrame);
@@ -156,7 +156,7 @@ internal class WalPageIO : IPageIO
                     foreach (KeyValuePair<int, PageWriteEntry> kvp in txPageWrites)
                     {
                         int pageId = kvp.Key;
-                        long baseFrame = kvp.Value.BaseFrame;
+                        long baseFrame = kvp.Value.BaseVersion;
 
                         _pageLatestFrame.TryGetValue(pageId, out long currentFrame);
                         if (currentFrame != baseFrame)
@@ -176,7 +176,7 @@ internal class WalPageIO : IPageIO
                     foreach (KeyValuePair<int, PageWriteEntry> kvp in txPageWrites)
                     {
                         int pageId = kvp.Key;
-                        long frameNum = kvp.Value.FrameNum;
+                        long frameNum = kvp.Value.WriteId;
                         if (_walFrames.TryGetValue(frameNum, out WalFrameEntry entry))
                         {
                             _commitFramesList.Add(entry);
@@ -197,7 +197,7 @@ internal class WalPageIO : IPageIO
                 {
                     foreach (KeyValuePair<int, PageWriteEntry> kvp in txPageWrites)
                     {
-                        long frameNum = kvp.Value.FrameNum;
+                        long frameNum = kvp.Value.WriteId;
                         if (_walFrames.TryGetValue(frameNum, out WalFrameEntry entry))
                         {
                             BufferPool.Return(entry.Data);
@@ -256,7 +256,7 @@ internal class WalPageIO : IPageIO
                 {
                     foreach (KeyValuePair<int, PageWriteEntry> kvp in txPageWrites)
                     {
-                        long frameNum = kvp.Value.FrameNum;
+                        long frameNum = kvp.Value.WriteId;
                         if (_walFrames.TryGetValue(frameNum, out WalFrameEntry entry))
                         {
                             BufferPool.Return(entry.Data);
@@ -282,7 +282,7 @@ internal class WalPageIO : IPageIO
             {
                 lock (_cacheLock)
                 {
-                    if (_walFrames.TryGetValue(writeInfo.FrameNum, out WalFrameEntry entry))
+                    if (_walFrames.TryGetValue(writeInfo.WriteId, out WalFrameEntry entry))
                     {
                         entry.Data.AsSpan().CopyTo(destination);
                         found = true;
@@ -294,7 +294,7 @@ internal class WalPageIO : IPageIO
         // Step 2: For transactions, use snapshot for consistent reads within the transaction
         if (!found && context != null)
         {
-            ImmutableDictionary<int, long> snapshot = context.FrameSnapshot;
+            ImmutableDictionary<int, long> snapshot = context.PageVersionSnapshot;
             if (snapshot != null && snapshot.TryGetValue(pageId, out long frameNum))
             {
                 if (frameNum > 0)
@@ -364,18 +364,18 @@ internal class WalPageIO : IPageIO
                     if (txPageWrites != null && txPageWrites.TryGetValue(pageId, out PageWriteEntry oldWriteInfo))
                     {
                         // Keep the original base frame when re-writing the same page
-                        baseFrame = oldWriteInfo.BaseFrame;
-                        if (_walFrames.TryGetValue(oldWriteInfo.FrameNum, out WalFrameEntry oldEntry))
+                        baseFrame = oldWriteInfo.BaseVersion;
+                        if (_walFrames.TryGetValue(oldWriteInfo.WriteId, out WalFrameEntry oldEntry))
                         {
                             BufferPool.Return(oldEntry.Data);
-                            _walFrames.Remove(oldWriteInfo.FrameNum);
+                            _walFrames.Remove(oldWriteInfo.WriteId);
                         }
                     }
                     else
                     {
                         // First write to this page in this transaction - use snapshot frame as base
                         // so conflict detection catches pages modified after our snapshot
-                        ImmutableDictionary<int, long> snapshot = context.FrameSnapshot;
+                        ImmutableDictionary<int, long> snapshot = context.PageVersionSnapshot;
                         if (snapshot != null && snapshot.TryGetValue(pageId, out long snapshotFrame))
                         {
                             baseFrame = snapshotFrame;
@@ -392,7 +392,7 @@ internal class WalPageIO : IPageIO
                     // Track this write in the per-transaction map (not the global _pageLatestFrame)
                     if (txPageWrites != null)
                     {
-                        txPageWrites[pageId] = new PageWriteEntry { FrameNum = frameNum, BaseFrame = baseFrame };
+                        txPageWrites[pageId] = new PageWriteEntry { WriteId = frameNum, BaseVersion = baseFrame };
                     }
                     bufferOwnershipTransferred = true;
                 }
@@ -455,7 +455,7 @@ internal class WalPageIO : IPageIO
             {
                 lock (_cacheLock)
                 {
-                    if (_walFrames.TryGetValue(writeInfo.FrameNum, out WalFrameEntry entry))
+                    if (_walFrames.TryGetValue(writeInfo.WriteId, out WalFrameEntry entry))
                     {
                         entry.Data.AsMemory().CopyTo(destination);
                         found = true;
@@ -467,7 +467,7 @@ internal class WalPageIO : IPageIO
         // Step 2: For transactions, use snapshot for consistent reads within the transaction
         if (!found && context != null)
         {
-            ImmutableDictionary<int, long> snapshot = context.FrameSnapshot;
+            ImmutableDictionary<int, long> snapshot = context.PageVersionSnapshot;
             if (snapshot != null && snapshot.TryGetValue(pageId, out long frameNum))
             {
                 if (frameNum > 0)

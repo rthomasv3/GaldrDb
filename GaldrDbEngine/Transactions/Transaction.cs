@@ -9,7 +9,6 @@ using GaldrDbEngine.Query;
 using GaldrDbEngine.Query.Execution;
 using GaldrDbEngine.Storage;
 using GaldrDbEngine.Utilities;
-using GaldrDbEngine.WAL;
 using GaldrJson;
 
 namespace GaldrDbEngine.Transactions;
@@ -30,8 +29,8 @@ public class Transaction : ITransaction
     private readonly bool _isReadOnly;
     private readonly TransactionContext _context;
     private bool _disposed;
-    private bool _hasActiveWalSnapshot;
-    private bool _hasActiveWalWrite;
+    private bool _hasActiveSnapshot;
+    private bool _hasActiveWrite;
 
     private const int MAX_PAGE_CONFLICT_RETRIES = 10;
 
@@ -74,8 +73,8 @@ public class Transaction : ITransaction
         _writeSet = new Dictionary<DocumentKey, WriteSetEntry>();
         _readSet = new Dictionary<DocumentKey, TxId>();
         _disposed = false;
-        _hasActiveWalSnapshot = true;
-        _hasActiveWalWrite = false;
+        _hasActiveSnapshot = true;
+        _hasActiveWrite = false;
 
         TxId = new TxId(context.TxId);
         SnapshotTxId = new TxId(context.SnapshotTxId);
@@ -536,8 +535,8 @@ public class Transaction : ITransaction
 
         if (_isReadOnly)
         {
-            _db.EndWalSnapshot(_context);
-            _hasActiveWalSnapshot = false;
+            _db.EndSnapshot(_context);
+            _hasActiveSnapshot = false;
 
             State = TransactionState.Committed;
             _txManager.MarkCommitted(TxId);
@@ -550,13 +549,13 @@ public class Transaction : ITransaction
             List<VersionOperation> versionOps = null;
             Dictionary<string, int> documentCountDeltas = new Dictionary<string, int>();
 
-            // Write pages to WAL with retry on page conflicts.
+            // Write pages with retry on page conflicts.
             // Page conflicts occur when concurrent transactions modify the same BTree pages.
             // This is an internal detail - retries are transparent to the caller.
             while (true)
             {
-                _db.BeginWalWrite(_context);
-                _hasActiveWalWrite = true;
+                _db.BeginWrite(_context);
+                _hasActiveWrite = true;
                 documentCountDeltas.Clear();
 
                 try
@@ -597,23 +596,23 @@ public class Transaction : ITransaction
                         }
                     }
 
-                    // Atomically validate version conflicts, commit WAL, and add version entries.
-                    // This ensures WAL frames are never committed without valid version entries,
-                    // and version entries are never added without committed WAL frames.
-                    _db.CommitWalWriteWithVersions(_context, TxId, SnapshotTxId, versionOps);
-                    _hasActiveWalWrite = false;
+                    // Atomically validate version conflicts, commit, and add version entries.
+                    // This ensures frames are never committed without valid version entries,
+                    // and version entries are never added without committed frames.
+                    _db.CommitWriteWithVersions(_context, TxId, SnapshotTxId, versionOps);
+                    _hasActiveWrite = false;
                     break;
                 }
                 catch (PageConflictException)
                 {
-                    _db.AbortWalWrite(_context);
-                    _hasActiveWalWrite = false;
+                    _db.AbortWrite(_context);
+                    _hasActiveWrite = false;
 
                     // Refresh the entire snapshot to the current committed state so retry sees consistent pages.
                     // We must refresh ALL pages, not just the conflicted one, because B-tree pages may reference
                     // child pages that were allocated by the conflicting transaction (e.g., during a split).
                     // Document-level MVCC validation will catch true conflicts (same document modified).
-                    _db.RefreshWalSnapshot(_context);
+                    _db.RefreshSnapshot(_context);
 
                     retryCount++;
                     if (retryCount >= MAX_PAGE_CONFLICT_RETRIES)
@@ -630,17 +629,17 @@ public class Transaction : ITransaction
                 }
                 catch
                 {
-                    _db.AbortWalWrite(_context);
-                    _hasActiveWalWrite = false;
+                    _db.AbortWrite(_context);
+                    _hasActiveWrite = false;
                     State = TransactionState.Aborted;
                     _txManager.MarkAborted(TxId);
                     throw;
                 }
             }
 
-            // End WAL snapshot before auto checkpoint so checkpoint can make progress
-            _db.EndWalSnapshot(_context);
-            _hasActiveWalSnapshot = false;
+            // End snapshot before auto checkpoint so checkpoint can make progress
+            _db.EndSnapshot(_context);
+            _hasActiveSnapshot = false;
 
             // Apply document count changes only after successful version validation
             _db.ApplyDocumentCountDeltas(documentCountDeltas);
@@ -661,16 +660,16 @@ public class Transaction : ITransaction
     {
         if (State != TransactionState.Committed && State != TransactionState.Aborted)
         {
-            if (_hasActiveWalWrite)
+            if (_hasActiveWrite)
             {
-                _db.AbortWalWrite(_context);
-                _hasActiveWalWrite = false;
+                _db.AbortWrite(_context);
+                _hasActiveWrite = false;
             }
 
-            if (_hasActiveWalSnapshot)
+            if (_hasActiveSnapshot)
             {
-                _db.EndWalSnapshot(_context);
-                _hasActiveWalSnapshot = false;
+                _db.EndSnapshot(_context);
+                _hasActiveSnapshot = false;
             }
 
             _writeSet.Clear();
@@ -1571,8 +1570,8 @@ public class Transaction : ITransaction
 
         if (_isReadOnly)
         {
-            _db.EndWalSnapshot(_context);
-            _hasActiveWalSnapshot = false;
+            _db.EndSnapshot(_context);
+            _hasActiveSnapshot = false;
 
             State = TransactionState.Committed;
             _txManager.MarkCommitted(TxId);
@@ -1585,13 +1584,13 @@ public class Transaction : ITransaction
             List<VersionOperation> versionOps = null;
             Dictionary<string, int> documentCountDeltas = new Dictionary<string, int>();
 
-            // Write pages to WAL with retry on page conflicts.
+            // Write pages with retry on page conflicts.
             // Page conflicts occur when concurrent transactions modify the same BTree pages.
             // This is an internal detail - retries are transparent to the caller.
             while (true)
             {
-                _db.BeginWalWrite(_context);
-                _hasActiveWalWrite = true;
+                _db.BeginWrite(_context);
+                _hasActiveWrite = true;
                 documentCountDeltas.Clear();
 
                 try
@@ -1632,23 +1631,23 @@ public class Transaction : ITransaction
                         }
                     }
 
-                    // Atomically validate version conflicts, commit WAL, and add version entries.
-                    // This ensures WAL frames are never committed without valid version entries,
-                    // and version entries are never added without committed WAL frames.
-                    _db.CommitWalWriteWithVersions(_context, TxId, SnapshotTxId, versionOps);
-                    _hasActiveWalWrite = false;
+                    // Atomically validate version conflicts, commit, and add version entries.
+                    // This ensures frames are never committed without valid version entries,
+                    // and version entries are never added without committed frames.
+                    _db.CommitWriteWithVersions(_context, TxId, SnapshotTxId, versionOps);
+                    _hasActiveWrite = false;
                     break;
                 }
                 catch (PageConflictException)
                 {
-                    _db.AbortWalWrite(_context);
-                    _hasActiveWalWrite = false;
+                    _db.AbortWrite(_context);
+                    _hasActiveWrite = false;
 
                     // Refresh the entire snapshot to the current committed state so retry sees consistent pages.
                     // We must refresh ALL pages, not just the conflicted one, because B-tree pages may reference
                     // child pages that were allocated by the conflicting transaction (e.g., during a split).
                     // Document-level MVCC validation will catch true conflicts (same document modified).
-                    _db.RefreshWalSnapshot(_context);
+                    _db.RefreshSnapshot(_context);
 
                     retryCount++;
                     if (retryCount >= MAX_PAGE_CONFLICT_RETRIES)
@@ -1665,17 +1664,17 @@ public class Transaction : ITransaction
                 }
                 catch
                 {
-                    _db.AbortWalWrite(_context);
-                    _hasActiveWalWrite = false;
+                    _db.AbortWrite(_context);
+                    _hasActiveWrite = false;
                     State = TransactionState.Aborted;
                     _txManager.MarkAborted(TxId);
                     throw;
                 }
             }
 
-            // End WAL snapshot before auto checkpoint so checkpoint can make progress
-            _db.EndWalSnapshot(_context);
-            _hasActiveWalSnapshot = false;
+            // End snapshot before auto checkpoint so checkpoint can make progress
+            _db.EndSnapshot(_context);
+            _hasActiveSnapshot = false;
 
             // Apply document count changes only after successful version validation
             _db.ApplyDocumentCountDeltas(documentCountDeltas);
@@ -1704,12 +1703,12 @@ public class Transaction : ITransaction
                 Rollback();
             }
 
-            // Safety net: clean up WAL snapshot even if State was set to Aborted
+            // Safety net: clean up snapshot even if State was set to Aborted
             // before Dispose was called (e.g., max retry failure in Commit)
-            if (_hasActiveWalSnapshot)
+            if (_hasActiveSnapshot)
             {
-                _db.EndWalSnapshot(_context);
-                _hasActiveWalSnapshot = false;
+                _db.EndSnapshot(_context);
+                _hasActiveSnapshot = false;
             }
         }
     }

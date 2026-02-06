@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using GaldrDbEngine.WAL;
 
 namespace GaldrDbEngine.Transactions;
 
@@ -27,17 +26,17 @@ internal sealed class TransactionContext
     public ulong SnapshotCSN { get; init; }
 
     /// <summary>
-    /// Snapshot of _pageLatestFrame at transaction start for consistent reads.
+    /// Snapshot at transaction start for consistent reads.
     /// Can be refreshed on commit retry after PageConflictException.
     /// </summary>
-    public ImmutableDictionary<int, long> FrameSnapshot { get; set; }
+    public ImmutableDictionary<int, long> PageVersionSnapshot { get; set; }
 
     /// <summary>
-    /// The _mxFrame value at the time the snapshot was captured.
-    /// Used to remove the correct entry from _activeSnapshotFrames on commit/abort.
+    /// The version value at the time the snapshot was captured.
+    /// Used to remove the correct entry on commit/abort.
     /// Can be refreshed on commit retry after PageConflictException.
     /// </summary>
-    public long SnapshotMxFrame { get; set; }
+    public long SnapshotVersion { get; set; }
 
     /// <summary>
     /// Uncommitted page writes for this transaction.
