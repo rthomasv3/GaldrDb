@@ -19,7 +19,7 @@
 
   <!-- Release: use NuGet packages (enables AOT publish) -->
   <ItemGroup Condition="'$(Configuration)' != 'Debug'">
-    <PackageReference Include="GaldrDbEngine" Version="1.0.0-rc1" />
+    <PackageReference Include="GaldrDbEngine" Version="1.0.0-rc2" />
   </ItemGroup>
 
   <ItemGroup>
