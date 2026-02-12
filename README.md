@@ -1,26 +1,36 @@
 # GaldrDb
 
-AOT-native single-file document database for .NET 8.0, 9.0, and 10.0.
+Native AOT compatible single-file document database for .NET 8.0, 9.0, and 10.0.
 
-GaldrDb is a high-performance, type-safe document database that compiles to native code. It features MVCC with optimistic concurrency control, write-ahead logging, a fluent query API with source-generated metadata, and full ACID guarantees - all in a single file.
+GaldrDb is a strongly typed, single-file document database for .NET that works everywhere your app does — servers, desktop on Windows, macOS, and Linux (x64 and ARM64), and mobile. It works great with standard .NET, but its source generators validate queries at compile time with zero reflection, giving you full Native AOT compatibility where ORMs like EF Core still struggle. Just one NuGet package, no external dependencies.
 
 ## Features
 
-- **Type-safe CRUD** with source-generated metadata and compile-time validation
-- **MVCC** (Multi-Version Concurrency Control) with snapshot isolation
-- **Write-Ahead Logging (WAL)** for crash recovery and durability
-- **Fluent query API** with LINQ-style filtering, sorting, and projections
-- **Secondary indexes** with unique constraints and compound (multi-field) indexes
-- **Encryption at rest** with AES-256-GCM and per-page nonces
-- **Memory-mapped I/O** with automatic fallback to standard file I/O
-- **Native AOT** compilation support (no reflection, no dynamic code generation)
-- **Low-allocations** query execution with projections
-- **Garbage collection** and vacuum/compact for space reclamation
+- **Type-safe queries** validated at compile time
+- **ACID transactions** with snapshot isolation and optimistic concurrency
+  - Automatic retry with jitter on page-level conflicts
+- **Fluent query API** with filtering, sorting, pagination, and projections
+  - Equality, range, set membership, and string operations (StartsWith, Contains, EndsWith)
+- **Indexes** with automatic query plan optimization
+  - Single-field and compound (multi-field) indexes
+  - Unique constraints
+  - Nested document path indexes
+- **Write-ahead logging (WAL)** for crash recovery and durability
+- **Encryption at rest** with AES-256-GCM and per-page nonces (optional)
 - **Dynamic API** for runtime schema flexibility with JSON documents
-- **Nested document queries** for querying properties of embedded objects
-- **Collection field queries** for matching elements within arrays
+- **Native AOT compatible** — no reflection, no runtime code generation
 
 ## Quick Start
+
+### Installation
+
+```
+dotnet add package GaldrDbEngine --prerelease
+```
+
+> GaldrDb is currently in release candidate. Once stable, use `dotnet add package GaldrDbEngine`.
+
+### Example
 
 ```csharp
 // Define a model
@@ -34,14 +44,14 @@ public class Book
 }
 
 // Create a database
-var options = new GaldrDbOptions { PageSize = 8192, UseWal = true };
-var db = GaldrDb.Create("books.db", options);
+GaldrDbOptions options = new() { PageSize = 8192, UseWal = true };
+GaldrDb db = GaldrDb.Create("books.db", options);
 
 // Insert a document
 int id = db.Insert(new Book { Title = "The Pragmatic Programmer", Author = "Andy Hunt" });
 
 // Query documents
-var book = db.Query<Book>()
+Book book = db.Query<Book>()
     .Where(BookMeta.Title, FieldOp.Equals, "The Pragmatic Programmer")
     .FirstOrDefault();
 ```
@@ -52,10 +62,13 @@ var book = db.Query<Book>()
 
 ```csharp
 // Create a new database
-var db = GaldrDb.Create("database.db", new GaldrDbOptions { PageSize = 8192 });
+GaldrDb db = GaldrDb.Create("database.db", new GaldrDbOptions());
 
 // Open an existing database
-var db = GaldrDb.Open("database.db");
+GaldrDb db = GaldrDb.Open("database.db");
+
+// Open or create as needed
+GaldrDb db = GaldrDb.OpenOrCreate("database.db");
 ```
 
 ### Defining Models
@@ -86,7 +99,7 @@ public class Customer
 int id = db.Insert(new Person { Name = "Alice", Age = 30 });
 
 // Get by ID
-var person = db.GetById<Person>(id);
+Person person = db.GetById<Person>(id);
 
 // Replace
 person.Age = 31;
@@ -105,28 +118,28 @@ db.UpdateById<Person>(id)
 
 ```csharp
 // Filter
-var adults = db.Query<Person>()
+List<Person> adults = db.Query<Person>()
     .Where(PersonMeta.Age, FieldOp.GreaterThanOrEqual, 18)
     .ToList();
 
 // Range query
-var people = db.Query<Person>()
+List<Person> people = db.Query<Person>()
     .WhereBetween(PersonMeta.Age, 25, 40)
     .ToList();
 
 // Sort and limit
-var results = db.Query<Person>()
+List<Person> results = db.Query<Person>()
     .OrderByDescending(PersonMeta.Age)
     .Limit(10)
     .ToList();
 
 // In/NotIn queries
-var selected = db.Query<Person>()
+List<Person> selected = db.Query<Person>()
     .WhereIn(PersonMeta.Name, "Alice", "Bob", "Charlie")
     .ToList();
 
 // Pagination
-var page = db.Query<Person>()
+List<Person> page = db.Query<Person>()
     .OrderBy(PersonMeta.Name)
     .Skip(20)
     .Limit(10)
@@ -138,7 +151,7 @@ bool hasAdults = db.Query<Person>()
     .Any();
 
 // Query explanation (shows execution plan)
-var explanation = db.Query<Person>()
+QueryExplanation explanation = db.Query<Person>()
     .Where(PersonMeta.Age, FieldOp.GreaterThan, 21)
     .Explain();
 ```
@@ -148,13 +161,13 @@ var explanation = db.Query<Person>()
 Install the `GaldrDbAspNetCore` package for dependency injection support:
 
 ```
-dotnet add package GaldrDbAspNetCore
+dotnet add package GaldrDbAspNetCore --prerelease
 ```
 
 **Basic setup (single database):**
 
 ```csharp
-var builder = WebApplication.CreateBuilder(args);
+WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddGaldrDb(options =>
 {
@@ -162,7 +175,7 @@ builder.Services.AddGaldrDb(options =>
     options.OpenMode = GaldrDbOpenMode.OpenOrCreate;
 });
 
-var app = builder.Build();
+WebApplication app = builder.Build();
 
 // Inject IGaldrDb directly
 app.MapGet("/users/{id}", (IGaldrDb db, int id) =>
@@ -198,16 +211,18 @@ app.MapGet("/orders/{id}", (IGaldrDbFactory factory, int id) =>
 ### Transactions
 
 ```csharp
-using (var tx = db.BeginTransaction())
+using (ITransaction tx = db.BeginTransaction())
 {
-    var person = tx.GetById<Person>(id);
+    Person person = tx.GetById<Person>(id);
     person.Age++;
     tx.Replace(person);
     tx.Commit();
 }
 ```
 
-### Secondary Indexes
+### Indexes
+
+Add `[GaldrDbIndex]` to properties to create indexes. Use `Unique = true` to enforce uniqueness:
 
 ```csharp
 [GaldrDbCollection]
@@ -220,12 +235,12 @@ public class Product
     public string Sku { get; set; }
 }
 
-var products = db.Query<Product>()
+List<Product> products = db.Query<Product>()
     .Where(ProductMeta.Category, FieldOp.Equals, "Electronics")
     .ToList();
 ```
 
-### Compound Indexes
+#### Compound Indexes
 
 Compound indexes optimize queries that filter on multiple fields. Define them at the class level:
 
@@ -243,79 +258,33 @@ public class Order
 }
 
 // Uses the Status_CreatedDate compound index
-var orders = db.Query<Order>()
+List<Order> orders = db.Query<Order>()
     .Where(OrderMeta.Status, FieldOp.Equals, "Pending")
     .Where(OrderMeta.CreatedDate, FieldOp.GreaterThan, DateTime.Today.AddDays(-7))
     .ToList();
 
 // Prefix queries also use the compound index
-var pendingOrders = db.Query<Order>()
+List<Order> pendingOrders = db.Query<Order>()
     .Where(OrderMeta.Status, FieldOp.Equals, "Pending")
     .ToList();
 ```
 
 Compound indexes follow the leftmost-prefix rule: an index on `(A, B, C)` can serve queries on `A`, `A AND B`, or `A AND B AND C`. The query planner automatically selects the best index based on filter selectivity.
 
-### Nested Document Queries
+#### Nested Document Indexes
 
-Query properties of embedded objects using generated metadata:
-
-```csharp
-[GaldrDbCollection]
-public class Person
-{
-    public int Id { get; set; }
-    public string Name { get; set; }
-    public Address Address { get; set; }
-}
-
-public class Address
-{
-    public string City { get; set; }
-    public string Country { get; set; }
-}
-
-// Query nested properties
-var results = db.Query<Person>()
-    .Where(PersonMeta.Address.City, FieldOp.Equals, "Seattle")
-    .ToList();
-```
-
-#### Indexed Nested Properties
-
-Add `[GaldrDbIndex]` to nested class properties to create secondary indexes on nested paths:
+Indexes work on nested object properties too. Add `[GaldrDbIndex]` to nested class properties, or use dot notation in compound indexes:
 
 ```csharp
 public class Address
 {
     [GaldrDbIndex]
     public string City { get; set; }
-
-    [GaldrDbIndex(Unique = true)]
-    public string ZipCode { get; set; }
-
-    public string State { get; set; }  // Not indexed
+    public string Country { get; set; }
 }
 
 [GaldrDbCollection]
-public class Person
-{
-    public int Id { get; set; }
-    public string Name { get; set; }
-    public Address Address { get; set; }  // City and ZipCode are auto-indexed
-}
-
-// Uses secondary index on Address.City
-var results = db.Query<Person>()
-    .Where(PersonMeta.Address.City, FieldOp.Equals, "Seattle")
-    .ToList();
-```
-
-Compound indexes can also include nested paths using dot notation:
-
-```csharp
-[GaldrDbCollection]
-[GaldrDbCompoundIndex("Status", "Address.City")]  // Mix top-level and nested fields
+[GaldrDbCompoundIndex("Status", "Address.City")]
 public class Person
 {
     public int Id { get; set; }
@@ -323,8 +292,13 @@ public class Person
     public Address Address { get; set; }
 }
 
+// Uses index on Address.City
+List<Person> results = db.Query<Person>()
+    .Where(PersonMeta.Address.City, FieldOp.Equals, "Seattle")
+    .ToList();
+
 // Uses compound index
-var results = db.Query<Person>()
+List<Person> active = db.Query<Person>()
     .Where(PersonMeta.Status, FieldOp.Equals, "Active")
     .Where(PersonMeta.Address.City, FieldOp.Equals, "Seattle")
     .ToList();
@@ -351,40 +325,51 @@ public class OrderItem
 }
 
 // Find orders containing items over $100
-var results = db.Query<Order>()
+List<Order> results = db.Query<Order>()
     .WhereAny(OrderMeta.Items.Price, FieldOp.GreaterThan, 100m)
     .ToList();
 ```
 
 ### Projections
 
+Projections let you query a subset of fields from a document without deserializing the entire object. Define a projection class with only the fields you need:
+
 ```csharp
+[GaldrDbCollection]
+public class Person
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public int Age { get; set; }
+    public string Email { get; set; }
+    public Address Address { get; set; }
+}
+
 [GaldrDbProjection(typeof(Person))]
 public partial class PersonSummary
 {
+    public int Id { get; set; }
     public string Name { get; set; }
-    public int Age { get; set; }
 }
 
-var summaries = db.Query<PersonSummary>()
-    .ToList();
+List<PersonSummary> summaries = db.Query<PersonSummary>().ToList();
 ```
 
 ### Vacuum and Compact
 
 ```csharp
 // Remove old versions and compact pages
-var result = db.Vacuum();
+GarbageCollectionResult result = db.Vacuum();
 
 // Create a compacted copy
-var result = db.CompactTo("compacted.db");
+DatabaseCompactResult compactResult = db.CompactTo("compacted.db");
 ```
 
 ### Encryption at Rest
 
 ```csharp
 // Create an encrypted database
-var options = new GaldrDbOptions
+GaldrDbOptions options = new()
 {
     Encryption = new EncryptionOptions
     {
@@ -392,10 +377,10 @@ var options = new GaldrDbOptions
         KdfIterations = 500000,  // PBKDF2 iterations (higher = more secure, slower open)
     }
 };
-var db = GaldrDb.Create("encrypted.db", options);
+GaldrDb db = GaldrDb.Create("encrypted.db", options);
 
 // Open an encrypted database (same password required)
-var db = GaldrDb.Open("encrypted.db", options);
+GaldrDb db = GaldrDb.Open("encrypted.db", options);
 ```
 
 Encryption uses AES-256-GCM with per-page nonces. The WAL file is also encrypted when encryption is enabled.
@@ -405,6 +390,8 @@ Encryption uses AES-256-GCM with per-page nonces. The WAL file is also encrypted
 ```csharp
 // Manually checkpoint WAL to main database file
 db.Checkpoint();
+
+// Supports async
 await db.CheckpointAsync();
 ```
 
@@ -428,7 +415,7 @@ db.UpdateByIdDynamic("people", id)
     .Execute();
 
 // Query
-var results = db.QueryDynamic("people")
+List<JsonDocument> results = db.QueryDynamic("people")
     .Where("Age", FieldOp.GreaterThan, 25)
     .OrderBy("Name")
     .ToList();
@@ -441,31 +428,27 @@ db.DeleteByIdDynamic("people", id);
 
 ### Storage Engine
 
-- **Page-based storage** (default 8KB pages) with efficient allocation tracking
-- **Slotted document pages** allow documents to span multiple pages
-- **B+ tree indexing** on document IDs for fast lookups and range scans
-- **Free Space Map (FSM)** tracks available space in each page for optimal placement
+- **Page-based storage** with configurable page size (default 8KB)
+- **Large document support** — documents automatically span multiple pages when needed
+- **B+ tree indexing** for primary key lookups, range scans, and secondary indexes
 - **Page cache** with configurable size for frequently accessed pages
+- **Encryption at rest** — optional AES-256-GCM encryption with per-page nonces
 
 ### Concurrency Model
 
-- **MVCC (Multi-Version Concurrency Control)** provides snapshot isolation
-- **Optimistic Concurrency Control (OCC)** with conflict detection at commit time
-- No read locks - readers never block writers
-- Writers proceed optimistically and retry only on conflicts
-- Each transaction sees a consistent snapshot of the database
+- **MVCC** with snapshot isolation — readers never block writers, each transaction sees a consistent point-in-time view
+- **Optimistic concurrency control** with conflict detection and automatic retry at commit time
 
 ### Durability
 
-- **Write-Ahead Logging (WAL)** frames all writes before applying to the main database
-- **Frame-based logging** with sequential numbers, checksums, and commit flags
-- **Crash recovery** replays committed transactions on startup
-- **Automatic checkpointing** merges WAL changes to the main database
+- **Write-Ahead Logging (WAL)** — all writes are logged before applying to the main database, with checksums for data integrity
+- **Crash recovery** — committed transactions are replayed automatically on startup
+- **Automatic checkpointing** — WAL changes are periodically merged to the main database
 
 ## Configuration Options
 
 ```csharp
-var options = new GaldrDbOptions
+GaldrDbOptions options = new()
 {
     PageSize = 8192,                      // Page size (must be power of 2, >= 1024)
     UseWal = true,                        // Enable write-ahead logging
@@ -487,19 +470,11 @@ var options = new GaldrDbOptions
 };
 ```
 
-## Performance Characteristics
-
-- **Memory-mapped I/O** reduces system call overhead for read-heavy workloads
-- **Buffer pooling** across all I/O operations minimizes GC pressure
-- **MVCC overhead**: Writers create new versions, readers pay no blocking cost
-- **WAL write-through**: Committed data is flushed before returning (configurable)
-- **Async support**: All CRUD and query operations have async variants (`InsertAsync`, `ToListAsync`, etc.)
-
-### Benchmarks
+## Benchmarks
 
 These are the current benchmark results from `SingleOperationAotBenchmarks` and `SingleOperationBenchmarks`. The results are of the current in development build, with future optimizations planned. Additional benchmarks with more advanced queries will be added at a later date.
 
-#### Setup
+### Setup
 
 BenchmarkDotNet v0.15.8, Linux Fedora Linux 43 (Workstation Edition)
 AMD Ryzen AI 7 PRO 350 w/ Radeon 860M 0.62GHz, 1 CPU, 16 logical and 8 physical cores
@@ -507,7 +482,7 @@ AMD Ryzen AI 7 PRO 350 w/ Radeon 860M 0.62GHz, 1 CPU, 16 logical and 8 physical 
 
 InvocationCount=16384  IterationCount=20  WarmupCount=3
 
-#### SingleOperationAotBenchmarks
+### SingleOperationAotBenchmarks
 
 Native AOT comparison between GaldrDb and SQLite ADO.NET. Both use WAL mode with equivalent durability guarantees (synchronous=FULL). GaldrDb shows strong read and delete performance; write performance is an area of active optimization.
 
@@ -522,7 +497,7 @@ Native AOT comparison between GaldrDb and SQLite ADO.NET. Both use WAL mode with
 | 'GaldrDb Update'        | 20,401.6 ns | 157.08 ns | 174.59 ns |    7 | 0.4272 | 0.0610 |    3982 B |
 | 'GaldrDb Insert'        | 23,704.4 ns | 552.45 ns | 567.32 ns |    8 | 0.4272 | 0.1221 |    3935 B |
 
-#### SingleOperationBenchmarks
+### SingleOperationBenchmarks
 
 JIT comparison including EF Core. GaldrDb outperforms EF Core across all operations while providing similar developer ergonomics. Note that EF Core Insert has significant per-operation overhead from change tracking and context management.
 
@@ -541,27 +516,20 @@ JIT comparison including EF Core. GaldrDb outperforms EF Core across all operati
 | 'GaldrDb Insert'        |    23,214.8 ns |    448.47 ns |    498.47 ns |    23,177.1 ns |   10 |   0.4272 |  0.1221 |      - |    4055 B |
 | 'SQLite EF Core Insert' | 1,380,911.3 ns | 30,631.48 ns | 34,046.81 ns | 1,376,880.2 ns |   11 | 366.5161 | 19.8975 | 8.7891 | 3031581 B |
 
-## Native AOT
-
-GaldrDb is designed for Native AOT compatibility:
-
-- No reflection or runtime type inspection
-- Source generators create all metadata at compile time
-- All queries use type-safe lambda expressions
-
 ## Testing
 
-- **1047 unit and integration tests** covering CRUD, transactions, queries, ACID properties, and recovery scenarios
+- **1073 unit and integration tests** covering CRUD, transactions, queries, ACID properties, and recovery scenarios
 - **63 deterministic simulation tests** for concurrent operations, conflict resolution, and edge cases
-- **1110 total tests** across the test suite
+- **1136 total tests** across the test suite
+- **Stress tests** simulating high contention scenarios with concurrent transactions in different workloads
 - **Performance benchmarks** for single operations, bulk inserts, and query performance
-- Test coverage includes: ACID compliance, WAL recovery, MVCC isolation, query planning, schema management
 
 ## Project Structure
 
 - **GaldrDbEngine/** - Core database engine library
+- **GaldrDbAspNetCore/** - ASP.NET Core dependency injection support
 - **GaldrDbBrowser/** - Cross-platform database browser for inspecting and editing data
-- **GaldrDbConsole/** - Console application for demos and benchmarking
+- **GaldrDbConsole/** - Console application for benchmarking, stress testing, and diagnostics
 - **GaldrDbSourceGenerators/** - Roslyn source generators for metadata generation
 - **Tests/GaldrDb.UnitTests/** - Integration and unit tests
 - **Tests/GaldrDb.SimulationTests/** - Deterministic simulation tests for concurrent scenarios
