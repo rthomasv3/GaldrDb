@@ -24,11 +24,7 @@ public static class PerformanceTracingTest
 
         try
         {
-            using (GaldrDb db = GaldrDb.Create(dbPath, new GaldrDbOptions
-            {
-                UseWal = true,
-                GarbageCollectionThreshold = 500,
-            }))
+            using (GaldrDb db = GaldrDb.Create(dbPath, new GaldrDbOptions()))
             {
                 // Warmup
                 for (int i = 0; i < 500; i++)

@@ -941,4 +941,135 @@ public class TransactionTests
     }
 
     #endregion
+
+    #region Rollback Page Reclamation Tests
+
+    [TestMethod]
+    public void Transaction_Rollback_ReclaimsAllocatedPages_NoWal()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions
+        {
+            PageSize = 4096,
+            UseWal = false,
+            ExpansionPageCount = 8
+        };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            // Establish baseline: insert one large doc to trigger initial expansion
+            string largePayload = new string('x', 3000);
+            db.Insert(new PersonNoIndex { Name = largePayload, Age = 0, Email = "baseline@test.com" });
+
+            // Do one rollback to prime the free page state
+            using (ITransaction tx = db.BeginTransaction())
+            {
+                tx.Insert(new PersonNoIndex { Name = largePayload, Age = 99, Email = "prime@test.com" });
+                tx.Rollback();
+            }
+
+            long baseline = new FileInfo(dbPath).Length;
+
+            // Repeated rollbacks should not grow the file because pages are reclaimed
+            for (int i = 0; i < 20; i++)
+            {
+                using (ITransaction tx = db.BeginTransaction())
+                {
+                    tx.Insert(new PersonNoIndex { Name = largePayload, Age = i, Email = $"rollback{i}@test.com" });
+                    tx.Rollback();
+                }
+            }
+
+            long afterRollbacks = new FileInfo(dbPath).Length;
+
+            Assert.AreEqual(baseline, afterRollbacks,
+                "File grew after repeated rollbacks — rolled-back page allocations were not reclaimed");
+        }
+    }
+
+    [TestMethod]
+    public void Transaction_Rollback_ReclaimsAllocatedPages_Wal()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions
+        {
+            PageSize = 4096,
+            UseWal = true,
+            ExpansionPageCount = 8,
+            AutoCheckpoint = false
+        };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            string largePayload = new string('x', 3000);
+            db.Insert(new PersonNoIndex { Name = largePayload, Age = 0, Email = "baseline@test.com" });
+
+            using (ITransaction tx = db.BeginTransaction())
+            {
+                tx.Insert(new PersonNoIndex { Name = largePayload, Age = 99, Email = "prime@test.com" });
+                tx.Rollback();
+            }
+
+            db.Checkpoint();
+            long baseline = new FileInfo(dbPath).Length;
+
+            for (int i = 0; i < 20; i++)
+            {
+                using (ITransaction tx = db.BeginTransaction())
+                {
+                    tx.Insert(new PersonNoIndex { Name = largePayload, Age = i, Email = $"rollback{i}@test.com" });
+                    tx.Rollback();
+                }
+            }
+
+            db.Checkpoint();
+            long afterRollbacks = new FileInfo(dbPath).Length;
+
+            Assert.AreEqual(baseline, afterRollbacks,
+                "File grew after repeated rollbacks — rolled-back page allocations were not reclaimed");
+        }
+    }
+
+    [TestMethod]
+    public void Transaction_Rollback_FreedPagesAreReusedBySubsequentInserts()
+    {
+        string dbPath = Path.Combine(_testDirectory, "test.db");
+        GaldrDbOptions options = new GaldrDbOptions
+        {
+            PageSize = 4096,
+            UseWal = false,
+            ExpansionPageCount = 8
+        };
+
+        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
+        {
+            string largePayload = new string('x', 3000);
+
+            // Insert one doc to establish collection and trigger expansion
+            db.Insert(new PersonNoIndex { Name = largePayload, Age = 0, Email = "first@test.com" });
+
+            // Rollback an insert (allocates a page, then frees it)
+            using (ITransaction tx = db.BeginTransaction())
+            {
+                tx.Insert(new PersonNoIndex { Name = largePayload, Age = 1, Email = "rollback@test.com" });
+                tx.Rollback();
+            }
+
+            long sizeAfterRollback = new FileInfo(dbPath).Length;
+
+            // Commit an insert — should reuse the freed page, not expand
+            db.Insert(new PersonNoIndex { Name = largePayload, Age = 2, Email = "reuse@test.com" });
+
+            long sizeAfterReuse = new FileInfo(dbPath).Length;
+
+            Assert.AreEqual(sizeAfterRollback, sizeAfterReuse,
+                "File grew after insert following rollback — freed pages were not reused");
+
+            // Verify both documents exist
+            List<PersonNoIndex> all = db.Query<PersonNoIndex>().ToList();
+            Assert.HasCount(2, all);
+        }
+    }
+
+    #endregion
 }

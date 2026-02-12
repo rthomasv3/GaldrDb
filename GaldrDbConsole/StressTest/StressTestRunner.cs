@@ -109,8 +109,7 @@ public class StressTestRunner
         {
             UseWal = true,
             AutoCheckpoint = true,
-            AutoGarbageCollection = true,
-            PageCacheSize = 0
+            AutoGarbageCollection = true
         };
 
         if (string.IsNullOrEmpty(_config.DatabasePath))

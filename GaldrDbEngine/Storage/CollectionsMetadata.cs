@@ -115,7 +115,6 @@ internal class CollectionsMetadata
         {
             Name = name,
             RootPage = rootPage,
-            DocumentCount = 0,
             NextId = 1
         };
 

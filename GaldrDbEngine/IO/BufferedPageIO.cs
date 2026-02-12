@@ -59,7 +59,8 @@ internal class BufferedPageIO : IWriteStrategy
                 SnapshotCSN = snapshotCSN,
                 PageVersionSnapshot = _pageVersions,
                 SnapshotVersion = Interlocked.Read(ref _versionCounter),
-                PageWrites = null
+                PageWrites = null,
+                AllocatedDataPages = new List<int>(),
             };
         }
     }
@@ -78,6 +79,9 @@ internal class BufferedPageIO : IWriteStrategy
                 context.PageVersionSnapshot = _pageVersions;
                 context.SnapshotVersion = Interlocked.Read(ref _versionCounter);
             }
+
+            // Clear live page reads since the snapshot has been refreshed
+            context.LivePageReads?.Clear();
         }
     }
 
@@ -86,6 +90,7 @@ internal class BufferedPageIO : IWriteStrategy
         if (context != null)
         {
             context.PageWrites = new Dictionary<int, PageWriteEntry>();
+            context.LivePageReads = new Dictionary<int, long>();
         }
     }
 
@@ -185,6 +190,7 @@ internal class BufferedPageIO : IWriteStrategy
             }
 
             context.PageWrites = null;
+            context.LivePageReads = null;
         }
     }
 
@@ -212,6 +218,15 @@ internal class BufferedPageIO : IWriteStrategy
         // Step 2: Fall back to inner IO
         if (!found)
         {
+            // Record the page version at read time for conflict detection.
+            // This prevents a TOCTOU race where _pageVersions changes between
+            // ReadPage and WritePage, causing WritePage to use a stale baseVersion.
+            if (context != null && context.LivePageReads != null && !context.LivePageReads.ContainsKey(pageId))
+            {
+                _pageVersions.TryGetValue(pageId, out long currentVersion);
+                context.LivePageReads[pageId] = currentVersion;
+            }
+
             _innerPageIO.ReadPage(pageId, destination);
         }
     }
@@ -252,6 +267,13 @@ internal class BufferedPageIO : IWriteStrategy
                         if (snapshot != null && snapshot.TryGetValue(pageId, out long snapshotVersion))
                         {
                             baseVersion = snapshotVersion;
+                        }
+                        else if (context.LivePageReads != null && context.LivePageReads.TryGetValue(pageId, out long liveReadVersion))
+                        {
+                            // Use the version that was recorded when this page was actually read.
+                            // This prevents a TOCTOU race where _pageVersions changes between
+                            // ReadPage and WritePage due to a concurrent commit.
+                            baseVersion = liveReadVersion;
                         }
                         else
                         {
@@ -326,6 +348,13 @@ internal class BufferedPageIO : IWriteStrategy
         // Step 2: Fall back to inner IO
         if (!found)
         {
+            // Record the page version at read time for conflict detection.
+            if (context != null && context.LivePageReads != null && !context.LivePageReads.ContainsKey(pageId))
+            {
+                _pageVersions.TryGetValue(pageId, out long currentVersion);
+                context.LivePageReads[pageId] = currentVersion;
+            }
+
             await _innerPageIO.ReadPageAsync(pageId, destination, context, cancellationToken).ConfigureAwait(false);
         }
     }

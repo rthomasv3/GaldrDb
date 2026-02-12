@@ -116,10 +116,6 @@ internal sealed class VersionScanner
 
     public int GetUnfilteredCount(string collectionName, CollectionEntry collection, Transaction transaction)
     {
-        // Get visible versions directly from the version index to ensure consistency.
-        // Using DocumentCount would create a race condition: during commit, the version index
-        // is updated before DocumentCount, so a query could see a document marked as deleted
-        // in the version index while DocumentCount still includes it.
         List<DocumentVersion> visibleVersions = _versionIndex.GetAllVisibleVersions(collectionName, _context.SnapshotCSN);
 
         // Build a set of visible document IDs for quick lookup

@@ -76,8 +76,8 @@ public static class LargeDbPerformanceTracingTest
         }
 
         // Delete baseline database
-        File.Delete(BaselineDbPath);
-        File.Delete(BaselineWALPath);
+        //File.Delete(BaselineDbPath);
+        //File.Delete(BaselineWALPath);
 
         // === LARGE DATABASE ===
         Console.WriteLine("\n=== LARGE DATABASE ===");
@@ -123,7 +123,7 @@ public static class LargeDbPerformanceTracingTest
 
     private static void BuildLargeDatabase()
     {
-        int batches = 500;
+        int batches = 100;
         int batchSize = 1000;
         
         using (GaldrDb db = GaldrDb.Create(LargeDbPath, new GaldrDbOptions()))

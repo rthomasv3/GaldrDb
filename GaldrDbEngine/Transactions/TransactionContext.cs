@@ -44,4 +44,18 @@ internal sealed class TransactionContext
     /// Set when BeginWrite is called.
     /// </summary>
     public Dictionary<int, PageWriteEntry> PageWrites { get; set; }
+
+    /// <summary>
+    /// Tracks the frame number from _pageLatestFrame at the time a page was first read
+    /// via the live committed state (Step 2b in ReadPage). This prevents a TOCTOU race
+    /// where _pageLatestFrame changes between ReadPage and WritePage, causing WritePage
+    /// to capture a baseFrame that doesn't match the data actually read.
+    /// </summary>
+    public Dictionary<int, long> LivePageReads { get; set; }
+
+    /// <summary>
+    /// Tracks the page IDs of data pages allocated during this transaction (as opposed to structural).
+    /// Used to ensure data change allocations can be rolled back on abort, and to avoid false conflicts.
+    /// </summary>
+    public List<int> AllocatedDataPages { get; set; }
 }

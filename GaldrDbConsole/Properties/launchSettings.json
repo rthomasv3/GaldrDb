@@ -6,6 +6,14 @@
     "Stress Balanced 2": {
       "commandName": "Project",
       "commandLineArgs": "-st balanced -t 8 -w 2"
+    },
+    "Trace Large Test": {
+      "commandName": "Project",
+      "commandLineArgs": "-tpl"
+    },
+    "Trace Insert": {
+      "commandName": "Project",
+      "commandLineArgs": "-tpi"
     }
   }
 }

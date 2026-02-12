@@ -50,7 +50,7 @@ public class CollectionsMetadataTests
 
         CollectionEntry entry = metadata.AddCollection("users", 10);
 
-        bool result = entry.Name == "users" && entry.RootPage == 10 && entry.DocumentCount == 0 && entry.NextId == 1;
+        bool result = entry.Name == "users" && entry.RootPage == 10 && entry.NextId == 1;
 
         pageIO.Dispose();
 
@@ -131,14 +131,13 @@ public class CollectionsMetadataTests
         CollectionsMetadata metadata = CreateCollectionsMetadata(dbPath, pageSize, out pageIO);
 
         CollectionEntry entry = metadata.AddCollection("users", 10);
-        entry.DocumentCount = 5;
-        entry.NextId = 6;
+        entry.RootPage = 42;
 
         metadata.UpdateCollection(entry);
 
         CollectionEntry found = metadata.FindCollection("users");
 
-        bool result = found.DocumentCount == 5 && found.NextId == 6;
+        bool result = found.RootPage == 42;
 
         pageIO.Dispose();
 
@@ -217,8 +216,8 @@ public class CollectionsMetadataTests
 
         pageIO.Dispose();
 
-        // 4 (count) + 4 (name length) + 5 (name "users") + 4 (RootPage) + 4 (DocumentCount) + 4 (NextId) + 4 (index count) = 29
-        Assert.AreEqual(29, size);
+        // 4 (count) + 1 (version) + 4 (name length) + 5 (name "users") + 4 (RootPage) + 4 (index count) = 22
+        Assert.AreEqual(22, size);
     }
 
     [TestMethod]
@@ -248,8 +247,8 @@ public class CollectionsMetadataTests
 
         CollectionsMetadata metadata = CreateCollectionsMetadata(dbPath, pageSize, out pageIO);
 
-        // Each collection with 10-char name: 4 + 10 + 4 + 4 + 4 + 4 = 30 bytes
-        // With 512-byte page and 4-byte header: (512 - 4) / 30 ≈ 16 collections per page
+        // Each collection with 10-char name: 1 + 4 + 10 + 4 + 4 = 23 bytes
+        // With 512-byte page and 4-byte header: (512 - 4) / 23 ≈ 22 collections per page
         // Add 40 collections to need at least 2 pages
         for (int i = 0; i < 40; i++)
         {

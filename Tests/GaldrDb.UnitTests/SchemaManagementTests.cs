@@ -404,26 +404,6 @@ public class SchemaManagementTests
     }
 
     [TestMethod]
-    public void CleanupOrphanedSchema_OrphanedCollectionWithDocuments_ThrowsWithoutFlag()
-    {
-        string dbPath = Path.Combine(_testDirectory, "test.db");
-        GaldrDbOptions options = new GaldrDbOptions { PageSize = 8192, UseWal = false };
-
-        using (GaldrDbInstance db = GaldrDbInstance.Create(dbPath, options))
-        {
-            db.CreateCollection("OrphanedTestCollection");
-
-            CollectionEntry collection = db.GetCollection("OrphanedTestCollection");
-            collection.DocumentCount = 5;
-
-            Assert.Throws<InvalidOperationException>(() =>
-            {
-                db.CleanupOrphanedSchema();
-            });
-        }
-    }
-
-    [TestMethod]
     public void CleanupOrphanedSchema_OrphanedCollectionWithDocuments_RemovesWithFlag()
     {
         string dbPath = Path.Combine(_testDirectory, "test.db");

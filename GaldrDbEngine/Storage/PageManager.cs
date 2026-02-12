@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using GaldrDbEngine.IO;
 using GaldrDbEngine.Pages;
@@ -135,7 +136,7 @@ internal class PageManager
 
             if (pageId == -1)
             {
-                Expand(null, context);
+                Expand(null);
                 pageId = _bitmap.FindFreePage(0);
 
                 if (pageId == -1)
@@ -149,8 +150,13 @@ internal class PageManager
         }
 
         _fsm.SetFreeSpaceLevel(pageId, FreeSpaceLevel.None);
-        _bitmap.WriteToDisk(context);
+        _bitmap.WriteToDisk();
         _fsm.WriteToDisk();
+
+        if (context != null)
+        {
+            context.AllocatedDataPages.Add(pageId);
+        }
 
         return pageId;
     }
@@ -175,7 +181,7 @@ internal class PageManager
                 {
                     int needed = count - allocated;
                     int expansionSize = Math.Max(_expansionPageCount, needed);
-                    Expand(expansionSize, context);
+                    Expand(expansionSize);
 
                     pageId = _bitmap.FindFreePage(_header.NextFreePageHint);
 
@@ -197,13 +203,21 @@ internal class PageManager
             _fsm.SetFreeSpaceLevel(pageIds[i], FreeSpaceLevel.None);
         }
 
-        _bitmap.WriteToDisk(context);
+        _bitmap.WriteToDisk();
         _fsm.WriteToDisk();
+
+        if (context != null)
+        {
+            for (int i = 0; i < count; ++i)
+            {
+                context.AllocatedDataPages.Add(pageIds[i]);
+            }
+        }
 
         return pageIds;
     }
 
-    public void DeallocatePage(int pageId, TransactionContext context = null)
+    public void DeallocatePage(int pageId)
     {
         lock (_allocationLock)
         {
@@ -216,7 +230,32 @@ internal class PageManager
         }
 
         _fsm.SetFreeSpaceLevel(pageId, FreeSpaceLevel.High);
-        _bitmap.WriteToDisk(context);
+        _bitmap.WriteToDisk();
+        _fsm.WriteToDisk();
+    }
+
+    public void DeallocatePages(IReadOnlyList<int> pageIds)
+    {
+        lock (_allocationLock)
+        {
+            for (int i = 0; i < pageIds.Count; i++)
+            {
+                int pageId = pageIds[i];
+                _bitmap.DeallocatePage(pageId);
+
+                if (pageId < _header.NextFreePageHint)
+                {
+                    _header.NextFreePageHint = pageId;
+                }
+            }
+        }
+
+        for (int i = 0; i < pageIds.Count; i++)
+        {
+            _fsm.SetFreeSpaceLevel(pageIds[i], FreeSpaceLevel.High);
+        }
+
+        _bitmap.WriteToDisk();
         _fsm.WriteToDisk();
     }
 
@@ -246,7 +285,7 @@ internal class PageManager
         _pageIO.Flush();
     }
 
-    public void GrowCollectionsMetadata(CollectionsMetadata collectionsMetadata, int additionalPagesNeeded, TransactionContext context = null)
+    public void GrowCollectionsMetadata(CollectionsMetadata collectionsMetadata, int additionalPagesNeeded)
     {
         int currentStartPage = _header.CollectionsMetadataStartPage;
         int currentPageCount = _header.CollectionsMetadataPageCount;
@@ -275,16 +314,16 @@ internal class PageManager
             _header.CollectionsMetadataPageCount = newPageCount;
 
             byte[] headerBytes = _header.Serialize(_pageSize);
-            _pageIO.WritePage(0, headerBytes, context);
+            _pageIO.WritePage(0, headerBytes);
 
-            _bitmap.WriteToDisk(context);
+            _bitmap.WriteToDisk();
             _fsm.WriteToDisk();
 
             collectionsMetadata.SetPageAllocation(currentStartPage, newPageCount);
         }
         else
         {
-            int[] newPages = AllocatePages(newPageCount, context);
+            int[] newPages = AllocatePages(newPageCount);
             try
             {
                 int newStartPage = newPages[0];
@@ -303,7 +342,7 @@ internal class PageManager
                 {
                     for (int i = 0; i < newPageCount; i++)
                     {
-                        DeallocatePage(newPages[i], context);
+                        DeallocatePage(newPages[i]);
                     }
                     throw new InvalidOperationException("Could not allocate contiguous pages for collections metadata growth");
                 }
@@ -313,8 +352,8 @@ internal class PageManager
                 {
                     for (int i = 0; i < currentPageCount; i++)
                     {
-                        _pageIO.ReadPage(currentStartPage + i, pageBuffer, context);
-                        _pageIO.WritePage(newStartPage + i, pageBuffer, context);
+                        _pageIO.ReadPage(currentStartPage + i, pageBuffer);
+                        _pageIO.WritePage(newStartPage + i, pageBuffer);
                     }
                 }
                 finally
@@ -332,9 +371,9 @@ internal class PageManager
                 _header.CollectionsMetadataPageCount = newPageCount;
 
                 byte[] headerBytes = _header.Serialize(_pageSize);
-                _pageIO.WritePage(0, headerBytes, context);
+                _pageIO.WritePage(0, headerBytes);
 
-                _bitmap.WriteToDisk(context);
+                _bitmap.WriteToDisk();
                 _fsm.WriteToDisk();
 
                 collectionsMetadata.SetPageAllocation(newStartPage, newPageCount);
@@ -346,7 +385,7 @@ internal class PageManager
         }
     }
 
-    private void Expand(int? requestedPages = null, TransactionContext context = null)
+    private void Expand(int? requestedPages = null)
     {
         int oldTotalPages = _header.TotalPageCount;
         int additionalPages = requestedPages ?? _expansionPageCount;
@@ -359,7 +398,7 @@ internal class PageManager
 
         if (newTotalPages > bitmapCapacity || newTotalPages > fsmCapacity)
         {
-            GrowBitmapAndFsm(newTotalPages, maxPagesPerBitmapPage, maxPagesPerFsmPage, context);
+            GrowBitmapAndFsm(newTotalPages, maxPagesPerBitmapPage, maxPagesPerFsmPage);
             oldTotalPages = _header.TotalPageCount;
         }
 
@@ -369,16 +408,16 @@ internal class PageManager
 
         _header.TotalPageCount = newTotalPages;
         byte[] headerBytes = _header.Serialize(_pageSize);
-        _pageIO.WritePage(0, headerBytes, context);
+        _pageIO.WritePage(0, headerBytes);
 
         _bitmap.Resize(newTotalPages);
         _fsm.Resize(newTotalPages);
 
-        _bitmap.WriteToDisk(context);
+        _bitmap.WriteToDisk();
         _fsm.WriteToDisk();
     }
 
-    private void GrowBitmapAndFsm(int requiredTotalPages, int maxPagesPerBitmapPage, int maxPagesPerFsmPage, TransactionContext context = null)
+    private void GrowBitmapAndFsm(int requiredTotalPages, int maxPagesPerBitmapPage, int maxPagesPerFsmPage)
     {
         int currentBitmapPages = _header.BitmapPageCount;
         int currentFsmPages = _header.FsmPageCount;
@@ -412,14 +451,14 @@ internal class PageManager
             {
                 for (int i = 0; i < currentBitmapPages; i++)
                 {
-                    _pageIO.ReadPage(oldBitmapStart + i, pageBuffer, context);
-                    _pageIO.WritePage(newBitmapStart + i, pageBuffer, context);
+                    _pageIO.ReadPage(oldBitmapStart + i, pageBuffer);
+                    _pageIO.WritePage(newBitmapStart + i, pageBuffer);
                 }
 
                 for (int i = 0; i < currentFsmPages; i++)
                 {
-                    _pageIO.ReadPage(oldFsmStart + i, pageBuffer, context);
-                    _pageIO.WritePage(newFsmStart + i, pageBuffer, context);
+                    _pageIO.ReadPage(oldFsmStart + i, pageBuffer);
+                    _pageIO.WritePage(newFsmStart + i, pageBuffer);
                 }
             }
             finally
@@ -437,7 +476,7 @@ internal class PageManager
             _header.TotalPageCount = expandedTotalPages;
 
             byte[] headerBytes = _header.Serialize(_pageSize);
-            _pageIO.WritePage(0, headerBytes, context);
+            _pageIO.WritePage(0, headerBytes);
 
             _bitmap.Resize(expandedTotalPages);
             _fsm.Resize(expandedTotalPages);
@@ -474,16 +513,9 @@ internal class PageManager
         }
     }
 
-    public void PersistHeader(TransactionContext context = null)
+    public void PersistHeader()
     {
         byte[] headerBytes = _header.Serialize(_pageSize);
-        _pageIO.WritePage(0, headerBytes, context);
+        _pageIO.WritePage(0, headerBytes);
     }
-
-    private void WriteHeader(TransactionContext context = null)
-    {
-        byte[] headerBytes = _header.Serialize(_pageSize);
-        _pageIO.WritePage(0, headerBytes, context);
-    }
-
 }

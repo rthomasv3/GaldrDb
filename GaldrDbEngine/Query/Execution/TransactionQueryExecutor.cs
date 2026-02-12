@@ -264,6 +264,13 @@ internal sealed class TransactionQueryExecutor<T> : IQueryExecutor<T>
         foreach (DocumentVersion version in versions)
         {
             byte[] jsonBytes = _db.ReadDocumentByLocation(version.Location, _context);
+
+            // DEBUG
+            if (jsonBytes == null)
+            {
+                // empty, just here for breakpoint...
+            }
+
             T document = _reader.ReadDocument(jsonBytes);
 
             if (!hasFilters || _reader.PassesFilters(document, filters))

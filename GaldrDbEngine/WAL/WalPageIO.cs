@@ -87,7 +87,8 @@ internal class WalPageIO : IWriteStrategy
                 SnapshotCSN = snapshotCSN,
                 PageVersionSnapshot = _pageLatestFrame,
                 SnapshotVersion = snapshotMxFrame,
-                PageWrites = null
+                PageWrites = null,
+                AllocatedDataPages = new List<int>(),
             };
         }
     }
@@ -123,6 +124,9 @@ internal class WalPageIO : IWriteStrategy
                 context.PageVersionSnapshot = _pageLatestFrame;
                 context.SnapshotVersion = newSnapshotMxFrame;
 
+                // Clear live page reads since the snapshot has been refreshed
+                context.LivePageReads?.Clear();
+
                 // Add new snapshot frame to active list
                 _activeSnapshotFrames.Add(newSnapshotMxFrame);
             }
@@ -134,6 +138,7 @@ internal class WalPageIO : IWriteStrategy
         if (context != null)
         {
             context.PageWrites = new Dictionary<int, PageWriteEntry>();
+            context.LivePageReads = new Dictionary<int, long>();
         }
     }
 
@@ -267,6 +272,7 @@ internal class WalPageIO : IWriteStrategy
             }
 
             context.PageWrites = null;
+            context.LivePageReads = null;
         }
     }
 
@@ -311,6 +317,14 @@ internal class WalPageIO : IWriteStrategy
             lock (_cacheLock)
             {
                 _pageLatestFrame.TryGetValue(pageId, out frameNum);
+            }
+
+            // Record the live frame at read time for conflict detection.
+            // This prevents a TOCTOU race where _pageLatestFrame changes between
+            // ReadPage and WritePage, causing WritePage to use a stale baseFrame.
+            if (context.LivePageReads != null && !context.LivePageReads.ContainsKey(pageId))
+            {
+                context.LivePageReads[pageId] = frameNum;
             }
 
             if (frameNum > 0 && frameNum > Interlocked.Read(ref _nBackfill))
@@ -380,9 +394,16 @@ internal class WalPageIO : IWriteStrategy
                         {
                             baseFrame = snapshotFrame;
                         }
+                        else if (context.LivePageReads != null && context.LivePageReads.TryGetValue(pageId, out long liveReadFrame))
+                        {
+                            // Use the frame that was recorded when this page was actually read.
+                            // This prevents a TOCTOU race where _pageLatestFrame changes between
+                            // ReadPage and WritePage due to a concurrent commit.
+                            baseFrame = liveReadFrame;
+                        }
                         else
                         {
-                            // Page not in snapshot (committed after snapshot or non-transactional write)
+                            // Page not previously read and not in snapshot - use live state
                             _pageLatestFrame.TryGetValue(pageId, out baseFrame);
                         }
                     }
@@ -484,6 +505,14 @@ internal class WalPageIO : IWriteStrategy
             lock (_cacheLock)
             {
                 _pageLatestFrame.TryGetValue(pageId, out frameNum);
+            }
+
+            // Record the live frame at read time for conflict detection.
+            // This prevents a TOCTOU race where _pageLatestFrame changes between
+            // ReadPage and WritePage, causing WritePage to use a stale baseFrame.
+            if (context.LivePageReads != null && !context.LivePageReads.ContainsKey(pageId))
+            {
+                context.LivePageReads[pageId] = frameNum;
             }
 
             if (frameNum > 0 && frameNum > Interlocked.Read(ref _nBackfill))

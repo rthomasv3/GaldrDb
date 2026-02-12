@@ -8,17 +8,12 @@ namespace GaldrDbEngine.Storage;
 
 internal class CollectionEntry
 {
-    private int _nextId;
-    private int _documentCount;
+    private const byte CURRENT_VERSION = 2;
+
+    private int _nextId = 1;
 
     public string Name { get; set; }
     public int RootPage { get; set; }
-
-    public int DocumentCount
-    {
-        get => _documentCount;
-        set => _documentCount = value;
-    }
 
     public int NextId
     {
@@ -56,27 +51,13 @@ internal class CollectionEntry
         } while (Interlocked.CompareExchange(ref _nextId, minNextId, current) != current);
     }
 
-    /// <summary>
-    /// Atomically increments the document count.
-    /// Thread-safe for concurrent transactions.
-    /// </summary>
-    public void IncrementDocumentCount()
-    {
-        Interlocked.Increment(ref _documentCount);
-    }
-
-    /// <summary>
-    /// Atomically decrements the document count.
-    /// Thread-safe for concurrent transactions.
-    /// </summary>
-    public void DecrementDocumentCount()
-    {
-        Interlocked.Decrement(ref _documentCount);
-    }
-
     public int SerializeTo(byte[] buffer, int startOffset)
     {
         int offset = startOffset;
+
+        buffer[offset] = CURRENT_VERSION;
+        offset += 1;
+
         int nameByteCount = Encoding.UTF8.GetByteCount(Name);
 
         BinaryHelper.WriteInt32LE(buffer, offset, nameByteCount);
@@ -86,12 +67,6 @@ internal class CollectionEntry
         offset += nameByteCount;
 
         BinaryHelper.WriteInt32LE(buffer, offset, RootPage);
-        offset += 4;
-
-        BinaryHelper.WriteInt32LE(buffer, offset, DocumentCount);
-        offset += 4;
-
-        BinaryHelper.WriteInt32LE(buffer, offset, NextId);
         offset += 4;
 
         BinaryHelper.WriteInt32LE(buffer, offset, Indexes.Count);
@@ -110,32 +85,66 @@ internal class CollectionEntry
         CollectionEntry entry = new CollectionEntry();
         int offset = startOffset;
 
-        int nameLength = BinaryHelper.ReadInt32LE(buffer, offset);
-        offset += 4;
+        byte version = buffer[offset];
 
-        byte[] nameBytes = new byte[nameLength];
-        Array.Copy(buffer, offset, nameBytes, 0, nameLength);
-        entry.Name = Encoding.UTF8.GetString(nameBytes);
-        offset += nameLength;
-
-        entry.RootPage = BinaryHelper.ReadInt32LE(buffer, offset);
-        offset += 4;
-
-        entry.DocumentCount = BinaryHelper.ReadInt32LE(buffer, offset);
-        offset += 4;
-
-        entry.NextId = BinaryHelper.ReadInt32LE(buffer, offset);
-        offset += 4;
-
-        int indexCount = BinaryHelper.ReadInt32LE(buffer, offset);
-        offset += 4;
-
-        for (int i = 0; i < indexCount; i++)
+        if (version == CURRENT_VERSION)
         {
-            int indexBytesRead = 0;
-            IndexDefinition index = IndexDefinition.Deserialize(buffer, offset, out indexBytesRead);
-            entry.Indexes.Add(index);
-            offset += indexBytesRead;
+            offset += 1;
+
+            int nameLength = BinaryHelper.ReadInt32LE(buffer, offset);
+            offset += 4;
+
+            byte[] nameBytes = new byte[nameLength];
+            Array.Copy(buffer, offset, nameBytes, 0, nameLength);
+            entry.Name = Encoding.UTF8.GetString(nameBytes);
+            offset += nameLength;
+
+            entry.RootPage = BinaryHelper.ReadInt32LE(buffer, offset);
+            offset += 4;
+
+            int indexCount = BinaryHelper.ReadInt32LE(buffer, offset);
+            offset += 4;
+
+            for (int i = 0; i < indexCount; i++)
+            {
+                int indexBytesRead = 0;
+                IndexDefinition index = IndexDefinition.Deserialize(buffer, offset, out indexBytesRead);
+                entry.Indexes.Add(index);
+                offset += indexBytesRead;
+            }
+        }
+        else
+        {
+            // Legacy format (version 1, unversioned): starts with name length int32
+            // The byte we read as "version" is actually the first byte of the name length.
+            // Re-read the full int32 from startOffset.
+            int nameLength = BinaryHelper.ReadInt32LE(buffer, offset - 1);
+            offset = startOffset + 4;
+
+            byte[] nameBytes = new byte[nameLength];
+            Array.Copy(buffer, offset, nameBytes, 0, nameLength);
+            entry.Name = Encoding.UTF8.GetString(nameBytes);
+            offset += nameLength;
+
+            entry.RootPage = BinaryHelper.ReadInt32LE(buffer, offset);
+            offset += 4;
+
+            // Skip DocumentCount (removed)
+            offset += 4;
+
+            // Skip NextId (now runtime-only)
+            offset += 4;
+
+            int indexCount = BinaryHelper.ReadInt32LE(buffer, offset);
+            offset += 4;
+
+            for (int i = 0; i < indexCount; i++)
+            {
+                int indexBytesRead = 0;
+                IndexDefinition index = IndexDefinition.Deserialize(buffer, offset, out indexBytesRead);
+                entry.Indexes.Add(index);
+                offset += indexBytesRead;
+            }
         }
 
         bytesRead = offset - startOffset;
@@ -146,7 +155,8 @@ internal class CollectionEntry
     public int GetSerializedSize()
     {
         int nameByteCount = Encoding.UTF8.GetByteCount(Name);
-        int result = 4 + nameByteCount + 4 + 4 + 4 + 4;
+        // 1 (version) + 4 (name length) + name + 4 (RootPage) + 4 (index count)
+        int result = 1 + 4 + nameByteCount + 4 + 4;
 
         for (int i = 0; i < Indexes.Count; i++)
         {

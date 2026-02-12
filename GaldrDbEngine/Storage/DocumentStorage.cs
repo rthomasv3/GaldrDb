@@ -42,7 +42,7 @@ internal class DocumentStorage : IDisposable
 
         if (pagesNeeded == 1)
         {
-            int pageId = FindOrAllocatePageForDocument(documentSize);
+            int pageId = FindOrAllocatePageForDocument(documentSize, context);
             pageIds[0] = pageId;
 
             _pageLockManager.AcquireWriteLock(pageId);
@@ -75,7 +75,7 @@ internal class DocumentStorage : IDisposable
                     {
                         // Release old page lock and acquire lock on new page
                         _pageLockManager.ReleaseWriteLock(pageId);
-                        pageId = _pageManager.AllocatePage();
+                        pageId = _pageManager.AllocatePage(context);
                         pageIds[0] = pageId;
                         _pageLockManager.AcquireWriteLock(pageId);
                         page.Reset(_pageSize, _usablePageSize);
@@ -100,7 +100,7 @@ internal class DocumentStorage : IDisposable
         }
         else
         {
-            pageIds = _pageManager.AllocatePages(pagesNeeded);
+            pageIds = _pageManager.AllocatePages(pagesNeeded, context);
 
             int firstPageId = pageIds[0];
             int offset = 0;
@@ -360,7 +360,7 @@ internal class DocumentStorage : IDisposable
         return deleted;
     }
 
-    private int FindOrAllocatePageForDocument(int documentSize)
+    private int FindOrAllocatePageForDocument(int documentSize, TransactionContext context)
     {
         int slotOverhead = DocumentPage.DOCUMENT_PAGE_OVERHEAD;
         int requiredSpace = documentSize + slotOverhead;
@@ -384,7 +384,7 @@ internal class DocumentStorage : IDisposable
 
         if (pageId == -1 || !_pageManager.IsAllocated(pageId) || pageId < PageConstants.FIRST_DATA_PAGE_ID)
         {
-            pageId = _pageManager.AllocatePage();
+            pageId = _pageManager.AllocatePage(context);
         }
 
         return pageId;
@@ -500,7 +500,7 @@ internal class DocumentStorage : IDisposable
 
         if (pagesNeeded == 1)
         {
-            int pageId = FindOrAllocatePageForDocument(documentSize);
+            int pageId = FindOrAllocatePageForDocument(documentSize, context);
             pageIds[0] = pageId;
 
             await _pageLockManager.AcquireWriteLockAsync(pageId, cancellationToken).ConfigureAwait(false);
@@ -532,7 +532,7 @@ internal class DocumentStorage : IDisposable
                     {
                         // Release old page lock and acquire lock on new page
                         _pageLockManager.ReleaseWriteLock(pageId);
-                        pageId = _pageManager.AllocatePage();
+                        pageId = _pageManager.AllocatePage(context);
                         pageIds[0] = pageId;
                         await _pageLockManager.AcquireWriteLockAsync(pageId, cancellationToken).ConfigureAwait(false);
                         page.Reset(_pageSize, _usablePageSize);
@@ -557,7 +557,7 @@ internal class DocumentStorage : IDisposable
         }
         else
         {
-            pageIds = _pageManager.AllocatePages(pagesNeeded);
+            pageIds = _pageManager.AllocatePages(pagesNeeded, context);
 
             int firstPageId = pageIds[0];
             int offset = 0;

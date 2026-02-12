@@ -35,7 +35,6 @@ public class GaldrDb : IGaldrDb
     private readonly GaldrJsonOptions _jsonOptions;
     private readonly HashSet<string> _ensuredCollections;
     private readonly object _ddlLock;
-    private readonly object _documentCountLock;
     private readonly object _commitSerializationLock;
     private readonly ConcurrentDictionary<string, SecondaryIndexBTree> _secondaryIndexCache;
     private readonly ConcurrentDictionary<string, BTree> _primaryBTreeCache;
@@ -90,7 +89,6 @@ public class GaldrDb : IGaldrDb
         };
         _ensuredCollections = new HashSet<string>();
         _ddlLock = new object();
-        _documentCountLock = new object();
         _commitSerializationLock = new object();
         _secondaryIndexCache = new ConcurrentDictionary<string, SecondaryIndexBTree>();
         _primaryBTreeCache = new ConcurrentDictionary<string, BTree>();
@@ -305,6 +303,7 @@ public class GaldrDb : IGaldrDb
     {
         GarbageCollectionResult gcResult = CollectGarbageInternal();
         int pagesCompacted = CompactFragmentedPages();
+        RebalanceBTrees();
 
         return new GarbageCollectionResult(
             gcResult.VersionsCollected,
@@ -604,7 +603,7 @@ public class GaldrDb : IGaldrDb
             }
 
             _collectionsMetadata.AddCollection(collectionName, rootPageId);
-            WriteCollectionsMetadataWithGrowth(ctx);
+            WriteCollectionsMetadataWithGrowth();
 
             _pageManager.SetFreeSpaceLevel(rootPageId, FreeSpaceLevel.None, ctx);
 
@@ -709,7 +708,7 @@ public class GaldrDb : IGaldrDb
             indexes.Add(new IndexInfo(def.FieldName, def.FieldType, def.IsUnique));
         }
 
-        return new CollectionInfo(collection.Name, collection.DocumentCount, indexes);
+        return new CollectionInfo(collection.Name, _versionIndex.GetDocumentCount(collectionName), indexes);
     }
 
     /// <summary>
@@ -754,18 +753,15 @@ public class GaldrDb : IGaldrDb
             {
                 SecondaryIndexBTree indexTree = GetSecondaryIndexBTree(collectionName, indexToRemove);
 
-                List<int> pageIds = indexTree.CollectAllPageIds(ctx);
-                for (int i = 0; i < pageIds.Count; i++)
-                {
-                    _pageManager.DeallocatePage(pageIds[i], ctx);
-                }
+                List<int> pageIds = indexTree.CollectAllPageIds();
+                _pageManager.DeallocatePages(pageIds);
 
                 // Remove from cache before removing from collection
                 _secondaryIndexCache.TryRemove($"{collectionName}:{indexToRemove.IndexName}", out _);
 
                 collection.Indexes.RemoveAt(indexPosition);
                 _collectionsMetadata.UpdateCollection(collection);
-                WriteCollectionsMetadataWithGrowth(ctx);
+                WriteCollectionsMetadataWithGrowth();
 
                 CommitInternalTransaction(ctx);
             }
@@ -793,9 +789,10 @@ public class GaldrDb : IGaldrDb
                 throw new InvalidOperationException($"Collection '{collectionName}' does not exist.");
             }
 
-            if (collection.DocumentCount > 0 && !deleteDocuments)
+            int docCount = _versionIndex != null ? _versionIndex.GetDocumentCount(collectionName) : 0;
+            if (docCount > 0 && !deleteDocuments)
             {
-                throw new InvalidOperationException($"Collection '{collectionName}' contains {collection.DocumentCount} document(s). Set deleteDocuments to true to delete the collection and all its documents.");
+                throw new InvalidOperationException($"Collection '{collectionName}' contains {docCount} document(s). Set deleteDocuments to true to delete the collection and all its documents.");
             }
 
             EnsureTransactionManager();
@@ -809,11 +806,8 @@ public class GaldrDb : IGaldrDb
                     IndexDefinition index = collection.Indexes[i];
                     SecondaryIndexBTree indexTree = GetSecondaryIndexBTree(collectionName, index);
 
-                    List<int> indexPageIds = indexTree.CollectAllPageIds(ctx);
-                    for (int j = 0; j < indexPageIds.Count; j++)
-                    {
-                        _pageManager.DeallocatePage(indexPageIds[j], ctx);
-                    }
+                    List<int> indexPageIds = indexTree.CollectAllPageIds();
+                    _pageManager.DeallocatePages(indexPageIds);
 
                     // Remove from cache
                     _secondaryIndexCache.TryRemove($"{collectionName}:{index.IndexName}", out _);
@@ -823,7 +817,7 @@ public class GaldrDb : IGaldrDb
 
                 if (deleteDocuments)
                 {
-                    List<BTreeEntry> allEntries = primaryTree.GetAllEntries(ctx);
+                    List<BTreeEntry> allEntries = primaryTree.GetAllEntries();
                     for (int i = 0; i < allEntries.Count; i++)
                     {
                         DocumentLocation location = allEntries[i].Location;
@@ -831,14 +825,11 @@ public class GaldrDb : IGaldrDb
                     }
                 }
 
-                List<int> treePageIds = primaryTree.CollectAllPageIds(ctx);
-                for (int i = 0; i < treePageIds.Count; i++)
-                {
-                    _pageManager.DeallocatePage(treePageIds[i], ctx);
-                }
+                List<int> treePageIds = primaryTree.CollectAllPageIds();
+                _pageManager.DeallocatePages(treePageIds);
 
                 _collectionsMetadata.RemoveCollection(collectionName);
-                WriteCollectionsMetadataWithGrowth(ctx);
+                WriteCollectionsMetadataWithGrowth();
 
                 _ensuredCollections.Remove(collectionName);
                 _primaryBTreeCache.TryRemove(collectionName, out _);
@@ -1347,7 +1338,7 @@ public class GaldrDb : IGaldrDb
                 }
 
                 _collectionsMetadata.UpdateCollection(collection);
-                WriteCollectionsMetadataWithGrowth(ctx);
+                WriteCollectionsMetadataWithGrowth();
 
                 CommitInternalTransaction(ctx);
             }
@@ -1393,7 +1384,7 @@ public class GaldrDb : IGaldrDb
             IndexDefinition newIndex = new IndexDefinition(fieldName, GaldrFieldType.String, rootPageId, false);
             collection.Indexes.Add(newIndex);
             _collectionsMetadata.UpdateCollection(collection);
-            WriteCollectionsMetadataWithGrowth(ctx);
+            WriteCollectionsMetadataWithGrowth();
 
             CommitInternalTransaction(ctx);
         }
@@ -1414,7 +1405,7 @@ public class GaldrDb : IGaldrDb
         if (!(keyBytes.Length == 1 && keyBytes[0] == 0x00))
         {
             SecondaryIndexBTree indexTree = GetSecondaryIndexBTree(collectionName, indexDef);
-            List<DocumentLocation> existingEntries = indexTree.SearchByFieldValue(keyBytes, context);
+            List<DocumentLocation> existingEntries = indexTree.SearchByFieldValue(keyBytes);
             if (existingEntries.Count > 0)
             {
                 throw new InvalidOperationException($"Unique constraint violation: A document with {fieldName} = '{GetFieldValueString(keyBytes)}' already exists.");
@@ -1766,9 +1757,22 @@ public class GaldrDb : IGaldrDb
             BTree btree = GetPrimaryBTree(collection);
             List<BTreeEntry> entries = btree.GetAllEntries();
 
+            int maxDocId = -1;
             foreach (BTreeEntry entry in entries)
             {
                 _versionIndex.AddVersion(collection.Name, entry.Key, baseTxId, baseCSN, entry.Location);
+                if (entry.Key > maxDocId)
+                {
+                    maxDocId = entry.Key;
+                }
+            }
+
+            // Fix up NextId from actual BTree contents in case the persisted
+            // value is stale (metadata writes are skipped when root pages
+            // don't change, so NextId may not have been flushed to disk).
+            if (maxDocId >= 0)
+            {
+                collection.UpdateNextIdIfHigher(maxDocId + 1);
             }
         }
     }
@@ -1833,15 +1837,15 @@ public class GaldrDb : IGaldrDb
         }
     }
 
-    internal void WriteCollectionsMetadataWithGrowth(TransactionContext context = null)
+    internal void WriteCollectionsMetadataWithGrowth()
     {
         int pagesNeeded = _collectionsMetadata.GetPagesNeeded();
         if (pagesNeeded > _collectionsMetadata.GetCurrentPageCount())
         {
             int additional = pagesNeeded - _collectionsMetadata.GetCurrentPageCount();
-            _pageManager.GrowCollectionsMetadata(_collectionsMetadata, additional, context);
+            _pageManager.GrowCollectionsMetadata(_collectionsMetadata, additional);
         }
-        _collectionsMetadata.WriteToDisk(context);
+        _collectionsMetadata.WriteToDisk();
     }
 
     private void EnsureAllCollections()
@@ -1975,6 +1979,42 @@ public class GaldrDb : IGaldrDb
         return level;
     }
 
+    private void RebalanceBTrees()
+    {
+        List<CollectionEntry> collections = _collectionsMetadata.GetAllCollections();
+        bool metadataChanged = false;
+
+        foreach (CollectionEntry collection in collections)
+        {
+            BTree btree = GetPrimaryBTree(collection);
+            if (btree.Rebalance())
+            {
+                collection.RootPage = btree.GetRootPageId();
+                metadataChanged = true;
+            }
+
+            foreach (IndexDefinition indexDef in collection.Indexes)
+            {
+                SecondaryIndexBTree indexTree = GetSecondaryIndexBTree(collection.Name, indexDef);
+                if (indexTree.Rebalance())
+                {
+                    indexDef.RootPageId = indexTree.GetRootPageId();
+                    metadataChanged = true;
+                }
+            }
+
+            if (metadataChanged)
+            {
+                _collectionsMetadata.UpdateCollection(collection);
+            }
+        }
+
+        if (metadataChanged)
+        {
+            WriteCollectionsMetadataWithGrowth();
+        }
+    }
+
     internal TransactionContext BeginSnapshot(ulong txId, ulong snapshotTxId, ulong snapshotCSN)
     {
         TransactionContext ctx;
@@ -2026,6 +2066,12 @@ public class GaldrDb : IGaldrDb
         if (_writeStrategy != null && ctx != null)
         {
             _writeStrategy.AbortWrite(ctx);
+
+            if (ctx.AllocatedDataPages != null && ctx.AllocatedDataPages.Count > 0)
+            {
+                _pageManager.DeallocatePages(ctx.AllocatedDataPages);
+                ctx.AllocatedDataPages.Clear();
+            }
         }
     }
 
@@ -2082,6 +2128,61 @@ public class GaldrDb : IGaldrDb
 
     #endregion
 
+    #region BTree Pending Ops Flush/Abort/Undo
+
+    internal BTreeFlushedOps FlushAllBTreePendingOps(ulong txId)
+    {
+        BTreeFlushedOps result = new BTreeFlushedOps();
+
+        foreach (var btree in _primaryBTreeCache.Values)
+        {
+            var ops = btree.FlushPendingOps(txId);
+            if (ops.Count > 0)
+            {
+                result.PrimaryOps.AddRange(ops);
+            }
+        }
+
+        foreach (var indexTree in _secondaryIndexCache.Values)
+        {
+            var ops = indexTree.FlushPendingOps(txId);
+            if (ops.Count > 0)
+            {
+                result.SecondaryOps.Add(new SecondaryIndexFlushedOps(indexTree, ops));
+            }
+        }
+
+        return result;
+    }
+
+    internal void UndoAllBTreeOps(BTreeFlushedOps flushedOps)
+    {
+        foreach (var btree in _primaryBTreeCache.Values)
+        {
+            btree.UndoPendingOps(flushedOps.PrimaryOps);
+        }
+
+        foreach (var entry in flushedOps.SecondaryOps)
+        {
+            entry.Tree.UndoPendingOps(entry.Ops);
+        }
+    }
+
+    internal void AbortAllBTreePendingOps(ulong txId)
+    {
+        foreach (var btree in _primaryBTreeCache.Values)
+        {
+            btree.AbortPendingOps(txId);
+        }
+
+        foreach (var indexTree in _secondaryIndexCache.Values)
+        {
+            indexTree.AbortPendingOps(txId);
+        }
+    }
+
+    #endregion
+
     #region Internal Transaction Commit Methods
 
     internal DocumentLocation CommitInsert(string collectionName, int docId, byte[] serializedData, IReadOnlyList<IndexFieldEntry> indexFields, TransactionContext context = null)
@@ -2095,21 +2196,28 @@ public class GaldrDb : IGaldrDb
         DocumentLocation location = _documentStorage.WriteDocument(serializedData, context);
 
         BTree btree = GetPrimaryBTree(collection);
-        btree.Insert(docId, location, context);
+        btree.Insert(docId, location, context.TxId);
+
+        bool metadataChanged = false;
 
         int currentRootPageId = btree.GetRootPageId();
         if (currentRootPageId != collection.RootPage)
         {
             collection.RootPage = currentRootPageId;
+            metadataChanged = true;
         }
 
         if (indexFields != null && indexFields.Count > 0)
         {
             InsertIntoIndexesInternal(collection, docId, location, indexFields, context);
+            metadataChanged = true;
         }
 
-        _collectionsMetadata.UpdateCollection(collection);
-        WriteCollectionsMetadataWithGrowth(context);
+        if (metadataChanged)
+        {
+            _collectionsMetadata.UpdateCollection(collection);
+            WriteCollectionsMetadataWithGrowth();
+        }
 
         return location;
     }
@@ -2123,10 +2231,12 @@ public class GaldrDb : IGaldrDb
         }
 
         BTree btree = GetPrimaryBTree(collection);
+        bool metadataChanged = false;
 
         if (oldIndexFields != null && oldIndexFields.Count > 0)
         {
             DeleteFromIndexesInternal(collection, docId, oldIndexFields, context);
+            metadataChanged = true;
         }
 
         // Note: We do NOT delete the old document from storage for MVCC.
@@ -2134,22 +2244,25 @@ public class GaldrDb : IGaldrDb
 
         DocumentLocation newLocation = _documentStorage.WriteDocument(serializedData, context);
 
-        btree.Update(docId, newLocation, context);
+        btree.Update(docId, newLocation, context.TxId);
 
         int currentRootPageId = btree.GetRootPageId();
         if (currentRootPageId != collection.RootPage)
         {
             collection.RootPage = currentRootPageId;
+            metadataChanged = true;
         }
 
         if (newIndexFields != null && newIndexFields.Count > 0)
         {
             InsertIntoIndexesInternal(collection, docId, newLocation, newIndexFields, context);
+            metadataChanged = true;
         }
 
-        // Note: No need to call UpdateCollection - collection is a reference type
-        // and modifications (like RootPage) are already reflected in the dictionary
-        WriteCollectionsMetadataWithGrowth(context);
+        if (metadataChanged)
+        {
+            WriteCollectionsMetadataWithGrowth();
+        }
 
         return newLocation;
     }
@@ -2182,7 +2295,7 @@ public class GaldrDb : IGaldrDb
         if (collection != null)
         {
             BTree btree = GetPrimaryBTree(collection);
-            List<BTreeEntry> entries = btree.SearchRange(startDocId, endDocId, includeStart, includeEnd, context);
+            List<BTreeEntry> entries = btree.SearchRange(startDocId, endDocId, includeStart, includeEnd);
 
             foreach (BTreeEntry entry in entries)
             {
@@ -2201,7 +2314,7 @@ public class GaldrDb : IGaldrDb
         if (collection != null)
         {
             BTree btree = GetPrimaryBTree(collection);
-            List<BTreeEntry> entries = await btree.SearchRangeAsync(startDocId, endDocId, includeStart, includeEnd, context, cancellationToken).ConfigureAwait(false);
+            List<BTreeEntry> entries = await btree.SearchRangeAsync(startDocId, endDocId, includeStart, includeEnd, cancellationToken).ConfigureAwait(false);
 
             foreach (BTreeEntry entry in entries)
             {
@@ -2215,25 +2328,25 @@ public class GaldrDb : IGaldrDb
     internal List<SecondaryIndexEntry> SearchSecondaryIndex(string collectionName, IndexDefinition indexDef, byte[] keyBytes, TransactionContext context = null)
     {
         SecondaryIndexBTree indexTree = GetSecondaryIndexBTree(collectionName, indexDef);
-        return indexTree.SearchByFieldValueWithDocIds(keyBytes, context);
+        return indexTree.SearchByFieldValueWithDocIds(keyBytes);
     }
 
     internal List<SecondaryIndexEntry> SearchSecondaryIndexExact(string collectionName, IndexDefinition indexDef, byte[] keyBytes, TransactionContext context = null)
     {
         SecondaryIndexBTree indexTree = GetSecondaryIndexBTree(collectionName, indexDef);
-        return indexTree.SearchByExactFieldValueWithDocIds(keyBytes, context);
+        return indexTree.SearchByExactFieldValueWithDocIds(keyBytes);
     }
 
     internal List<SecondaryIndexEntry> SearchSecondaryIndexRange(string collectionName, IndexDefinition indexDef, byte[] startKeyBytes, byte[] endKeyBytes, bool includeStart, bool includeEnd, TransactionContext context = null)
     {
         SecondaryIndexBTree indexTree = GetSecondaryIndexBTree(collectionName, indexDef);
-        return indexTree.SearchRangeWithDocIds(startKeyBytes, endKeyBytes, includeStart, includeEnd, context);
+        return indexTree.SearchRangeWithDocIds(startKeyBytes, endKeyBytes, includeStart, includeEnd);
     }
 
     internal List<SecondaryIndexEntry> SearchSecondaryIndexPrefixRange(string collectionName, IndexDefinition indexDef, byte[] startKeyBytes, byte[] prefixKeyBytes, bool includeStart, TransactionContext context = null)
     {
         SecondaryIndexBTree indexTree = GetSecondaryIndexBTree(collectionName, indexDef);
-        return indexTree.SearchPrefixRangeWithDocIds(startKeyBytes, prefixKeyBytes, includeStart, context);
+        return indexTree.SearchPrefixRangeWithDocIds(startKeyBytes, prefixKeyBytes, includeStart);
     }
 
     internal void CommitDelete(string collectionName, int docId, IReadOnlyList<IndexFieldEntry> oldIndexFields, TransactionContext context = null)
@@ -2244,16 +2357,19 @@ public class GaldrDb : IGaldrDb
             throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
         }
 
+        bool metadataChanged = false;
+
         if (oldIndexFields != null && oldIndexFields.Count > 0)
         {
             DeleteFromIndexesInternal(collection, docId, oldIndexFields, context);
+            metadataChanged = true;
         }
 
         BTree btree = GetPrimaryBTree(collection);
 
         // Note: We do NOT delete the document from storage for MVCC.
         // Old versions must remain readable until garbage collection.
-        bool deleted = btree.Delete(docId, context);
+        bool deleted = btree.Delete(docId, context.TxId);
 
         if (deleted)
         {
@@ -2261,48 +2377,13 @@ public class GaldrDb : IGaldrDb
             if (currentRootPageId != collection.RootPage)
             {
                 collection.RootPage = currentRootPageId;
+                metadataChanged = true;
             }
-
-            WriteCollectionsMetadataWithGrowth(context);
         }
-    }
 
-    /// <summary>
-    /// Applies document count changes after successful version validation.
-    /// Thread-safe and persists the changes atomically.
-    /// </summary>
-    internal void ApplyDocumentCountDeltas(Dictionary<string, int> deltas)
-    {
-        lock (_documentCountLock)
+        if (metadataChanged)
         {
-            if (deltas != null && deltas.Count > 0)
-            {
-                foreach (KeyValuePair<string, int> kvp in deltas)
-                {
-                    CollectionEntry collection = _collectionsMetadata.FindCollection(kvp.Key);
-                    if (collection != null)
-                    {
-                        if (kvp.Value > 0)
-                        {
-                            for (int i = 0; i < kvp.Value; i++)
-                            {
-                                collection.IncrementDocumentCount();
-                            }
-                        }
-                        else if (kvp.Value < 0)
-                        {
-                            for (int i = 0; i < -kvp.Value; i++)
-                            {
-                                collection.DecrementDocumentCount();
-                            }
-                        }
-
-                        _collectionsMetadata.UpdateCollection(collection);
-                    }
-                }
-
-                WriteCollectionsMetadataWithGrowth();
-            }
+            WriteCollectionsMetadataWithGrowth();
         }
     }
 
@@ -2327,7 +2408,7 @@ public class GaldrDb : IGaldrDb
                 SecondaryIndexBTree indexTree = GetSecondaryIndexBTree(collection.Name, indexDef);
 
                 byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(field.KeyBytes, docId);
-                indexTree.Insert(compositeKey, location, context);
+                indexTree.Insert(compositeKey, location, context.TxId);
 
                 int currentRootPageId = indexTree.GetRootPageId();
                 if (currentRootPageId != indexDef.RootPageId)
@@ -2358,7 +2439,7 @@ public class GaldrDb : IGaldrDb
                 SecondaryIndexBTree indexTree = GetSecondaryIndexBTree(collection.Name, indexDef);
 
                 byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(field.KeyBytes, docId);
-                indexTree.Delete(compositeKey, context);
+                indexTree.Delete(compositeKey, context.TxId);
 
                 int currentRootPageId = indexTree.GetRootPageId();
                 if (currentRootPageId != indexDef.RootPageId)
@@ -2384,21 +2465,28 @@ public class GaldrDb : IGaldrDb
         DocumentLocation location = await _documentStorage.WriteDocumentAsync(serializedData, context, cancellationToken).ConfigureAwait(false);
 
         BTree btree = GetPrimaryBTree(collection);
-        await btree.InsertAsync(docId, location, context, cancellationToken).ConfigureAwait(false);
+        await btree.InsertAsync(docId, location, context.TxId, cancellationToken).ConfigureAwait(false);
+
+        bool metadataChanged = false;
 
         int currentRootPageId = btree.GetRootPageId();
         if (currentRootPageId != collection.RootPage)
         {
             collection.RootPage = currentRootPageId;
+            metadataChanged = true;
         }
 
         if (indexFields != null && indexFields.Count > 0)
         {
             InsertIntoIndexesInternal(collection, docId, location, indexFields, context);
+            metadataChanged = true;
         }
 
-        _collectionsMetadata.UpdateCollection(collection);
-        WriteCollectionsMetadataWithGrowth(context);
+        if (metadataChanged)
+        {
+            _collectionsMetadata.UpdateCollection(collection);
+            WriteCollectionsMetadataWithGrowth();
+        }
 
         return location;
     }
@@ -2412,10 +2500,12 @@ public class GaldrDb : IGaldrDb
         }
 
         BTree btree = GetPrimaryBTree(collection);
+        bool metadataChanged = false;
 
         if (oldIndexFields != null && oldIndexFields.Count > 0)
         {
             DeleteFromIndexesInternal(collection, docId, oldIndexFields, context);
+            metadataChanged = true;
         }
 
         // Note: We do NOT delete the old document from storage for MVCC.
@@ -2423,22 +2513,26 @@ public class GaldrDb : IGaldrDb
 
         DocumentLocation newLocation = await _documentStorage.WriteDocumentAsync(serializedData, context, cancellationToken).ConfigureAwait(false);
 
-        await btree.DeleteAsync(docId, context, cancellationToken).ConfigureAwait(false);
-        await btree.InsertAsync(docId, newLocation, context, cancellationToken).ConfigureAwait(false);
+        await btree.DeleteAsync(docId, context.TxId, cancellationToken).ConfigureAwait(false);
+        await btree.InsertAsync(docId, newLocation, context.TxId, cancellationToken).ConfigureAwait(false);
 
         int currentRootPageId = btree.GetRootPageId();
         if (currentRootPageId != collection.RootPage)
         {
             collection.RootPage = currentRootPageId;
+            metadataChanged = true;
         }
 
         if (newIndexFields != null && newIndexFields.Count > 0)
         {
             InsertIntoIndexesInternal(collection, docId, newLocation, newIndexFields, context);
+            metadataChanged = true;
         }
 
-        _collectionsMetadata.UpdateCollection(collection);
-        WriteCollectionsMetadataWithGrowth(context);
+        if (metadataChanged)
+        {
+            WriteCollectionsMetadataWithGrowth();
+        }
 
         return newLocation;
     }
@@ -2471,16 +2565,19 @@ public class GaldrDb : IGaldrDb
             throw new InvalidOperationException($"Collection '{collectionName}' does not exist");
         }
 
+        bool metadataChanged = false;
+
         if (oldIndexFields != null && oldIndexFields.Count > 0)
         {
             DeleteFromIndexesInternal(collection, docId, oldIndexFields, context);
+            metadataChanged = true;
         }
 
         BTree btree = GetPrimaryBTree(collection);
 
         // Note: We do NOT delete the document from storage for MVCC.
         // Old versions must remain readable until garbage collection.
-        bool deleted = await btree.DeleteAsync(docId, context, cancellationToken).ConfigureAwait(false);
+        bool deleted = await btree.DeleteAsync(docId, context.TxId, cancellationToken).ConfigureAwait(false);
 
         if (deleted)
         {
@@ -2488,9 +2585,13 @@ public class GaldrDb : IGaldrDb
             if (currentRootPageId != collection.RootPage)
             {
                 collection.RootPage = currentRootPageId;
+                metadataChanged = true;
             }
+        }
 
-            WriteCollectionsMetadataWithGrowth(context);
+        if (metadataChanged)
+        {
+            WriteCollectionsMetadataWithGrowth();
         }
     }
 
@@ -2505,7 +2606,7 @@ public class GaldrDb : IGaldrDb
         DocumentLocation location = targetDb._documentStorage.WriteDocument(docBytes);
 
         BTree btree = targetDb.GetPrimaryBTree(collection);
-        btree.Insert(docId, location);
+        btree.InsertDirect(docId, location);
 
         int currentRootPageId = btree.GetRootPageId();
         if (currentRootPageId != collection.RootPage)
@@ -2526,7 +2627,6 @@ public class GaldrDb : IGaldrDb
             }
         }
 
-        collection.IncrementDocumentCount();
         targetDb._collectionsMetadata.UpdateCollection(collection);
         targetDb.WriteCollectionsMetadataWithGrowth();
     }
@@ -2538,7 +2638,7 @@ public class GaldrDb : IGaldrDb
         DocumentLocation location = await targetDb._documentStorage.WriteDocumentAsync(docBytes, null, cancellationToken).ConfigureAwait(false);
 
         BTree btree = targetDb.GetPrimaryBTree(collection);
-        await btree.InsertAsync(docId, location, null, cancellationToken).ConfigureAwait(false);
+        btree.InsertDirect(docId, location);
 
         int currentRootPageId = btree.GetRootPageId();
         if (currentRootPageId != collection.RootPage)
@@ -2559,7 +2659,6 @@ public class GaldrDb : IGaldrDb
             }
         }
 
-        collection.IncrementDocumentCount();
         targetDb._collectionsMetadata.UpdateCollection(collection);
         targetDb.WriteCollectionsMetadataWithGrowth();
     }
@@ -2594,7 +2693,7 @@ public class GaldrDb : IGaldrDb
                 SecondaryIndexBTree indexTree = targetDb.GetSecondaryIndexBTree(collection.Name, indexDef);
 
                 byte[] compositeKey = SecondaryIndexBTree.CreateCompositeKey(field.KeyBytes, docId);
-                indexTree.Insert(compositeKey, location);
+                indexTree.InsertDirect(compositeKey, location);
 
                 int newRootPageId = indexTree.GetRootPageId();
                 if (newRootPageId != indexDef.RootPageId)

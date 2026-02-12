@@ -144,8 +144,10 @@ internal sealed class VersionIndex
                         if (op.ReadVersionTxId.HasValue)
                         {
                             // For updates/deletes: check if the version we read is still current
-                            // If someone else modified it after we read it, that's a conflict
-                            hasConflict = existing.CreatedBy != op.ReadVersionTxId.Value;
+                            // If someone else modified it after we read it, that's a conflict.
+                            // Also detect concurrent deletes: MarkDeletedInternal sets DeletedCSN
+                            // but leaves CreatedBy unchanged, so we must check IsDeleted separately.
+                            hasConflict = existing.CreatedBy != op.ReadVersionTxId.Value || existing.IsDeleted;
                         }
                         else
                         {
@@ -460,19 +462,28 @@ internal sealed class VersionIndex
 
     internal int GetDocumentCount(string collectionName)
     {
+        int count = 0;
+
         _lock.EnterReadLock();
         try
         {
             if (_index.TryGetValue(collectionName, out SortedDictionary<int, DocumentVersion> collection))
             {
-                return collection.Count;
+                foreach (KeyValuePair<int, DocumentVersion> kvp in collection)
+                {
+                    if (!kvp.Value.IsDeleted)
+                    {
+                        count++;
+                    }
+                }
             }
-            return 0;
         }
         finally
         {
             _lock.ExitReadLock();
         }
+
+        return count;
     }
 
     public void CollectGarbageVersions(ulong oldestSnapshotCSN, List<CollectableVersion> results)

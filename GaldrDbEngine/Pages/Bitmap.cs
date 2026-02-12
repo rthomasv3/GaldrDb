@@ -170,7 +170,7 @@ internal class Bitmap
         _totalPages = newTotalPages;
     }
 
-    public void LoadFromDisk(TransactionContext context = null)
+    public void LoadFromDisk()
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
         try
@@ -180,7 +180,7 @@ internal class Bitmap
 
             for (int i = 0; i < _pageCount; i++)
             {
-                _pageIO.ReadPage(_startPage + i, buffer, context);
+                _pageIO.ReadPage(_startPage + i, buffer);
                 int bytesToCopy = Math.Min(_usablePageSize, bitmapSizeBytes - offset);
 
                 Array.Copy(buffer, 0, _bitmap, offset, bytesToCopy);
@@ -193,7 +193,7 @@ internal class Bitmap
         }
     }
 
-    public void WriteToDisk(TransactionContext context = null)
+    public void WriteToDisk()
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
         try
@@ -207,7 +207,7 @@ internal class Bitmap
                 int bytesToCopy = Math.Min(_usablePageSize, bitmapSizeBytes - offset);
 
                 Array.Copy(_bitmap, offset, buffer, 0, bytesToCopy);
-                _pageIO.WritePage(_startPage + i, buffer, context);
+                _pageIO.WritePage(_startPage + i, buffer);
 
                 offset += bytesToCopy;
             }

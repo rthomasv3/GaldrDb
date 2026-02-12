@@ -136,7 +136,7 @@ public class CrashDebugTests
             Console.WriteLine($"CollectionsMetadata has {metadataCollections.Count} collections:");
             foreach (GaldrDbEngine.Storage.CollectionEntry entry in metadataCollections)
             {
-                Console.WriteLine($"  Collection '{entry.Name}': RootPage={entry.RootPage}, DocCount={entry.DocumentCount}, NextId={entry.NextId}");
+                Console.WriteLine($"  Collection '{entry.Name}': RootPage={entry.RootPage}, NextId={entry.NextId}");
 
                 // Read page 4 raw bytes to see what's there
                 Console.WriteLine($"  Inspecting raw page {entry.RootPage}:");

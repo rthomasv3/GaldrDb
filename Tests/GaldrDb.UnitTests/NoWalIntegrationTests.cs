@@ -42,7 +42,7 @@ public class NoWalIntegrationTests
         using (GaldrDatabase db = GaldrDatabase.Create(dbPath, NoWalOptions()))
         {
             int id = db.Insert(new Person { Name = "Alice", Age = 30, Email = "alice@example.com" });
-            Assert.IsTrue(id > 0);
+            Assert.IsGreaterThan(0, id);
 
             Person result = db.GetById<Person>(id);
             Assert.IsNotNull(result);
@@ -64,7 +64,7 @@ public class NoWalIntegrationTests
             }
 
             List<Person> all = db.Query<Person>().ToList();
-            Assert.AreEqual(50, all.Count);
+            Assert.HasCount(50, all);
         }
     }
 
@@ -106,7 +106,7 @@ public class NoWalIntegrationTests
             }
 
             List<Person> results = db.Query<Person>().ToList();
-            Assert.AreEqual(1, results.Count);
+            Assert.HasCount(1, results);
             Assert.AreEqual("TxPerson", results[0].Name);
         }
     }
@@ -129,7 +129,7 @@ public class NoWalIntegrationTests
             }
 
             List<Person> results = db.Query<Person>().ToList();
-            Assert.AreEqual(1, results.Count);
+            Assert.HasCount(1, results);
             Assert.AreEqual("Existing", results[0].Name);
         }
     }
@@ -178,7 +178,7 @@ public class NoWalIntegrationTests
         using (GaldrDatabase db = GaldrDatabase.Open(dbPath, NoWalOptions()))
         {
             List<Person> results = db.Query<Person>().ToList();
-            Assert.AreEqual(1, results.Count);
+            Assert.HasCount(1, results);
             Assert.AreEqual("Persistent", results[0].Name);
         }
     }
@@ -214,7 +214,7 @@ public class NoWalIntegrationTests
             }
 
             List<Person> results = db.Query<Person>().ToList();
-            Assert.AreEqual(10, results.Count);
+            Assert.HasCount(10, results);
         }
     }
 

@@ -547,7 +547,6 @@ public class Transaction : ITransaction
 
             int retryCount = 0;
             List<VersionOperation> versionOps = null;
-            Dictionary<string, int> documentCountDeltas = new Dictionary<string, int>();
 
             // Write pages with retry on page conflicts.
             // Page conflicts occur when concurrent transactions modify the same BTree pages.
@@ -556,7 +555,8 @@ public class Transaction : ITransaction
             {
                 _db.BeginWrite(_context);
                 _hasActiveWrite = true;
-                documentCountDeltas.Clear();
+
+                BTreeFlushedOps flushedOps = null;
 
                 try
                 {
@@ -572,11 +572,6 @@ public class Transaction : ITransaction
                             case WriteOperation.Insert:
                                 location = _db.CommitInsert(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, _context);
                                 versionOps.Add(VersionOperation.ForInsert(entry.CollectionName, entry.DocumentId, location));
-                                if (!documentCountDeltas.TryGetValue(entry.CollectionName, out int insertDelta))
-                                {
-                                    insertDelta = 0;
-                                }
-                                documentCountDeltas[entry.CollectionName] = insertDelta + 1;
                                 break;
 
                             case WriteOperation.Update:
@@ -587,14 +582,12 @@ public class Transaction : ITransaction
                             case WriteOperation.Delete:
                                 _db.CommitDelete(entry.CollectionName, entry.DocumentId, entry.OldIndexFields, _context);
                                 versionOps.Add(VersionOperation.ForDelete(entry.CollectionName, entry.DocumentId, entry.ReadVersionTxId));
-                                if (!documentCountDeltas.TryGetValue(entry.CollectionName, out int deleteDelta))
-                                {
-                                    deleteDelta = 0;
-                                }
-                                documentCountDeltas[entry.CollectionName] = deleteDelta - 1;
                                 break;
                         }
                     }
+
+                    // Materialize BTree pending ops to disk before commit validation
+                    flushedOps = _db.FlushAllBTreePendingOps(TxId.Value);
 
                     // Atomically validate version conflicts, commit, and add version entries.
                     // This ensures frames are never committed without valid version entries,
@@ -605,6 +598,15 @@ public class Transaction : ITransaction
                 }
                 catch (PageConflictException)
                 {
+                    if (flushedOps != null)
+                    {
+                        _db.UndoAllBTreeOps(flushedOps);
+                    }
+                    else
+                    {
+                        _db.AbortAllBTreePendingOps(TxId.Value);
+                    }
+
                     _db.AbortWrite(_context);
                     _hasActiveWrite = false;
 
@@ -629,6 +631,15 @@ public class Transaction : ITransaction
                 }
                 catch
                 {
+                    if (flushedOps != null)
+                    {
+                        _db.UndoAllBTreeOps(flushedOps);
+                    }
+                    else
+                    {
+                        _db.AbortAllBTreePendingOps(TxId.Value);
+                    }
+
                     _db.AbortWrite(_context);
                     _hasActiveWrite = false;
                     State = TransactionState.Aborted;
@@ -640,9 +651,6 @@ public class Transaction : ITransaction
             // End snapshot before auto checkpoint so checkpoint can make progress
             _db.EndSnapshot(_context);
             _hasActiveSnapshot = false;
-
-            // Apply document count changes only after successful version validation
-            _db.ApplyDocumentCountDeltas(documentCountDeltas);
 
             State = TransactionState.Committed;
             _txManager.MarkCommitted(TxId);
@@ -660,6 +668,8 @@ public class Transaction : ITransaction
     {
         if (State != TransactionState.Committed && State != TransactionState.Aborted)
         {
+            _db.AbortAllBTreePendingOps(TxId.Value);
+
             if (_hasActiveWrite)
             {
                 _db.AbortWrite(_context);
@@ -1582,7 +1592,6 @@ public class Transaction : ITransaction
 
             int retryCount = 0;
             List<VersionOperation> versionOps = null;
-            Dictionary<string, int> documentCountDeltas = new Dictionary<string, int>();
 
             // Write pages with retry on page conflicts.
             // Page conflicts occur when concurrent transactions modify the same BTree pages.
@@ -1591,7 +1600,8 @@ public class Transaction : ITransaction
             {
                 _db.BeginWrite(_context);
                 _hasActiveWrite = true;
-                documentCountDeltas.Clear();
+
+                BTreeFlushedOps flushedOps = null;
 
                 try
                 {
@@ -1607,11 +1617,6 @@ public class Transaction : ITransaction
                             case WriteOperation.Insert:
                                 location = await _db.CommitInsertAsync(entry.CollectionName, entry.DocumentId, entry.SerializedData, entry.IndexFields, _context, cancellationToken).ConfigureAwait(false);
                                 versionOps.Add(VersionOperation.ForInsert(entry.CollectionName, entry.DocumentId, location));
-                                if (!documentCountDeltas.TryGetValue(entry.CollectionName, out int insertDelta))
-                                {
-                                    insertDelta = 0;
-                                }
-                                documentCountDeltas[entry.CollectionName] = insertDelta + 1;
                                 break;
 
                             case WriteOperation.Update:
@@ -1622,14 +1627,12 @@ public class Transaction : ITransaction
                             case WriteOperation.Delete:
                                 await _db.CommitDeleteAsync(entry.CollectionName, entry.DocumentId, entry.OldIndexFields, _context, cancellationToken).ConfigureAwait(false);
                                 versionOps.Add(VersionOperation.ForDelete(entry.CollectionName, entry.DocumentId, entry.ReadVersionTxId));
-                                if (!documentCountDeltas.TryGetValue(entry.CollectionName, out int deleteDelta))
-                                {
-                                    deleteDelta = 0;
-                                }
-                                documentCountDeltas[entry.CollectionName] = deleteDelta - 1;
                                 break;
                         }
                     }
+
+                    // Materialize BTree pending ops to disk before commit validation
+                    flushedOps = _db.FlushAllBTreePendingOps(TxId.Value);
 
                     // Atomically validate version conflicts, commit, and add version entries.
                     // This ensures frames are never committed without valid version entries,
@@ -1640,6 +1643,15 @@ public class Transaction : ITransaction
                 }
                 catch (PageConflictException)
                 {
+                    if (flushedOps != null)
+                    {
+                        _db.UndoAllBTreeOps(flushedOps);
+                    }
+                    else
+                    {
+                        _db.AbortAllBTreePendingOps(TxId.Value);
+                    }
+
                     _db.AbortWrite(_context);
                     _hasActiveWrite = false;
 
@@ -1664,6 +1676,15 @@ public class Transaction : ITransaction
                 }
                 catch
                 {
+                    if (flushedOps != null)
+                    {
+                        _db.UndoAllBTreeOps(flushedOps);
+                    }
+                    else
+                    {
+                        _db.AbortAllBTreePendingOps(TxId.Value);
+                    }
+
                     _db.AbortWrite(_context);
                     _hasActiveWrite = false;
                     State = TransactionState.Aborted;
@@ -1675,9 +1696,6 @@ public class Transaction : ITransaction
             // End snapshot before auto checkpoint so checkpoint can make progress
             _db.EndSnapshot(_context);
             _hasActiveSnapshot = false;
-
-            // Apply document count changes only after successful version validation
-            _db.ApplyDocumentCountDeltas(documentCountDeltas);
 
             State = TransactionState.Committed;
             _txManager.MarkCommitted(TxId);

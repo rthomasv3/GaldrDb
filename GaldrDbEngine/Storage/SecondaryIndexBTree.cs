@@ -19,6 +19,8 @@ internal class SecondaryIndexBTree
     private readonly int _pageSize;
     private readonly int _usablePageSize;
     private readonly int _maxKeys;
+    private readonly Dictionary<int, List<SecondaryPendingLeafOp>> _pendingLeafOps;
+    private readonly object _pendingOpsLock;
     private int _rootPageId;
 
     public SecondaryIndexBTree(IPageIO pageIO, PageManager pageManager, PageLockManager pageLockManager, int rootPageId, int pageSize, int usablePageSize, int maxKeys)
@@ -31,6 +33,8 @@ internal class SecondaryIndexBTree
         _pageSize = pageSize;
         _usablePageSize = usablePageSize;
         _maxKeys = maxKeys;
+        _pendingLeafOps = new Dictionary<int, List<SecondaryPendingLeafOp>>();
+        _pendingOpsLock = new object();
     }
 
     public int GetRootPageId()
@@ -38,7 +42,149 @@ internal class SecondaryIndexBTree
         return _rootPageId;
     }
 
-    public void Insert(byte[] key, DocumentLocation location, TransactionContext context = null)
+    #region Pending Ops Helpers
+
+    private void AddPendingOp(int pageId, SecondaryPendingLeafOp op)
+    {
+        lock (_pendingOpsLock)
+        {
+            if (!_pendingLeafOps.TryGetValue(pageId, out var ops))
+            {
+                ops = new List<SecondaryPendingLeafOp>();
+                _pendingLeafOps[pageId] = ops;
+            }
+            ops.Add(op);
+        }
+    }
+
+    private int GetPendingNetCount(int pageId)
+    {
+        int net = 0;
+        lock (_pendingOpsLock)
+        {
+            if (_pendingLeafOps.TryGetValue(pageId, out var ops))
+            {
+                foreach (var op in ops)
+                {
+                    if (op.OpType == LeafOpType.Insert) net++;
+                    else if (op.OpType == LeafOpType.Delete) net--;
+                }
+            }
+        }
+        return net;
+    }
+
+    private List<SecondaryPendingLeafOp> GetPendingOpsSnapshot(int pageId)
+    {
+        List<SecondaryPendingLeafOp> result = null;
+        lock (_pendingOpsLock)
+        {
+            if (_pendingLeafOps.TryGetValue(pageId, out var ops) && ops.Count > 0)
+            {
+                result = new List<SecondaryPendingLeafOp>(ops);
+            }
+        }
+        return result;
+    }
+
+    private void ApplyPendingOpsToNode(SecondaryIndexNode node, int pageId)
+    {
+        List<SecondaryPendingLeafOp> ops = GetPendingOpsSnapshot(pageId);
+        if (ops != null)
+        {
+            foreach (var op in ops)
+            {
+                ReadOnlySpan<byte> opKeySpan = op.Key.AsSpan();
+                if (op.OpType == LeafOpType.Insert)
+                {
+                    int insertIdx = 0;
+                    while (insertIdx < node.KeyCount && KeyBuffer.Compare(opKeySpan, node.Keys[insertIdx]) > 0)
+                    {
+                        insertIdx++;
+                    }
+                    node.Keys.Insert(insertIdx, KeyBuffer.FromCopy(op.Key, 0, op.Key.Length));
+                    node.LeafValues.Insert(insertIdx, op.Location);
+                    node.KeyCount++;
+                }
+                else if (op.OpType == LeafOpType.Delete)
+                {
+                    for (int i = 0; i < node.KeyCount; i++)
+                    {
+                        if (KeyBuffer.Compare(opKeySpan, node.Keys[i]) == 0)
+                        {
+                            node.Keys.RemoveAt(i);
+                            node.LeafValues.RemoveAt(i);
+                            node.KeyCount--;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private bool IsNodeLogicallyFull(byte[] buffer, int pageId)
+    {
+        int physicalCount = SecondaryIndexNode.GetKeyCount(buffer);
+        if (SecondaryIndexNode.IsLeafNode(buffer))
+        {
+            return physicalCount + GetPendingNetCount(pageId) >= _maxKeys / 2;
+        }
+        return SecondaryIndexNode.IsNodeFull(buffer, _maxKeys, _usablePageSize);
+    }
+
+    private bool IsSafeForInsertLogical(byte[] buffer, int pageId)
+    {
+        int physicalCount = SecondaryIndexNode.GetKeyCount(buffer);
+        if (SecondaryIndexNode.IsLeafNode(buffer))
+        {
+            return physicalCount + GetPendingNetCount(pageId) < _maxKeys / 2 - 1;
+        }
+        return SecondaryIndexNode.IsSafeForInsert(buffer, _maxKeys, _usablePageSize);
+    }
+
+    private void RemapPendingOpsAfterSplit(int oldPageId, int newPageId, KeyBuffer splitKey)
+    {
+        lock (_pendingOpsLock)
+        {
+            if (_pendingLeafOps.TryGetValue(oldPageId, out var ops))
+            {
+                List<SecondaryPendingLeafOp> leftOps = new List<SecondaryPendingLeafOp>();
+                List<SecondaryPendingLeafOp> rightOps = new List<SecondaryPendingLeafOp>();
+                ReadOnlySpan<byte> splitKeySpan = splitKey.AsSpan();
+
+                foreach (var op in ops)
+                {
+                    if (KeyBuffer.Compare(op.Key.AsSpan(), splitKeySpan) > 0)
+                    {
+                        rightOps.Add(op);
+                    }
+                    else
+                    {
+                        leftOps.Add(op);
+                    }
+                }
+
+                if (leftOps.Count > 0)
+                {
+                    _pendingLeafOps[oldPageId] = leftOps;
+                }
+                else
+                {
+                    _pendingLeafOps.Remove(oldPageId);
+                }
+
+                if (rightOps.Count > 0)
+                {
+                    _pendingLeafOps[newPageId] = rightOps;
+                }
+            }
+        }
+    }
+
+    #endregion
+
+    public void Insert(byte[] key, DocumentLocation location, ulong txId = 0)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
         byte[] childBuffer = BufferPool.Rent(_pageSize);
@@ -49,11 +195,10 @@ internal class SecondaryIndexBTree
         {
             int rootPageId = _rootPageId;
             _pageLockManager.AcquireWriteLock(rootPageId);
-            _pageIO.ReadPage(rootPageId, buffer, context);
+            _pageIO.ReadPage(rootPageId, buffer);
 
-            if (SecondaryIndexNode.IsNodeFull(buffer, _maxKeys, _usablePageSize))
+            if (IsNodeLogicallyFull(buffer, rootPageId))
             {
-                // Root is full - need to split it first
                 SecondaryIndexNode newRoot = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Internal);
                 try
                 {
@@ -62,16 +207,16 @@ internal class SecondaryIndexBTree
                     newRoot.ChildPageIds.Add(rootPageId);
 
                     newRoot.SerializeTo(buffer);
-                    _pageIO.WritePage(newRootPageId, buffer, context);
+                    _pageIO.WritePage(newRootPageId, buffer);
 
-                    SplitChild(newRootPageId, 0, rootPageId, context);
+                    SplitChild(newRootPageId, 0, rootPageId);
                     _rootPageId = newRootPageId;
 
                     _pageLockManager.ReleaseWriteLock(rootPageId);
                     heldLocks.Push(newRootPageId);
 
-                    _pageIO.ReadPage(newRootPageId, buffer, context);
-                    InsertNonFull(newRootPageId, buffer, childBuffer, key, location, heldLocks, context);
+                    _pageIO.ReadPage(newRootPageId, buffer);
+                    InsertNonFull(newRootPageId, buffer, childBuffer, key, location, heldLocks, txId);
                 }
                 finally
                 {
@@ -81,7 +226,7 @@ internal class SecondaryIndexBTree
             else
             {
                 heldLocks.Push(rootPageId);
-                InsertNonFull(rootPageId, buffer, childBuffer, key, location, heldLocks, context);
+                InsertNonFull(rootPageId, buffer, childBuffer, key, location, heldLocks, txId);
             }
         }
         finally
@@ -93,14 +238,14 @@ internal class SecondaryIndexBTree
         }
     }
 
-    public DocumentLocation? Search(byte[] key, TransactionContext context = null)
+    public DocumentLocation? Search(byte[] key)
     {
         _rootLock.EnterReadLock();
         try
         {
             int rootPageId = _rootPageId;
             _pageLockManager.AcquireReadLock(rootPageId);
-            return SearchNode(rootPageId, key, context, rootAlreadyLocked: true);
+            return SearchNode(rootPageId, key, rootAlreadyLocked: true);
         }
         finally
         {
@@ -108,14 +253,14 @@ internal class SecondaryIndexBTree
         }
     }
 
-    public List<DocumentLocation> SearchRange(byte[] startKey, byte[] endKey, bool includeStart, bool includeEnd, TransactionContext context = null)
+    public List<DocumentLocation> SearchRange(byte[] startKey, byte[] endKey, bool includeStart, bool includeEnd)
     {
         _rootLock.EnterReadLock();
         try
         {
             int rootPageId = _rootPageId;
             List<DocumentLocation> results = new List<DocumentLocation>();
-            SearchRangeNode(rootPageId, startKey, endKey, includeStart, includeEnd, results, context);
+            SearchRangeNode(rootPageId, startKey, endKey, includeStart, includeEnd, results);
             return results;
         }
         finally
@@ -124,14 +269,14 @@ internal class SecondaryIndexBTree
         }
     }
 
-    public List<DocumentLocation> SearchByFieldValue(byte[] fieldValueKey, TransactionContext context = null)
+    public List<DocumentLocation> SearchByFieldValue(byte[] fieldValueKey)
     {
         _rootLock.EnterReadLock();
         try
         {
             int rootPageId = _rootPageId;
             List<DocumentLocation> results = new List<DocumentLocation>();
-            SearchByFieldValueNode(rootPageId, fieldValueKey, results, context);
+            SearchByFieldValueNode(rootPageId, fieldValueKey, results);
             return results;
         }
         finally
@@ -140,14 +285,14 @@ internal class SecondaryIndexBTree
         }
     }
 
-    public List<SecondaryIndexEntry> SearchByFieldValueWithDocIds(byte[] fieldValueKey, TransactionContext context = null)
+    public List<SecondaryIndexEntry> SearchByFieldValueWithDocIds(byte[] fieldValueKey)
     {
         _rootLock.EnterReadLock();
         try
         {
             int rootPageId = _rootPageId;
             List<SecondaryIndexEntry> results = new List<SecondaryIndexEntry>();
-            SearchByFieldValueNodeWithDocIds(rootPageId, fieldValueKey, false, results, context);
+            SearchByFieldValueNodeWithDocIds(rootPageId, fieldValueKey, false, results);
             return results;
         }
         finally
@@ -156,14 +301,14 @@ internal class SecondaryIndexBTree
         }
     }
 
-    public List<SecondaryIndexEntry> SearchByExactFieldValueWithDocIds(byte[] fieldValueKey, TransactionContext context = null)
+    public List<SecondaryIndexEntry> SearchByExactFieldValueWithDocIds(byte[] fieldValueKey)
     {
         _rootLock.EnterReadLock();
         try
         {
             int rootPageId = _rootPageId;
             List<SecondaryIndexEntry> results = new List<SecondaryIndexEntry>();
-            SearchByFieldValueNodeWithDocIds(rootPageId, fieldValueKey, true, results, context);
+            SearchByFieldValueNodeWithDocIds(rootPageId, fieldValueKey, true, results);
             return results;
         }
         finally
@@ -172,14 +317,14 @@ internal class SecondaryIndexBTree
         }
     }
 
-    public List<SecondaryIndexEntry> SearchRangeWithDocIds(byte[] startKey, byte[] endKey, bool includeStart, bool includeEnd, TransactionContext context = null)
+    public List<SecondaryIndexEntry> SearchRangeWithDocIds(byte[] startKey, byte[] endKey, bool includeStart, bool includeEnd)
     {
         _rootLock.EnterReadLock();
         try
         {
             int rootPageId = _rootPageId;
             List<SecondaryIndexEntry> results = new List<SecondaryIndexEntry>();
-            SearchRangeNodeWithDocIds(rootPageId, startKey, endKey, includeStart, includeEnd, results, context);
+            SearchRangeNodeWithDocIds(rootPageId, startKey, endKey, includeStart, includeEnd, results);
             return results;
         }
         finally
@@ -188,14 +333,14 @@ internal class SecondaryIndexBTree
         }
     }
 
-    public List<SecondaryIndexEntry> SearchPrefixRangeWithDocIds(byte[] startKey, byte[] prefixKey, bool includeStart, TransactionContext context = null)
+    public List<SecondaryIndexEntry> SearchPrefixRangeWithDocIds(byte[] startKey, byte[] prefixKey, bool includeStart)
     {
         _rootLock.EnterReadLock();
         try
         {
             int rootPageId = _rootPageId;
             List<SecondaryIndexEntry> results = new List<SecondaryIndexEntry>();
-            SearchPrefixRangeNodeWithDocIds(rootPageId, startKey, prefixKey, includeStart, results, context);
+            SearchPrefixRangeNodeWithDocIds(rootPageId, startKey, prefixKey, includeStart, results);
             return results;
         }
         finally
@@ -204,14 +349,14 @@ internal class SecondaryIndexBTree
         }
     }
 
-    public bool Delete(byte[] key, TransactionContext context = null)
+    public bool Delete(byte[] key, ulong txId = 0)
     {
         _rootLock.EnterWriteLock();
         try
         {
             int rootPageId = _rootPageId;
             _pageLockManager.AcquireWriteLock(rootPageId);
-            return DeleteFromNode(rootPageId, key, context, rootAlreadyLocked: true);
+            return DeleteFromNode(rootPageId, key, txId, rootAlreadyLocked: true);
         }
         finally
         {
@@ -219,7 +364,7 @@ internal class SecondaryIndexBTree
         }
     }
 
-    public List<int> CollectAllPageIds(TransactionContext context = null)
+    public List<int> CollectAllPageIds()
     {
         _rootLock.EnterReadLock();
         try
@@ -234,9 +379,8 @@ internal class SecondaryIndexBTree
 
             try
             {
-                // Process root page first (already locked)
                 pageIds.Add(rootPageId);
-                _pageIO.ReadPage(rootPageId, buffer, context);
+                _pageIO.ReadPage(rootPageId, buffer);
                 SecondaryIndexNode.DeserializeTo(buffer, node);
                 if (node.NodeType == BTreeNodeType.Internal)
                 {
@@ -247,14 +391,13 @@ internal class SecondaryIndexBTree
                 }
                 _pageLockManager.ReleaseReadLock(rootPageId);
 
-                // Process remaining pages
                 while (pageStack.Count > 0)
                 {
                     int currentPageId = pageStack.Pop();
                     _pageLockManager.AcquireReadLock(currentPageId);
                     pageIds.Add(currentPageId);
 
-                    _pageIO.ReadPage(currentPageId, buffer, context);
+                    _pageIO.ReadPage(currentPageId, buffer);
                     SecondaryIndexNode.DeserializeTo(buffer, node);
 
                     if (node.NodeType == BTreeNodeType.Internal)
@@ -281,7 +424,7 @@ internal class SecondaryIndexBTree
         }
     }
 
-    private DocumentLocation? SearchNode(int pageId, byte[] key, TransactionContext context, bool rootAlreadyLocked = false)
+    private DocumentLocation? SearchNode(int pageId, byte[] key, bool rootAlreadyLocked = false)
     {
         DocumentLocation? result = null;
 
@@ -298,17 +441,19 @@ internal class SecondaryIndexBTree
 
             while (currentPageId != 0)
             {
-                _pageIO.ReadPage(currentPageId, buffer, context);
+                _pageIO.ReadPage(currentPageId, buffer);
                 SecondaryIndexNode.DeserializeTo(buffer, node);
-
-                int i = 0;
-                while (i < node.KeyCount && KeyBuffer.Compare(keySpan, node.Keys[i]) > 0)
-                {
-                    i++;
-                }
 
                 if (node.NodeType == BTreeNodeType.Leaf)
                 {
+                    ApplyPendingOpsToNode(node, currentPageId);
+
+                    int i = 0;
+                    while (i < node.KeyCount && KeyBuffer.Compare(keySpan, node.Keys[i]) > 0)
+                    {
+                        i++;
+                    }
+
                     if (i < node.KeyCount && KeyBuffer.Compare(keySpan, node.Keys[i]) == 0)
                     {
                         result = node.LeafValues[i];
@@ -318,6 +463,12 @@ internal class SecondaryIndexBTree
                 }
                 else
                 {
+                    int i = 0;
+                    while (i < node.KeyCount && KeyBuffer.Compare(keySpan, node.Keys[i]) > 0)
+                    {
+                        i++;
+                    }
+
                     int childPageId = node.ChildPageIds[i];
                     _pageLockManager.AcquireReadLock(childPageId);
                     _pageLockManager.ReleaseReadLock(currentPageId);
@@ -334,17 +485,19 @@ internal class SecondaryIndexBTree
         return result;
     }
 
-    private void SearchByFieldValueNode(int pageId, byte[] fieldValueKey, List<DocumentLocation> results, TransactionContext context)
+    private void SearchByFieldValueNode(int pageId, byte[] fieldValueKey, List<DocumentLocation> results)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
         SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
         try
         {
-            _pageIO.ReadPage(pageId, buffer, context);
+            _pageIO.ReadPage(pageId, buffer);
             SecondaryIndexNode.DeserializeTo(buffer, node);
 
             if (node.NodeType == BTreeNodeType.Leaf)
             {
+                ApplyPendingOpsToNode(node, pageId);
+
                 for (int i = 0; i < node.KeyCount; i++)
                 {
                     KeyBuffer nodeKey = node.Keys[i];
@@ -368,7 +521,7 @@ internal class SecondaryIndexBTree
 
                 for (int j = i; j <= node.KeyCount && j < node.ChildPageIds.Count; j++)
                 {
-                    SearchByFieldValueNode(node.ChildPageIds[j], fieldValueKey, results, context);
+                    SearchByFieldValueNode(node.ChildPageIds[j], fieldValueKey, results);
 
                     if (j < node.KeyCount && !node.Keys[j].StartsWith(fieldValueKey) &&
                         KeyBuffer.Compare(fieldValueKey.AsSpan(), node.Keys[j]) < 0)
@@ -385,13 +538,13 @@ internal class SecondaryIndexBTree
         }
     }
 
-    private void SearchRangeNode(int pageId, byte[] startKey, byte[] endKey, bool includeStart, bool includeEnd, List<DocumentLocation> results, TransactionContext context)
+    private void SearchRangeNode(int pageId, byte[] startKey, byte[] endKey, bool includeStart, bool includeEnd, List<DocumentLocation> results)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
         SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
         try
         {
-            _pageIO.ReadPage(pageId, buffer, context);
+            _pageIO.ReadPage(pageId, buffer);
             SecondaryIndexNode.DeserializeTo(buffer, node);
 
             ReadOnlySpan<byte> startSpan = startKey.AsSpan();
@@ -399,6 +552,8 @@ internal class SecondaryIndexBTree
 
             if (node.NodeType == BTreeNodeType.Leaf)
             {
+                ApplyPendingOpsToNode(node, pageId);
+
                 for (int i = 0; i < node.KeyCount; i++)
                 {
                     KeyBuffer nodeKey = node.Keys[i];
@@ -431,7 +586,7 @@ internal class SecondaryIndexBTree
 
                     if (shouldDescend)
                     {
-                        SearchRangeNode(node.ChildPageIds[i], startKey, endKey, includeStart, includeEnd, results, context);
+                        SearchRangeNode(node.ChildPageIds[i], startKey, endKey, includeStart, includeEnd, results);
                     }
                 }
             }
@@ -443,7 +598,7 @@ internal class SecondaryIndexBTree
         }
     }
 
-    private void SearchByFieldValueNodeWithDocIds(int pageId, byte[] fieldValueKey, bool exactMatch, List<SecondaryIndexEntry> results, TransactionContext context)
+    private void SearchByFieldValueNodeWithDocIds(int pageId, byte[] fieldValueKey, bool exactMatch, List<SecondaryIndexEntry> results)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
         SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
@@ -451,11 +606,13 @@ internal class SecondaryIndexBTree
 
         try
         {
-            _pageIO.ReadPage(pageId, buffer, context);
+            _pageIO.ReadPage(pageId, buffer);
             SecondaryIndexNode.DeserializeTo(buffer, node);
 
             if (node.NodeType == BTreeNodeType.Leaf)
             {
+                ApplyPendingOpsToNode(node, pageId);
+
                 for (int i = 0; i < node.KeyCount; i++)
                 {
                     KeyBuffer nodeKey = node.Keys[i];
@@ -487,7 +644,7 @@ internal class SecondaryIndexBTree
 
                 for (int j = i; j <= node.KeyCount && j < node.ChildPageIds.Count; j++)
                 {
-                    SearchByFieldValueNodeWithDocIds(node.ChildPageIds[j], fieldValueKey, exactMatch, results, context);
+                    SearchByFieldValueNodeWithDocIds(node.ChildPageIds[j], fieldValueKey, exactMatch, results);
 
                     if (j < node.KeyCount && !node.Keys[j].StartsWith(fieldValueKey) &&
                         KeyBuffer.Compare(fieldValueKey.AsSpan(), node.Keys[j]) < 0)
@@ -504,13 +661,13 @@ internal class SecondaryIndexBTree
         }
     }
 
-    private void SearchRangeNodeWithDocIds(int pageId, byte[] startKey, byte[] endKey, bool includeStart, bool includeEnd, List<SecondaryIndexEntry> results, TransactionContext context)
+    private void SearchRangeNodeWithDocIds(int pageId, byte[] startKey, byte[] endKey, bool includeStart, bool includeEnd, List<SecondaryIndexEntry> results)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
         SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
         try
         {
-            _pageIO.ReadPage(pageId, buffer, context);
+            _pageIO.ReadPage(pageId, buffer);
             SecondaryIndexNode.DeserializeTo(buffer, node);
 
             ReadOnlySpan<byte> startSpan = startKey == null ? ReadOnlySpan<byte>.Empty : startKey.AsSpan();
@@ -518,6 +675,8 @@ internal class SecondaryIndexBTree
 
             if (node.NodeType == BTreeNodeType.Leaf)
             {
+                ApplyPendingOpsToNode(node, pageId);
+
                 for (int i = 0; i < node.KeyCount; i++)
                 {
                     KeyBuffer nodeKey = node.Keys[i];
@@ -576,7 +735,7 @@ internal class SecondaryIndexBTree
 
                     if (shouldDescend)
                     {
-                        SearchRangeNodeWithDocIds(node.ChildPageIds[i], startKey, endKey, includeStart, includeEnd, results, context);
+                        SearchRangeNodeWithDocIds(node.ChildPageIds[i], startKey, endKey, includeStart, includeEnd, results);
                     }
                 }
             }
@@ -588,19 +747,21 @@ internal class SecondaryIndexBTree
         }
     }
 
-    private void SearchPrefixRangeNodeWithDocIds(int pageId, byte[] startKey, byte[] prefixKey, bool includeStart, List<SecondaryIndexEntry> results, TransactionContext context)
+    private void SearchPrefixRangeNodeWithDocIds(int pageId, byte[] startKey, byte[] prefixKey, bool includeStart, List<SecondaryIndexEntry> results)
     {
         byte[] buffer = BufferPool.Rent(_pageSize);
         SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
         try
         {
-            _pageIO.ReadPage(pageId, buffer, context);
+            _pageIO.ReadPage(pageId, buffer);
             SecondaryIndexNode.DeserializeTo(buffer, node);
 
             ReadOnlySpan<byte> startSpan = startKey.AsSpan();
 
             if (node.NodeType == BTreeNodeType.Leaf)
             {
+                ApplyPendingOpsToNode(node, pageId);
+
                 for (int i = 0; i < node.KeyCount; i++)
                 {
                     KeyBuffer nodeKey = node.Keys[i];
@@ -650,7 +811,7 @@ internal class SecondaryIndexBTree
 
                     if (shouldDescend)
                     {
-                        SearchPrefixRangeNodeWithDocIds(node.ChildPageIds[i], startKey, prefixKey, includeStart, results, context);
+                        SearchPrefixRangeNodeWithDocIds(node.ChildPageIds[i], startKey, prefixKey, includeStart, results);
                     }
                 }
             }
@@ -675,28 +836,24 @@ internal class SecondaryIndexBTree
         return docId;
     }
 
-    private bool DeleteFromNode(int pageId, byte[] key, TransactionContext context, bool rootAlreadyLocked = false)
+    private bool DeleteFromNode(int pageId, byte[] key, ulong txId, bool rootAlreadyLocked = false)
     {
         bool result = false;
 
         byte[] buffer = BufferPool.Rent(_pageSize);
         SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
-        List<DeletePathEntry> path = ListPool<DeletePathEntry>.Rent(MAX_TREE_DEPTH);
-        LockStack heldLocks = new LockStack(_pageLockManager, true);
         try
         {
             int currentPageId = pageId;
-            int leafPageId = 0;
             ReadOnlySpan<byte> keySpan = key.AsSpan();
             if (!rootAlreadyLocked)
             {
                 _pageLockManager.AcquireWriteLock(currentPageId);
             }
-            heldLocks.Push(currentPageId);
 
             while (currentPageId != 0)
             {
-                _pageIO.ReadPage(currentPageId, buffer, context);
+                _pageIO.ReadPage(currentPageId, buffer);
                 SecondaryIndexNode.DeserializeTo(buffer, node);
 
                 int i = 0;
@@ -707,377 +864,395 @@ internal class SecondaryIndexBTree
 
                 if (node.NodeType == BTreeNodeType.Leaf)
                 {
+                    bool keyExists = false;
+                    DocumentLocation oldLocation = default;
+
                     if (i < node.KeyCount && KeyBuffer.Compare(keySpan, node.Keys[i]) == 0)
                     {
-                        node.Keys.RemoveAt(i);
-                        node.LeafValues.RemoveAt(i);
-                        node.KeyCount--;
+                        keyExists = true;
+                        oldLocation = node.LeafValues[i];
+                    }
 
-                        node.SerializeTo(buffer);
-                        _pageIO.WritePage(currentPageId, buffer, context);
+                    List<SecondaryPendingLeafOp> pendingOps = GetPendingOpsSnapshot(currentPageId);
+                    if (pendingOps != null)
+                    {
+                        foreach (var op in pendingOps)
+                        {
+                            if (KeyBuffer.Compare(op.Key.AsSpan(), keySpan) == 0)
+                            {
+                                if (op.OpType == LeafOpType.Insert)
+                                {
+                                    keyExists = true;
+                                    oldLocation = op.Location;
+                                }
+                                else if (op.OpType == LeafOpType.Delete)
+                                {
+                                    keyExists = false;
+                                }
+                            }
+                        }
+                    }
 
-                        leafPageId = currentPageId;
+                    if (keyExists)
+                    {
+                        AddPendingOp(currentPageId, new SecondaryPendingLeafOp
+                        {
+                            TxId = txId,
+                            OpType = LeafOpType.Delete,
+                            Key = key,
+                            OldLocation = oldLocation
+                        });
                         result = true;
                     }
-                    break;
+                    _pageLockManager.ReleaseWriteLock(currentPageId);
+                    currentPageId = 0;
                 }
                 else
                 {
                     int childPageId = node.ChildPageIds[i];
                     _pageLockManager.AcquireWriteLock(childPageId);
-
-                    // Read child to check if it's safe
-                    byte[] childBuffer = BufferPool.Rent(_pageSize);
-                    _pageIO.ReadPage(childPageId, childBuffer, context);
-
-                    // if child won't underflow, release ancestor locks
-                    // but keep parent (currentPageId) for potential rebalancing
-                    if (SecondaryIndexNode.IsSafeForDelete(childBuffer, _maxKeys))
-                    {
-                        heldLocks.ReleaseAllExcept(currentPageId);
-                        path.Clear();
-                    }
-
-                    BufferPool.Return(childBuffer);
-
-                    path.Add(new DeletePathEntry(currentPageId, i));
-                    heldLocks.Push(childPageId);
+                    _pageLockManager.ReleaseWriteLock(currentPageId);
                     currentPageId = childPageId;
                 }
-            }
-
-            if (result && leafPageId != 0 && node.IsUnderflow() && leafPageId != pageId)
-            {
-                RebalanceAfterDelete(path, leafPageId, node, heldLocks, pageId, context);
             }
         }
         finally
         {
-            heldLocks.ReleaseAll();
             BufferPool.Return(buffer);
             SecondaryIndexNodePool.Return(node);
-            ListPool<DeletePathEntry>.Return(path);
         }
 
         return result;
     }
 
-    private void RebalanceAfterDelete(List<DeletePathEntry> path, int nodePageId, SecondaryIndexNode node, LockStack heldLocks, int originalRootPageId, TransactionContext context)
+    /// <summary>
+    /// Rebalances the tree by merging underfull nodes. Must be called when no pending ops exist.
+    /// Acquires root write lock internally, blocking all concurrent SecondaryIndexBTree operations.
+    /// Returns true if the root page changed.
+    /// </summary>
+    internal bool Rebalance()
     {
-        byte[] parentBuffer = BufferPool.Rent(_pageSize);
-        byte[] siblingBuffer = BufferPool.Rent(_pageSize);
-        SecondaryIndexNode parent = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Internal);
-        SecondaryIndexNode sibling = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
-        int siblingLockHeld = 0;
-
+        _rootLock.EnterWriteLock();
         try
         {
-            int currentPageId = nodePageId;
-            int pathIndex = path.Count - 1;
-
-            while (pathIndex >= 0 && node.IsUnderflow())
+            lock (_pendingOpsLock)
             {
-                DeletePathEntry parentEntry = path[pathIndex];
-                int parentPageId = parentEntry.PageId;
-                int childIndex = parentEntry.ChildIndex;
-
-                _pageIO.ReadPage(parentPageId, parentBuffer, context);
-                SecondaryIndexNode.DeserializeTo(parentBuffer, parent);
-
-                bool rebalanced = false;
-
-                if (childIndex > 0)
+                if (_pendingLeafOps.Count > 0)
                 {
-                    int leftSiblingPageId = parent.ChildPageIds[childIndex - 1];
-                    AcquireSiblingLock(leftSiblingPageId, heldLocks, ref siblingLockHeld);
-                    _pageIO.ReadPage(leftSiblingPageId, siblingBuffer, context);
-                    SecondaryIndexNode.DeserializeTo(siblingBuffer, sibling);
-
-                    if (sibling.CanLendKey())
-                    {
-                        BorrowFromLeftSibling(parentPageId, parent, parentBuffer,
-                                              leftSiblingPageId, sibling, siblingBuffer,
-                                              currentPageId, node, childIndex, context);
-                        rebalanced = true;
-                    }
-                    ReleaseSiblingLock(ref siblingLockHeld);
+                    return false;
                 }
-
-                if (!rebalanced && childIndex < parent.KeyCount)
-                {
-                    int rightSiblingPageId = parent.ChildPageIds[childIndex + 1];
-                    AcquireSiblingLock(rightSiblingPageId, heldLocks, ref siblingLockHeld);
-                    _pageIO.ReadPage(rightSiblingPageId, siblingBuffer, context);
-                    SecondaryIndexNode.DeserializeTo(siblingBuffer, sibling);
-
-                    if (sibling.CanLendKey())
-                    {
-                        BorrowFromRightSibling(parentPageId, parent, parentBuffer,
-                                               currentPageId, node,
-                                               rightSiblingPageId, sibling, siblingBuffer,
-                                               childIndex, context);
-
-                        // Note: PropagateMaxKeyUpdate is NOT needed after borrow from right sibling.
-                        // The borrow only changes the separator between current and right sibling,
-                        // not the max key of the parent's subtree - ancestors don't need updates.
-
-                        rebalanced = true;
-                    }
-                    ReleaseSiblingLock(ref siblingLockHeld);
-                }
-
-                if (!rebalanced)
-                {
-                    bool merged = false;
-
-                    if (childIndex > 0)
-                    {
-                        int leftSiblingPageId = parent.ChildPageIds[childIndex - 1];
-                        AcquireSiblingLock(leftSiblingPageId, heldLocks, ref siblingLockHeld);
-                        _pageIO.ReadPage(leftSiblingPageId, siblingBuffer, context);
-                        SecondaryIndexNode.DeserializeTo(siblingBuffer, sibling);
-
-                        int separatorKeyLength = parent.Keys[childIndex - 1].Length;
-                        if (sibling.CanMergeWith(node, separatorKeyLength))
-                        {
-                            MergeWithLeftSibling(parentPageId, parent, parentBuffer,
-                                                 leftSiblingPageId, sibling, siblingBuffer,
-                                                 currentPageId, node, childIndex, context);
-
-                            ReleaseSiblingLock(ref siblingLockHeld);
-                            currentPageId = parentPageId;
-                            _pageIO.ReadPage(parentPageId, parentBuffer, context);
-                            SecondaryIndexNode.DeserializeTo(parentBuffer, node);
-                            merged = true;
-                        }
-                        else
-                        {
-                            ReleaseSiblingLock(ref siblingLockHeld);
-                        }
-                    }
-
-                    if (!merged && childIndex < parent.KeyCount)
-                    {
-                        int rightSiblingPageId = parent.ChildPageIds[childIndex + 1];
-                        AcquireSiblingLock(rightSiblingPageId, heldLocks, ref siblingLockHeld);
-                        _pageIO.ReadPage(rightSiblingPageId, siblingBuffer, context);
-                        SecondaryIndexNode.DeserializeTo(siblingBuffer, sibling);
-
-                        int separatorKeyLength = parent.Keys[childIndex].Length;
-                        if (node.CanMergeWith(sibling, separatorKeyLength))
-                        {
-                            MergeWithRightSibling(parentPageId, parent, parentBuffer,
-                                                  currentPageId, node,
-                                                  rightSiblingPageId, sibling, siblingBuffer,
-                                                  childIndex, context);
-
-                            ReleaseSiblingLock(ref siblingLockHeld);
-                            currentPageId = parentPageId;
-                            _pageIO.ReadPage(parentPageId, parentBuffer, context);
-                            SecondaryIndexNode.DeserializeTo(parentBuffer, node);
-                            merged = true;
-                        }
-                        else
-                        {
-                            ReleaseSiblingLock(ref siblingLockHeld);
-                        }
-                    }
-
-                    if (!merged)
-                    {
-                        break;
-                    }
-                }
-                else
-                {
-                    break;
-                }
-
-                pathIndex--;
             }
 
-            if (pathIndex < 0 && node.NodeType == BTreeNodeType.Internal && node.KeyCount == 0)
+            byte[] buffer = BufferPool.Rent(_pageSize);
+            SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
+            try
             {
-                // _rootLock is already held by Delete, no need to re-acquire
-                if (_rootPageId == originalRootPageId)
+                _pageIO.ReadPage(_rootPageId, buffer);
+                SecondaryIndexNode.DeserializeTo(buffer, node);
+                RebalanceNode(_rootPageId, node);
+
+                // Collapse root if it's an internal node with no keys
+                if (node.NodeType == BTreeNodeType.Internal && node.KeyCount == 0 && node.ChildPageIds.Count == 1)
                 {
                     int newRootPageId = node.ChildPageIds[0];
-                    _pageManager.DeallocatePage(originalRootPageId);
+                    _pageManager.DeallocatePage(_rootPageId);
                     _rootPageId = newRootPageId;
+                    return true;
+                }
+            }
+            finally
+            {
+                BufferPool.Return(buffer);
+                SecondaryIndexNodePool.Return(node);
+            }
+
+            return false;
+        }
+        finally
+        {
+            _rootLock.ExitWriteLock();
+        }
+    }
+
+    private void RebalanceNode(int pageId, SecondaryIndexNode node)
+    {
+        if (node.NodeType == BTreeNodeType.Leaf)
+        {
+            return;
+        }
+
+        byte[] childBuffer = BufferPool.Rent(_pageSize);
+        SecondaryIndexNode child = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
+        byte[] siblingBuffer = BufferPool.Rent(_pageSize);
+        SecondaryIndexNode sibling = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
+        byte[] parentBuffer = BufferPool.Rent(_pageSize);
+        try
+        {
+            // Visit children. After merges, node.KeyCount may decrease, so re-check bounds.
+            int i = 0;
+            while (i <= node.KeyCount)
+            {
+                int childPageId = node.ChildPageIds[i];
+                _pageIO.ReadPage(childPageId, childBuffer);
+                SecondaryIndexNode.DeserializeTo(childBuffer, child);
+
+                // Recurse into child first (bottom-up)
+                RebalanceNode(childPageId, child);
+
+                // Re-read child after recursion (it may have changed)
+                _pageIO.ReadPage(childPageId, childBuffer);
+                SecondaryIndexNode.DeserializeTo(childBuffer, child);
+
+                if (!child.IsUnderflow())
+                {
+                    i++;
+                    continue;
+                }
+
+                bool handled = false;
+
+                // Try borrow from left sibling
+                if (i > 0)
+                {
+                    int leftPageId = node.ChildPageIds[i - 1];
+                    _pageIO.ReadPage(leftPageId, siblingBuffer);
+                    SecondaryIndexNode.DeserializeTo(siblingBuffer, sibling);
+
+                    if (sibling.CanLendKey())
+                    {
+                        BorrowFromLeftSibling(pageId, node,
+                                              leftPageId, sibling, siblingBuffer,
+                                              childPageId, child, childBuffer, i);
+                        // Re-read parent since BorrowFromLeftSibling wrote it
+                        _pageIO.ReadPage(pageId, parentBuffer);
+                        SecondaryIndexNode.DeserializeTo(parentBuffer, node);
+                        handled = true;
+                        i++;
+                    }
+                }
+
+                // Try borrow from right sibling
+                if (!handled && i < node.KeyCount)
+                {
+                    int rightPageId = node.ChildPageIds[i + 1];
+                    _pageIO.ReadPage(rightPageId, siblingBuffer);
+                    SecondaryIndexNode.DeserializeTo(siblingBuffer, sibling);
+
+                    if (sibling.CanLendKey())
+                    {
+                        BorrowFromRightSibling(pageId, node,
+                                               childPageId, child, childBuffer,
+                                               rightPageId, sibling, siblingBuffer, i);
+                        _pageIO.ReadPage(pageId, parentBuffer);
+                        SecondaryIndexNode.DeserializeTo(parentBuffer, node);
+                        handled = true;
+                        i++;
+                    }
+                }
+
+                // Merge with a sibling
+                if (!handled)
+                {
+                    if (i > 0)
+                    {
+                        int leftPageId = node.ChildPageIds[i - 1];
+                        _pageIO.ReadPage(leftPageId, siblingBuffer);
+                        SecondaryIndexNode.DeserializeTo(siblingBuffer, sibling);
+
+                        int separatorKeyLength = node.Keys[i - 1].Length;
+                        if (sibling.CanMergeWith(child, separatorKeyLength))
+                        {
+                            MergeWithLeftSibling(pageId, node,
+                                                 leftPageId, sibling, siblingBuffer,
+                                                 childPageId, child, i);
+                            // Re-read parent after merge modified it
+                            _pageIO.ReadPage(pageId, parentBuffer);
+                            SecondaryIndexNode.DeserializeTo(parentBuffer, node);
+                            // Don't increment i -- the merge removed a child, so index i now points to next child
+                        }
+                        else if (i < node.KeyCount)
+                        {
+                            int rightPageId = node.ChildPageIds[i + 1];
+                            _pageIO.ReadPage(rightPageId, siblingBuffer);
+                            SecondaryIndexNode.DeserializeTo(siblingBuffer, sibling);
+
+                            int rightSeparatorKeyLength = node.Keys[i].Length;
+                            if (child.CanMergeWith(sibling, rightSeparatorKeyLength))
+                            {
+                                MergeWithRightSibling(pageId, node,
+                                                      childPageId, child, childBuffer,
+                                                      rightPageId, sibling, siblingBuffer, i);
+                                _pageIO.ReadPage(pageId, parentBuffer);
+                                SecondaryIndexNode.DeserializeTo(parentBuffer, node);
+                                // Don't increment i -- current absorbed right, right was removed
+                            }
+                            else
+                            {
+                                // Can't merge with either sibling, skip
+                                i++;
+                            }
+                        }
+                        else
+                        {
+                            // Can't merge with left (too big) and no right sibling, skip
+                            i++;
+                        }
+                    }
+                    else if (i < node.KeyCount)
+                    {
+                        int rightPageId = node.ChildPageIds[i + 1];
+                        _pageIO.ReadPage(rightPageId, siblingBuffer);
+                        SecondaryIndexNode.DeserializeTo(siblingBuffer, sibling);
+
+                        int separatorKeyLength = node.Keys[i].Length;
+                        if (child.CanMergeWith(sibling, separatorKeyLength))
+                        {
+                            MergeWithRightSibling(pageId, node,
+                                                  childPageId, child, childBuffer,
+                                                  rightPageId, sibling, siblingBuffer, i);
+                            _pageIO.ReadPage(pageId, parentBuffer);
+                            SecondaryIndexNode.DeserializeTo(parentBuffer, node);
+                            // Don't increment i -- current absorbed right, right was removed
+                        }
+                        else
+                        {
+                            // Can't merge, skip
+                            i++;
+                        }
+                    }
+                    else
+                    {
+                        // Single child with no siblings -- can't merge, skip
+                        i++;
+                    }
                 }
             }
         }
         finally
         {
-            ReleaseSiblingLock(ref siblingLockHeld);
-            BufferPool.Return(parentBuffer);
+            BufferPool.Return(childBuffer);
             BufferPool.Return(siblingBuffer);
-            SecondaryIndexNodePool.Return(parent);
+            BufferPool.Return(parentBuffer);
+            SecondaryIndexNodePool.Return(child);
             SecondaryIndexNodePool.Return(sibling);
         }
     }
 
-    private void AcquireSiblingLock(int siblingPageId, LockStack heldLocks, ref int siblingLockHeld)
-    {
-        // Throw if sibling is already held (would cause deadlock)
-        if (heldLocks.Contains(siblingPageId))
-        {
-            throw new InvalidOperationException($"Sibling page {siblingPageId} is already in heldLocks - this indicates tree corruption (duplicate child pointers)");
-        }
-
-        int minHeld = heldLocks.GetMinPageId();
-        if (siblingPageId < minHeld)
-        {
-            // Need to release all and re-acquire in sorted order
-            int[] pageIds = new int[heldLocks.Count + 1];
-            int count = heldLocks.CopyTo(pageIds);
-
-            // Save original page IDs before AcquireWriteLocks sorts the array
-            int[] originalPageIds = new int[count];
-            Array.Copy(pageIds, originalPageIds, count);
-
-            pageIds[count] = siblingPageId;
-            heldLocks.ReleaseAll();
-
-            _pageLockManager.AcquireWriteLocks(pageIds, count + 1);
-
-            // Rebuild heldLocks from original (without sibling - it's tracked separately)
-            for (int i = 0; i < count; i++)
-            {
-                heldLocks.Push(originalPageIds[i]);
-            }
-        }
-        else
-        {
-            _pageLockManager.AcquireWriteLock(siblingPageId);
-        }
-        siblingLockHeld = siblingPageId;
-    }
-
-    private void ReleaseSiblingLock(ref int siblingLockHeld)
-    {
-        if (siblingLockHeld != 0)
-        {
-            _pageLockManager.ReleaseWriteLock(siblingLockHeld);
-            siblingLockHeld = 0;
-        }
-    }
-
-    private void BorrowFromLeftSibling(int parentPageId, SecondaryIndexNode parent, byte[] parentBuffer,
+    private void BorrowFromLeftSibling(int parentPageId, SecondaryIndexNode parent,
                                        int leftSiblingPageId, SecondaryIndexNode leftSibling, byte[] leftBuffer,
-                                       int currentPageId, SecondaryIndexNode current, int childIndex, TransactionContext context)
-    {
-        byte[] currentBuffer = BufferPool.Rent(_pageSize);
-        try
-        {
-            if (current.NodeType == BTreeNodeType.Leaf)
-            {
-                KeyBuffer borrowedKey = leftSibling.Keys[leftSibling.KeyCount - 1];
-                DocumentLocation borrowedValue = leftSibling.LeafValues[leftSibling.KeyCount - 1];
-
-                current.Keys.Insert(0, borrowedKey);
-                current.LeafValues.Insert(0, borrowedValue);
-                current.KeyCount++;
-
-                leftSibling.Keys.RemoveAt(leftSibling.KeyCount - 1);
-                leftSibling.LeafValues.RemoveAt(leftSibling.KeyCount - 1);
-                leftSibling.KeyCount--;
-
-                parent.Keys[childIndex - 1] = leftSibling.Keys[leftSibling.KeyCount - 1];
-            }
-            else
-            {
-                KeyBuffer separatorKey = parent.Keys[childIndex - 1];
-
-                current.Keys.Insert(0, separatorKey);
-                current.ChildPageIds.Insert(0, leftSibling.ChildPageIds[leftSibling.KeyCount]);
-                current.KeyCount++;
-
-                parent.Keys[childIndex - 1] = leftSibling.Keys[leftSibling.KeyCount - 1];
-
-                leftSibling.Keys.RemoveAt(leftSibling.KeyCount - 1);
-                leftSibling.ChildPageIds.RemoveAt(leftSibling.KeyCount);
-                leftSibling.KeyCount--;
-            }
-
-            leftSibling.SerializeTo(leftBuffer);
-            _pageIO.WritePage(leftSiblingPageId, leftBuffer, context);
-
-            current.SerializeTo(currentBuffer);
-            _pageIO.WritePage(currentPageId, currentBuffer, context);
-
-            parent.SerializeTo(parentBuffer);
-            _pageIO.WritePage(parentPageId, parentBuffer, context);
-        }
-        finally
-        {
-            BufferPool.Return(currentBuffer);
-        }
-    }
-
-    private void BorrowFromRightSibling(int parentPageId, SecondaryIndexNode parent, byte[] parentBuffer,
-                                        int currentPageId, SecondaryIndexNode current,
-                                        int rightSiblingPageId, SecondaryIndexNode rightSibling, byte[] rightBuffer,
-                                        int childIndex, TransactionContext context)
-    {
-        byte[] currentBuffer = BufferPool.Rent(_pageSize);
-        try
-        {
-            if (current.NodeType == BTreeNodeType.Leaf)
-            {
-                KeyBuffer borrowedKey = rightSibling.Keys[0];
-                DocumentLocation borrowedValue = rightSibling.LeafValues[0];
-
-                current.Keys.Add(borrowedKey);
-                current.LeafValues.Add(borrowedValue);
-                current.KeyCount++;
-
-                rightSibling.Keys.RemoveAt(0);
-                rightSibling.LeafValues.RemoveAt(0);
-                rightSibling.KeyCount--;
-
-                parent.Keys[childIndex] = borrowedKey;
-            }
-            else
-            {
-                KeyBuffer separatorKey = parent.Keys[childIndex];
-
-                current.Keys.Add(separatorKey);
-                current.ChildPageIds.Add(rightSibling.ChildPageIds[0]);
-                current.KeyCount++;
-
-                parent.Keys[childIndex] = rightSibling.Keys[0];
-
-                rightSibling.Keys.RemoveAt(0);
-                rightSibling.ChildPageIds.RemoveAt(0);
-                rightSibling.KeyCount--;
-            }
-
-            current.SerializeTo(currentBuffer);
-            _pageIO.WritePage(currentPageId, currentBuffer, context);
-
-            rightSibling.SerializeTo(rightBuffer);
-            _pageIO.WritePage(rightSiblingPageId, rightBuffer, context);
-
-            parent.SerializeTo(parentBuffer);
-            _pageIO.WritePage(parentPageId, parentBuffer, context);
-        }
-        finally
-        {
-            BufferPool.Return(currentBuffer);
-        }
-    }
-
-    private void MergeWithLeftSibling(int parentPageId, SecondaryIndexNode parent, byte[] parentBuffer,
-                                      int leftSiblingPageId, SecondaryIndexNode leftSibling, byte[] leftBuffer,
-                                      int currentPageId, SecondaryIndexNode current, int childIndex, TransactionContext context)
+                                       int currentPageId, SecondaryIndexNode current, byte[] currentBuffer, int childIndex)
     {
         if (current.NodeType == BTreeNodeType.Leaf)
         {
-            for (int i = 0; i < current.KeyCount; i++)
+            KeyBuffer borrowedKey = leftSibling.Keys[leftSibling.KeyCount - 1];
+            DocumentLocation borrowedValue = leftSibling.LeafValues[leftSibling.KeyCount - 1];
+
+            current.Keys.Insert(0, borrowedKey);
+            current.LeafValues.Insert(0, borrowedValue);
+            current.KeyCount++;
+
+            leftSibling.Keys.RemoveAt(leftSibling.KeyCount - 1);
+            leftSibling.LeafValues.RemoveAt(leftSibling.KeyCount - 1);
+            leftSibling.KeyCount--;
+
+            parent.Keys[childIndex - 1] = leftSibling.Keys[leftSibling.KeyCount - 1];
+        }
+        else
+        {
+            KeyBuffer separatorKey = parent.Keys[childIndex - 1];
+
+            current.Keys.Insert(0, separatorKey);
+            current.ChildPageIds.Insert(0, leftSibling.ChildPageIds[leftSibling.KeyCount]);
+            current.KeyCount++;
+
+            parent.Keys[childIndex - 1] = leftSibling.Keys[leftSibling.KeyCount - 1];
+
+            leftSibling.Keys.RemoveAt(leftSibling.KeyCount - 1);
+            leftSibling.ChildPageIds.RemoveAt(leftSibling.KeyCount);
+            leftSibling.KeyCount--;
+        }
+
+        leftSibling.SerializeTo(leftBuffer);
+        _pageIO.WritePage(leftSiblingPageId, leftBuffer);
+
+        current.SerializeTo(currentBuffer);
+        _pageIO.WritePage(currentPageId, currentBuffer);
+
+        byte[] parentBuffer = BufferPool.Rent(_pageSize);
+        try
+        {
+            parent.SerializeTo(parentBuffer);
+            _pageIO.WritePage(parentPageId, parentBuffer);
+        }
+        finally
+        {
+            BufferPool.Return(parentBuffer);
+        }
+    }
+
+    private void BorrowFromRightSibling(int parentPageId, SecondaryIndexNode parent,
+                                        int currentPageId, SecondaryIndexNode current, byte[] currentBuffer,
+                                        int rightSiblingPageId, SecondaryIndexNode rightSibling, byte[] rightBuffer,
+                                        int childIndex)
+    {
+        if (current.NodeType == BTreeNodeType.Leaf)
+        {
+            KeyBuffer borrowedKey = rightSibling.Keys[0];
+            DocumentLocation borrowedValue = rightSibling.LeafValues[0];
+
+            current.Keys.Add(borrowedKey);
+            current.LeafValues.Add(borrowedValue);
+            current.KeyCount++;
+
+            rightSibling.Keys.RemoveAt(0);
+            rightSibling.LeafValues.RemoveAt(0);
+            rightSibling.KeyCount--;
+
+            parent.Keys[childIndex] = borrowedKey;
+        }
+        else
+        {
+            KeyBuffer separatorKey = parent.Keys[childIndex];
+
+            current.Keys.Add(separatorKey);
+            current.ChildPageIds.Add(rightSibling.ChildPageIds[0]);
+            current.KeyCount++;
+
+            parent.Keys[childIndex] = rightSibling.Keys[0];
+
+            rightSibling.Keys.RemoveAt(0);
+            rightSibling.ChildPageIds.RemoveAt(0);
+            rightSibling.KeyCount--;
+        }
+
+        current.SerializeTo(currentBuffer);
+        _pageIO.WritePage(currentPageId, currentBuffer);
+
+        rightSibling.SerializeTo(rightBuffer);
+        _pageIO.WritePage(rightSiblingPageId, rightBuffer);
+
+        byte[] parentBuffer = BufferPool.Rent(_pageSize);
+        try
+        {
+            parent.SerializeTo(parentBuffer);
+            _pageIO.WritePage(parentPageId, parentBuffer);
+        }
+        finally
+        {
+            BufferPool.Return(parentBuffer);
+        }
+    }
+
+    private void MergeWithLeftSibling(int parentPageId, SecondaryIndexNode parent,
+                                      int leftSiblingPageId, SecondaryIndexNode leftSibling, byte[] leftBuffer,
+                                      int currentPageId, SecondaryIndexNode current, int childIndex)
+    {
+        if (current.NodeType == BTreeNodeType.Leaf)
+        {
+            for (int j = 0; j < current.KeyCount; j++)
             {
-                leftSibling.Keys.Add(current.Keys[i]);
-                leftSibling.LeafValues.Add(current.LeafValues[i]);
+                leftSibling.Keys.Add(current.Keys[j]);
+                leftSibling.LeafValues.Add(current.LeafValues[j]);
             }
             leftSibling.KeyCount += current.KeyCount;
 
@@ -1088,13 +1263,13 @@ internal class SecondaryIndexBTree
             leftSibling.Keys.Add(parent.Keys[childIndex - 1]);
             leftSibling.KeyCount++;
 
-            for (int i = 0; i < current.KeyCount; i++)
+            for (int j = 0; j < current.KeyCount; j++)
             {
-                leftSibling.Keys.Add(current.Keys[i]);
+                leftSibling.Keys.Add(current.Keys[j]);
             }
-            for (int i = 0; i <= current.KeyCount; i++)
+            for (int j = 0; j <= current.KeyCount; j++)
             {
-                leftSibling.ChildPageIds.Add(current.ChildPageIds[i]);
+                leftSibling.ChildPageIds.Add(current.ChildPageIds[j]);
             }
             leftSibling.KeyCount += current.KeyCount;
         }
@@ -1104,25 +1279,33 @@ internal class SecondaryIndexBTree
         parent.KeyCount--;
 
         leftSibling.SerializeTo(leftBuffer);
-        _pageIO.WritePage(leftSiblingPageId, leftBuffer, context);
+        _pageIO.WritePage(leftSiblingPageId, leftBuffer);
 
-        parent.SerializeTo(parentBuffer);
-        _pageIO.WritePage(parentPageId, parentBuffer, context);
+        byte[] parentBuffer = BufferPool.Rent(_pageSize);
+        try
+        {
+            parent.SerializeTo(parentBuffer);
+            _pageIO.WritePage(parentPageId, parentBuffer);
+        }
+        finally
+        {
+            BufferPool.Return(parentBuffer);
+        }
 
         _pageManager.DeallocatePage(currentPageId);
     }
 
-    private void MergeWithRightSibling(int parentPageId, SecondaryIndexNode parent, byte[] parentBuffer,
-                                       int currentPageId, SecondaryIndexNode current,
+    private void MergeWithRightSibling(int parentPageId, SecondaryIndexNode parent,
+                                       int currentPageId, SecondaryIndexNode current, byte[] currentBuffer,
                                        int rightSiblingPageId, SecondaryIndexNode rightSibling, byte[] rightBuffer,
-                                       int childIndex, TransactionContext context)
+                                       int childIndex)
     {
         if (current.NodeType == BTreeNodeType.Leaf)
         {
-            for (int i = 0; i < rightSibling.KeyCount; i++)
+            for (int j = 0; j < rightSibling.KeyCount; j++)
             {
-                current.Keys.Add(rightSibling.Keys[i]);
-                current.LeafValues.Add(rightSibling.LeafValues[i]);
+                current.Keys.Add(rightSibling.Keys[j]);
+                current.LeafValues.Add(rightSibling.LeafValues[j]);
             }
             current.KeyCount += rightSibling.KeyCount;
 
@@ -1133,13 +1316,13 @@ internal class SecondaryIndexBTree
             current.Keys.Add(parent.Keys[childIndex]);
             current.KeyCount++;
 
-            for (int i = 0; i < rightSibling.KeyCount; i++)
+            for (int j = 0; j < rightSibling.KeyCount; j++)
             {
-                current.Keys.Add(rightSibling.Keys[i]);
+                current.Keys.Add(rightSibling.Keys[j]);
             }
-            for (int i = 0; i <= rightSibling.KeyCount; i++)
+            for (int j = 0; j <= rightSibling.KeyCount; j++)
             {
-                current.ChildPageIds.Add(rightSibling.ChildPageIds[i]);
+                current.ChildPageIds.Add(rightSibling.ChildPageIds[j]);
             }
             current.KeyCount += rightSibling.KeyCount;
         }
@@ -1148,24 +1331,24 @@ internal class SecondaryIndexBTree
         parent.ChildPageIds.RemoveAt(childIndex + 1);
         parent.KeyCount--;
 
-        byte[] currentBuffer = BufferPool.Rent(_pageSize);
+        current.SerializeTo(currentBuffer);
+        _pageIO.WritePage(currentPageId, currentBuffer);
+
+        byte[] parentBuffer = BufferPool.Rent(_pageSize);
         try
         {
-            current.SerializeTo(currentBuffer);
-            _pageIO.WritePage(currentPageId, currentBuffer, context);
+            parent.SerializeTo(parentBuffer);
+            _pageIO.WritePage(parentPageId, parentBuffer);
         }
         finally
         {
-            BufferPool.Return(currentBuffer);
+            BufferPool.Return(parentBuffer);
         }
-
-        parent.SerializeTo(parentBuffer);
-        _pageIO.WritePage(parentPageId, parentBuffer, context);
 
         _pageManager.DeallocatePage(rightSiblingPageId);
     }
 
-    private void InsertNonFull(int pageId, byte[] buffer, byte[] childBuffer, byte[] key, DocumentLocation location, LockStack heldLocks, TransactionContext context)
+    private void InsertNonFull(int pageId, byte[] buffer, byte[] childBuffer, byte[] key, DocumentLocation location, LockStack heldLocks, ulong txId)
     {
         int currentPageId = pageId;
         ReadOnlySpan<byte> keySpan = key.AsSpan();
@@ -1176,8 +1359,13 @@ internal class SecondaryIndexBTree
 
             if (SecondaryIndexNode.IsLeafNode(buffer))
             {
-                SecondaryIndexNode.InsertIntoLeaf(buffer, keyCount, key, location, _pageSize);
-                _pageIO.WritePage(currentPageId, buffer, context);
+                AddPendingOp(currentPageId, new SecondaryPendingLeafOp
+                {
+                    TxId = txId,
+                    OpType = LeafOpType.Insert,
+                    Key = key,
+                    Location = location
+                });
                 break;
             }
             else
@@ -1185,31 +1373,26 @@ internal class SecondaryIndexBTree
                 int childIndex = SecondaryIndexNode.FindKeyPosition(buffer, keyCount, keySpan);
                 int childPageId = SecondaryIndexNode.GetChildPageId(buffer, keyCount, childIndex);
 
-                // DIAGNOSTIC: Check if childPageId looks reasonable
                 if (childPageId < 0 || childPageId > 1000000)
                 {
                     throw new InvalidOperationException($"InsertNonFull: suspicious childPageId={childPageId} from currentPageId={currentPageId}, keyCount={keyCount}, childIndex={childIndex}, buffer first 32 bytes: {BitConverter.ToString(buffer, 0, 32)}");
                 }
 
-                // Acquire lock on child before reading
                 _pageLockManager.AcquireWriteLock(childPageId);
-                _pageIO.ReadPage(childPageId, childBuffer, context);
+                _pageIO.ReadPage(childPageId, childBuffer);
 
-                // Safe node optimization: if child won't split, release all ancestor locks
-                if (SecondaryIndexNode.IsSafeForInsert(childBuffer, _maxKeys, _usablePageSize))
+                if (IsSafeForInsertLogical(childBuffer, childPageId))
                 {
                     heldLocks.ReleaseAll();
                 }
 
-                if (SecondaryIndexNode.IsNodeFull(childBuffer, _maxKeys, _usablePageSize))
+                if (IsNodeLogicallyFull(childBuffer, childPageId))
                 {
-                    SplitChild(currentPageId, childIndex, childPageId, context);
+                    SplitChild(currentPageId, childIndex, childPageId);
 
-                    // Re-read current node after split
-                    _pageIO.ReadPage(currentPageId, buffer, context);
+                    _pageIO.ReadPage(currentPageId, buffer);
                     keyCount = SecondaryIndexNode.GetKeyCount(buffer);
 
-                    // Check which child to descend into after split
                     int splitKeyOffset = GetKeyOffsetAtIndex(buffer, childIndex);
                     ushort splitKeyLength = BinaryHelper.ReadUInt16LE(buffer, splitKeyOffset);
                     ReadOnlySpan<byte> splitKey = buffer.AsSpan(splitKeyOffset + 2, splitKeyLength);
@@ -1218,19 +1401,16 @@ internal class SecondaryIndexBTree
                     {
                         childIndex++;
                         int newChildPageId = SecondaryIndexNode.GetChildPageId(buffer, keyCount, childIndex);
-                        // The new child was created by split, need to acquire its lock
                         _pageLockManager.AcquireWriteLock(newChildPageId);
                         _pageLockManager.ReleaseWriteLock(childPageId);
                         childPageId = newChildPageId;
                     }
 
-                    // Read the correct child after split
-                    _pageIO.ReadPage(childPageId, childBuffer, context);
+                    _pageIO.ReadPage(childPageId, childBuffer);
                 }
 
                 heldLocks.Push(childPageId);
 
-                // Swap buffers: childBuffer becomes buffer for next iteration
                 byte[] temp = buffer;
                 buffer = childBuffer;
                 childBuffer = temp;
@@ -1241,7 +1421,7 @@ internal class SecondaryIndexBTree
 
     private static int GetKeyOffsetAtIndex(byte[] buffer, int index)
     {
-        int offset = 10; // OFFSET_KEYS
+        int offset = 10;
         for (int i = 0; i < index; i++)
         {
             ushort len = BinaryHelper.ReadUInt16LE(buffer, offset);
@@ -1250,7 +1430,7 @@ internal class SecondaryIndexBTree
         return offset;
     }
 
-    private void SplitChild(int parentPageId, int index, int childPageId, TransactionContext context)
+    private void SplitChild(int parentPageId, int index, int childPageId)
     {
         byte[] childBuffer = BufferPool.Rent(_pageSize);
         byte[] parentBuffer = BufferPool.Rent(_pageSize);
@@ -1260,63 +1440,121 @@ internal class SecondaryIndexBTree
         int newChildPageId = 0;
         try
         {
-            _pageIO.ReadPage(childPageId, childBuffer, context);
+            _pageIO.ReadPage(childPageId, childBuffer);
             SecondaryIndexNode.DeserializeTo(childBuffer, fullChild);
 
-            _pageIO.ReadPage(parentPageId, parentBuffer, context);
+            _pageIO.ReadPage(parentPageId, parentBuffer);
             SecondaryIndexNode.DeserializeTo(parentBuffer, parent);
 
             newChildPageId = _pageManager.AllocatePage();
             _pageLockManager.AcquireWriteLock(newChildPageId);
             newChild = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, fullChild.NodeType);
 
-            int mid = Math.Min(_maxKeys / 2, fullChild.KeyCount / 2);
-            if (mid >= fullChild.KeyCount)
-            {
-                mid = fullChild.KeyCount - 1;
-            }
-            KeyBuffer keyToPromote = fullChild.Keys[mid];
-
-            for (int j = mid + 1; j < fullChild.KeyCount; j++)
-            {
-                newChild.Keys.Add(fullChild.Keys[j]);
-
-                if (fullChild.NodeType == BTreeNodeType.Leaf)
-                {
-                    newChild.LeafValues.Add(fullChild.LeafValues[j]);
-                }
-                else
-                {
-                    newChild.ChildPageIds.Add(fullChild.ChildPageIds[j]);
-                }
-
-                newChild.KeyCount++;
-            }
-
-            if (fullChild.NodeType == BTreeNodeType.Internal)
-            {
-                newChild.ChildPageIds.Add(fullChild.ChildPageIds[fullChild.KeyCount]);
-            }
-
-            int originalKeyCount = fullChild.KeyCount;
+            KeyBuffer keyToPromote;
+            int mid;
 
             if (fullChild.NodeType == BTreeNodeType.Leaf)
             {
-                // For leaf nodes: the key at mid is COPIED to parent (kept in leaf)
-                fullChild.KeyCount = (ushort)(mid + 1);
-                int keysToRemove = originalKeyCount - (mid + 1);
-                if (keysToRemove > 0)
+                List<byte[]> logicalKeys = new List<byte[]>();
+
+                List<SecondaryPendingLeafOp> pendingOps = GetPendingOpsSnapshot(childPageId);
+                HashSet<int> deletedIndices = new HashSet<int>();
+
+                if (pendingOps != null)
                 {
-                    fullChild.Keys.RemoveRange(mid + 1, keysToRemove);
-                    fullChild.LeafValues.RemoveRange(mid + 1, keysToRemove);
+                    foreach (var op in pendingOps)
+                    {
+                        if (op.OpType == LeafOpType.Delete)
+                        {
+                            for (int i = 0; i < fullChild.KeyCount; i++)
+                            {
+                                if (KeyBuffer.Compare(op.Key.AsSpan(), fullChild.Keys[i]) == 0)
+                                {
+                                    deletedIndices.Add(i);
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
+
+                for (int i = 0; i < fullChild.KeyCount; i++)
+                {
+                    if (!deletedIndices.Contains(i))
+                    {
+                        KeyBuffer kb = fullChild.Keys[i];
+                        byte[] keyCopy = new byte[kb.Length];
+                        Array.Copy(kb.Data, kb.Offset, keyCopy, 0, kb.Length);
+                        logicalKeys.Add(keyCopy);
+                    }
+                }
+
+                if (pendingOps != null)
+                {
+                    foreach (var op in pendingOps)
+                    {
+                        if (op.OpType == LeafOpType.Insert)
+                        {
+                            logicalKeys.Add(op.Key);
+                        }
+                    }
+                }
+
+                logicalKeys.Sort((a, b) => KeyBuffer.Compare(a.AsSpan(), b.AsSpan()));
+
+                mid = logicalKeys.Count / 2;
+                keyToPromote = KeyBuffer.FromCopy(logicalKeys[mid], 0, logicalKeys[mid].Length);
+
+                ReadOnlySpan<byte> splitKeySpan = keyToPromote.AsSpan();
+
+                for (int j = 0; j < fullChild.KeyCount; j++)
+                {
+                    if (KeyBuffer.Compare(fullChild.Keys[j].AsSpan(), splitKeySpan) > 0)
+                    {
+                        newChild.Keys.Add(fullChild.Keys[j]);
+                        newChild.LeafValues.Add(fullChild.LeafValues[j]);
+                        newChild.KeyCount++;
+                    }
+                }
+
+                int leftKeyCount = 0;
+                for (int j = 0; j < fullChild.KeyCount; j++)
+                {
+                    if (KeyBuffer.Compare(fullChild.Keys[j].AsSpan(), splitKeySpan) <= 0)
+                    {
+                        leftKeyCount++;
+                    }
+                }
+
+                fullChild.Keys.RemoveRange(leftKeyCount, fullChild.KeyCount - leftKeyCount);
+                fullChild.LeafValues.RemoveRange(leftKeyCount, fullChild.KeyCount - leftKeyCount);
+                fullChild.KeyCount = (ushort)leftKeyCount;
+
                 newChild.NextLeaf = fullChild.NextLeaf;
                 fullChild.NextLeaf = newChildPageId;
+
+                RemapPendingOpsAfterSplit(childPageId, newChildPageId, keyToPromote);
             }
             else
             {
-                // For internal nodes: the key at mid is MOVED to parent (not kept in node)
-                // Keep keys [0..mid-1] (mid keys) and children [0..mid] (mid+1 children)
+                mid = Math.Min(_maxKeys / 2, fullChild.KeyCount / 2);
+                if (mid >= fullChild.KeyCount)
+                {
+                    mid = fullChild.KeyCount - 1;
+                }
+                keyToPromote = fullChild.Keys[mid];
+
+                for (int j = mid + 1; j < fullChild.KeyCount; j++)
+                {
+                    newChild.Keys.Add(fullChild.Keys[j]);
+                    newChild.ChildPageIds.Add(fullChild.ChildPageIds[j]);
+                    newChild.KeyCount++;
+                }
+
+                newChild.ChildPageIds.Add(fullChild.ChildPageIds[fullChild.KeyCount]);
+
+                int originalKeyCount = fullChild.KeyCount;
+
                 fullChild.KeyCount = (ushort)mid;
                 int keysToRemove = originalKeyCount - mid;
                 if (keysToRemove > 0)
@@ -1336,13 +1574,13 @@ internal class SecondaryIndexBTree
             parent.KeyCount++;
 
             fullChild.SerializeTo(childBuffer);
-            _pageIO.WritePage(childPageId, childBuffer, context);
+            _pageIO.WritePage(childPageId, childBuffer);
 
             newChild.SerializeTo(childBuffer);
-            _pageIO.WritePage(newChildPageId, childBuffer, context);
+            _pageIO.WritePage(newChildPageId, childBuffer);
 
             parent.SerializeTo(parentBuffer);
-            _pageIO.WritePage(parentPageId, parentBuffer, context);
+            _pageIO.WritePage(parentPageId, parentBuffer);
         }
         finally
         {
@@ -1357,6 +1595,345 @@ internal class SecondaryIndexBTree
             SecondaryIndexNodePool.Return(newChild);
         }
     }
+
+    #region Pending Ops Flush/Abort/Undo
+
+    public List<SecondaryFlushedOp> FlushPendingOps(ulong txId)
+    {
+        List<SecondaryFlushedOp> flushedOps = new List<SecondaryFlushedOp>();
+
+        // Process pages one at a time. For each page, we acquire the page write lock
+        // BEFORE extracting ops from _pendingLeafOps. This ensures the logical count
+        // (physical + pending) is never understated: InsertNonFull holds the page write
+        // lock while checking fullness, so it cannot observe the reduced pending count
+        // before the physical count has been updated.
+        // Lock ordering: page write lock → _pendingOpsLock (matches InsertNonFull/SplitChild).
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
+        try
+        {
+            while (true)
+            {
+                int targetPageId = -1;
+                lock (_pendingOpsLock)
+                {
+                    foreach (var kvp in _pendingLeafOps)
+                    {
+                        foreach (var op in kvp.Value)
+                        {
+                            if (op.TxId == txId)
+                            {
+                                targetPageId = kvp.Key;
+                                break;
+                            }
+                        }
+                        if (targetPageId >= 0) break;
+                    }
+                }
+
+                if (targetPageId < 0) break;
+
+                _pageLockManager.AcquireWriteLock(targetPageId);
+                try
+                {
+                    List<SecondaryPendingLeafOp> txOps = null;
+                    lock (_pendingOpsLock)
+                    {
+                        if (_pendingLeafOps.TryGetValue(targetPageId, out var allOps))
+                        {
+                            List<SecondaryPendingLeafOp> remainingOps = null;
+                            foreach (var op in allOps)
+                            {
+                                if (op.TxId == txId)
+                                {
+                                    txOps ??= new List<SecondaryPendingLeafOp>();
+                                    txOps.Add(op);
+                                }
+                                else
+                                {
+                                    remainingOps ??= new List<SecondaryPendingLeafOp>();
+                                    remainingOps.Add(op);
+                                }
+                            }
+                            if (txOps != null)
+                            {
+                                if (remainingOps != null)
+                                {
+                                    _pendingLeafOps[targetPageId] = remainingOps;
+                                }
+                                else
+                                {
+                                    _pendingLeafOps.Remove(targetPageId);
+                                }
+                            }
+                        }
+                    }
+
+                    if (txOps != null && txOps.Count > 0)
+                    {
+                        _pageIO.ReadPage(targetPageId, buffer);
+                        SecondaryIndexNode.DeserializeTo(buffer, node);
+
+                        foreach (var op in txOps)
+                        {
+                            ReadOnlySpan<byte> opKeySpan = op.Key.AsSpan();
+                            if (op.OpType == LeafOpType.Insert)
+                            {
+                                int insertIdx = 0;
+                                while (insertIdx < node.KeyCount && KeyBuffer.Compare(opKeySpan, node.Keys[insertIdx]) > 0)
+                                {
+                                    insertIdx++;
+                                }
+                                node.Keys.Insert(insertIdx, KeyBuffer.FromCopy(op.Key, 0, op.Key.Length));
+                                node.LeafValues.Insert(insertIdx, op.Location);
+                                node.KeyCount++;
+                                flushedOps.Add(new SecondaryFlushedOp { Type = LeafOpType.Insert, Key = op.Key });
+                            }
+                            else if (op.OpType == LeafOpType.Delete)
+                            {
+                                for (int i = 0; i < node.KeyCount; i++)
+                                {
+                                    if (KeyBuffer.Compare(opKeySpan, node.Keys[i]) == 0)
+                                    {
+                                        node.Keys.RemoveAt(i);
+                                        node.LeafValues.RemoveAt(i);
+                                        node.KeyCount--;
+                                        flushedOps.Add(new SecondaryFlushedOp { Type = LeafOpType.Delete, Key = op.Key, OldLocation = op.OldLocation });
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        node.SerializeTo(buffer);
+                        _pageIO.WritePage(targetPageId, buffer);
+                    }
+                }
+                finally
+                {
+                    _pageLockManager.ReleaseWriteLock(targetPageId);
+                }
+            }
+        }
+        finally
+        {
+            BufferPool.Return(buffer);
+            SecondaryIndexNodePool.Return(node);
+        }
+
+        return flushedOps;
+    }
+
+    public void AbortPendingOps(ulong txId)
+    {
+        lock (_pendingOpsLock)
+        {
+            List<int> keysToProcess = new List<int>(_pendingLeafOps.Keys);
+            foreach (int pageId in keysToProcess)
+            {
+                var ops = _pendingLeafOps[pageId];
+                ops.RemoveAll(op => op.TxId == txId);
+                if (ops.Count == 0)
+                {
+                    _pendingLeafOps.Remove(pageId);
+                }
+            }
+        }
+    }
+
+    public void UndoPendingOps(List<SecondaryFlushedOp> flushedOps)
+    {
+        for (int i = flushedOps.Count - 1; i >= 0; i--)
+        {
+            SecondaryFlushedOp op = flushedOps[i];
+            if (op.Type == LeafOpType.Insert)
+            {
+                DeleteDirect(op.Key);
+            }
+            else if (op.Type == LeafOpType.Delete)
+            {
+                InsertDirect(op.Key, op.OldLocation);
+            }
+        }
+    }
+
+    #endregion
+
+    #region Direct Write Methods
+
+    internal void InsertDirect(byte[] key, DocumentLocation location)
+    {
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        byte[] childBuffer = BufferPool.Rent(_pageSize);
+        LockStack heldLocks = new LockStack(_pageLockManager, true);
+
+        _rootLock.EnterWriteLock();
+        try
+        {
+            int rootPageId = _rootPageId;
+            _pageLockManager.AcquireWriteLock(rootPageId);
+            _pageIO.ReadPage(rootPageId, buffer);
+
+            if (SecondaryIndexNode.IsNodeFull(buffer, _maxKeys, _usablePageSize))
+            {
+                SecondaryIndexNode newRoot = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Internal);
+                try
+                {
+                    int newRootPageId = _pageManager.AllocatePage();
+                    _pageLockManager.AcquireWriteLock(newRootPageId);
+                    newRoot.ChildPageIds.Add(rootPageId);
+
+                    newRoot.SerializeTo(buffer);
+                    _pageIO.WritePage(newRootPageId, buffer);
+
+                    SplitChild(newRootPageId, 0, rootPageId);
+                    _rootPageId = newRootPageId;
+
+                    _pageLockManager.ReleaseWriteLock(rootPageId);
+                    heldLocks.Push(newRootPageId);
+
+                    _pageIO.ReadPage(newRootPageId, buffer);
+                    InsertNonFullDirect(newRootPageId, buffer, childBuffer, key, location, heldLocks);
+                }
+                finally
+                {
+                    SecondaryIndexNodePool.Return(newRoot);
+                }
+            }
+            else
+            {
+                heldLocks.Push(rootPageId);
+                InsertNonFullDirect(rootPageId, buffer, childBuffer, key, location, heldLocks);
+            }
+        }
+        finally
+        {
+            _rootLock.ExitWriteLock();
+            heldLocks.ReleaseAll();
+            BufferPool.Return(buffer);
+            BufferPool.Return(childBuffer);
+        }
+    }
+
+    private void InsertNonFullDirect(int pageId, byte[] buffer, byte[] childBuffer, byte[] key, DocumentLocation location, LockStack heldLocks)
+    {
+        int currentPageId = pageId;
+        ReadOnlySpan<byte> keySpan = key.AsSpan();
+
+        while (true)
+        {
+            ushort keyCount = SecondaryIndexNode.GetKeyCount(buffer);
+
+            if (SecondaryIndexNode.IsLeafNode(buffer))
+            {
+                SecondaryIndexNode.InsertIntoLeaf(buffer, keyCount, key, location, _pageSize);
+                _pageIO.WritePage(currentPageId, buffer);
+                break;
+            }
+            else
+            {
+                int childIndex = SecondaryIndexNode.FindKeyPosition(buffer, keyCount, keySpan);
+                int childPageId = SecondaryIndexNode.GetChildPageId(buffer, keyCount, childIndex);
+
+                _pageLockManager.AcquireWriteLock(childPageId);
+                _pageIO.ReadPage(childPageId, childBuffer);
+
+                if (SecondaryIndexNode.IsSafeForInsert(childBuffer, _maxKeys, _usablePageSize))
+                {
+                    heldLocks.ReleaseAll();
+                }
+
+                if (SecondaryIndexNode.IsNodeFull(childBuffer, _maxKeys, _usablePageSize))
+                {
+                    SplitChild(currentPageId, childIndex, childPageId);
+
+                    _pageIO.ReadPage(currentPageId, buffer);
+                    keyCount = SecondaryIndexNode.GetKeyCount(buffer);
+
+                    int splitKeyOffset = GetKeyOffsetAtIndex(buffer, childIndex);
+                    ushort splitKeyLength = BinaryHelper.ReadUInt16LE(buffer, splitKeyOffset);
+                    ReadOnlySpan<byte> splitKey = buffer.AsSpan(splitKeyOffset + 2, splitKeyLength);
+
+                    if (keySpan.SequenceCompareTo(splitKey) > 0)
+                    {
+                        childIndex++;
+                        int newChildPageId = SecondaryIndexNode.GetChildPageId(buffer, keyCount, childIndex);
+                        _pageLockManager.AcquireWriteLock(newChildPageId);
+                        _pageLockManager.ReleaseWriteLock(childPageId);
+                        childPageId = newChildPageId;
+                    }
+
+                    _pageIO.ReadPage(childPageId, childBuffer);
+                }
+
+                heldLocks.Push(childPageId);
+
+                byte[] temp = buffer;
+                buffer = childBuffer;
+                childBuffer = temp;
+                currentPageId = childPageId;
+            }
+        }
+    }
+
+    internal bool DeleteDirect(byte[] key)
+    {
+        bool result = false;
+
+        _rootLock.EnterWriteLock();
+        byte[] buffer = BufferPool.Rent(_pageSize);
+        SecondaryIndexNode node = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Leaf);
+        try
+        {
+            int currentPageId = _rootPageId;
+            _pageLockManager.AcquireWriteLock(currentPageId);
+            ReadOnlySpan<byte> keySpan = key.AsSpan();
+
+            while (currentPageId != 0)
+            {
+                _pageIO.ReadPage(currentPageId, buffer);
+                SecondaryIndexNode.DeserializeTo(buffer, node);
+
+                int i = 0;
+                while (i < node.KeyCount && KeyBuffer.Compare(keySpan, node.Keys[i]) > 0)
+                {
+                    i++;
+                }
+
+                if (node.NodeType == BTreeNodeType.Leaf)
+                {
+                    if (i < node.KeyCount && KeyBuffer.Compare(keySpan, node.Keys[i]) == 0)
+                    {
+                        node.Keys.RemoveAt(i);
+                        node.LeafValues.RemoveAt(i);
+                        node.KeyCount--;
+                        node.SerializeTo(buffer);
+                        _pageIO.WritePage(currentPageId, buffer);
+                        result = true;
+                    }
+                    _pageLockManager.ReleaseWriteLock(currentPageId);
+                    currentPageId = 0;
+                }
+                else
+                {
+                    int childPageId = node.ChildPageIds[i];
+                    _pageLockManager.AcquireWriteLock(childPageId);
+                    _pageLockManager.ReleaseWriteLock(currentPageId);
+                    currentPageId = childPageId;
+                }
+            }
+        }
+        finally
+        {
+            _rootLock.ExitWriteLock();
+            BufferPool.Return(buffer);
+            SecondaryIndexNodePool.Return(node);
+        }
+
+        return result;
+    }
+
+    #endregion
 
     public static byte[] CreateCompositeKey(byte[] fieldValue, int docId)
     {
