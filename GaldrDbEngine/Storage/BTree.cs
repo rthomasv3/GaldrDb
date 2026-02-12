@@ -228,8 +228,9 @@ internal class BTree
         byte[] childBuffer = BufferPool.Rent(_pageSize);
         BTreeNode newRoot = null;
         LockStack heldLocks = new LockStack(_pageLockManager, true);
+        bool needsRootSplit = false;
 
-        _rootLock.EnterWriteLock();
+        _rootLock.EnterReadLock();
         try
         {
             int rootPageId = _rootPageId;
@@ -238,50 +239,83 @@ internal class BTree
 
             if (IsNodeLogicallyFull(buffer, rootPageId))
             {
-                // Root is full - need to split it first
-                BTreeNode root = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
-                try
-                {
-                    BTreeNode.DeserializeTo(buffer, root, _order);
-
-                    int newRootPageId = _pageManager.AllocatePage();
-                    _pageLockManager.AcquireWriteLock(newRootPageId);
-                    newRoot = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Internal);
-                    newRoot.ChildPageIds.Add(rootPageId);
-
-                    newRoot.SerializeTo(buffer);
-                    _pageIO.WritePage(newRootPageId, buffer);
-
-                    SplitChild(newRootPageId, 0, rootPageId);
-                    _rootPageId = newRootPageId;
-
-                    // Release rootPageId lock - InsertNonFull will acquire child locks as needed
-                    _pageLockManager.ReleaseWriteLock(rootPageId);
-                    heldLocks.Push(newRootPageId);
-
-                    // Re-read the new root for InsertNonFull
-                    _pageIO.ReadPage(newRootPageId, buffer);
-                    InsertNonFull(newRootPageId, buffer, childBuffer, docId, location, heldLocks, txId);
-                }
-                finally
-                {
-                    BTreeNodePool.Return(root);
-                }
+                // Root is full - release page lock, will retry under write lock
+                _pageLockManager.ReleaseWriteLock(rootPageId);
+                needsRootSplit = true;
             }
             else
             {
-                // Root won't change, keep page lock
+                // Root not full, proceed under read lock
                 heldLocks.Push(rootPageId);
                 InsertNonFull(rootPageId, buffer, childBuffer, docId, location, heldLocks, txId);
             }
         }
         finally
         {
-            _rootLock.ExitWriteLock();
-            heldLocks.ReleaseAll();
-            BufferPool.Return(buffer);
-            BufferPool.Return(childBuffer);
-            BTreeNodePool.Return(newRoot);
+            _rootLock.ExitReadLock();
+            if (!needsRootSplit)
+            {
+                heldLocks.ReleaseAll();
+                BufferPool.Return(buffer);
+                BufferPool.Return(childBuffer);
+                BTreeNodePool.Return(newRoot);
+            }
+        }
+
+        if (needsRootSplit)
+        {
+            _rootLock.EnterWriteLock();
+            try
+            {
+                int rootPageId = _rootPageId;
+                _pageLockManager.AcquireWriteLock(rootPageId);
+                _pageIO.ReadPage(rootPageId, buffer);
+
+                if (IsNodeLogicallyFull(buffer, rootPageId))
+                {
+                    // Still full - perform root split
+                    BTreeNode root = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+                    try
+                    {
+                        BTreeNode.DeserializeTo(buffer, root, _order);
+
+                        int newRootPageId = _pageManager.AllocatePage();
+                        _pageLockManager.AcquireWriteLock(newRootPageId);
+                        newRoot = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Internal);
+                        newRoot.ChildPageIds.Add(rootPageId);
+
+                        newRoot.SerializeTo(buffer);
+                        _pageIO.WritePage(newRootPageId, buffer);
+
+                        SplitChild(newRootPageId, 0, rootPageId);
+                        _rootPageId = newRootPageId;
+
+                        _pageLockManager.ReleaseWriteLock(rootPageId);
+                        heldLocks.Push(newRootPageId);
+
+                        _pageIO.ReadPage(newRootPageId, buffer);
+                        InsertNonFull(newRootPageId, buffer, childBuffer, docId, location, heldLocks, txId);
+                    }
+                    finally
+                    {
+                        BTreeNodePool.Return(root);
+                    }
+                }
+                else
+                {
+                    // Another thread split the root already, proceed normally
+                    heldLocks.Push(rootPageId);
+                    InsertNonFull(rootPageId, buffer, childBuffer, docId, location, heldLocks, txId);
+                }
+            }
+            finally
+            {
+                _rootLock.ExitWriteLock();
+                heldLocks.ReleaseAll();
+                BufferPool.Return(buffer);
+                BufferPool.Return(childBuffer);
+                BTreeNodePool.Return(newRoot);
+            }
         }
     }
 
@@ -308,7 +342,7 @@ internal class BTree
     {
         bool updated = false;
 
-        _rootLock.EnterWriteLock();
+        _rootLock.EnterReadLock();
         byte[] buffer = BufferPool.Rent(_pageSize);
         try
         {
@@ -356,7 +390,7 @@ internal class BTree
         }
         finally
         {
-            _rootLock.ExitWriteLock();
+            _rootLock.ExitReadLock();
             BufferPool.Return(buffer);
         }
 
@@ -479,7 +513,7 @@ internal class BTree
 
     public bool Delete(int docId, ulong txId = 0)
     {
-        _rootLock.EnterWriteLock();
+        _rootLock.EnterReadLock();
         try
         {
             int rootPageId = _rootPageId;
@@ -488,7 +522,7 @@ internal class BTree
         }
         finally
         {
-            _rootLock.ExitWriteLock();
+            _rootLock.ExitReadLock();
         }
     }
 
@@ -1845,8 +1879,9 @@ internal class BTree
         byte[] childBuffer = BufferPool.Rent(_pageSize);
         BTreeNode newRoot = null;
         LockStack heldLocks = new LockStack(_pageLockManager, true);
+        bool needsRootSplit = false;
 
-        await _rootLock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
+        await _rootLock.EnterReadLockAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             int rootPageId = _rootPageId;
@@ -1855,56 +1890,90 @@ internal class BTree
 
             if (IsNodeLogicallyFull(buffer, rootPageId))
             {
-                // Root is full - need to split it first
-                BTreeNode root = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
-                try
-                {
-                    BTreeNode.DeserializeTo(buffer, root, _order);
-
-                    int newRootPageId = _pageManager.AllocatePage();
-                    await _pageLockManager.AcquireWriteLockAsync(newRootPageId, cancellationToken).ConfigureAwait(false);
-                    newRoot = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Internal);
-                    newRoot.ChildPageIds.Add(rootPageId);
-
-                    newRoot.SerializeTo(buffer);
-                    await _pageIO.WritePageAsync(newRootPageId, buffer, null, cancellationToken).ConfigureAwait(false);
-
-                    await SplitChildAsync(newRootPageId, 0, rootPageId, cancellationToken).ConfigureAwait(false);
-                    _rootPageId = newRootPageId;
-
-                    // Release rootPageId lock - InsertNonFullAsync will acquire child locks as needed
-                    _pageLockManager.ReleaseWriteLock(rootPageId);
-                    heldLocks.Push(newRootPageId);
-
-                    // Re-read the new root for InsertNonFullAsync
-                    await _pageIO.ReadPageAsync(newRootPageId, buffer, null, cancellationToken).ConfigureAwait(false);
-                    await InsertNonFullAsync(newRootPageId, buffer, childBuffer, docId, location, heldLocks, txId, cancellationToken).ConfigureAwait(false);
-                }
-                finally
-                {
-                    BTreeNodePool.Return(root);
-                }
+                // Root is full - release page lock, will retry under write lock
+                _pageLockManager.ReleaseWriteLock(rootPageId);
+                needsRootSplit = true;
             }
             else
             {
-                // Root won't change, keep page lock
+                // Common path: root not full, proceed under read lock
                 heldLocks.Push(rootPageId);
                 await InsertNonFullAsync(rootPageId, buffer, childBuffer, docId, location, heldLocks, txId, cancellationToken).ConfigureAwait(false);
             }
         }
         finally
         {
-            _rootLock.ExitWriteLock();
-            heldLocks.ReleaseAll();
-            BufferPool.Return(buffer);
-            BufferPool.Return(childBuffer);
-            BTreeNodePool.Return(newRoot);
+            _rootLock.ExitReadLock();
+            if (!needsRootSplit)
+            {
+                heldLocks.ReleaseAll();
+                BufferPool.Return(buffer);
+                BufferPool.Return(childBuffer);
+                BTreeNodePool.Return(newRoot);
+            }
+        }
+
+        if (needsRootSplit)
+        {
+            // Rare path: root split needed, acquire write lock
+            await _rootLock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                int rootPageId = _rootPageId;
+                await _pageLockManager.AcquireWriteLockAsync(rootPageId, cancellationToken).ConfigureAwait(false);
+                await _pageIO.ReadPageAsync(rootPageId, buffer, null, cancellationToken).ConfigureAwait(false);
+
+                if (IsNodeLogicallyFull(buffer, rootPageId))
+                {
+                    // Still full - perform root split
+                    BTreeNode root = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Leaf);
+                    try
+                    {
+                        BTreeNode.DeserializeTo(buffer, root, _order);
+
+                        int newRootPageId = _pageManager.AllocatePage();
+                        await _pageLockManager.AcquireWriteLockAsync(newRootPageId, cancellationToken).ConfigureAwait(false);
+                        newRoot = BTreeNodePool.Rent(_pageSize, _order, BTreeNodeType.Internal);
+                        newRoot.ChildPageIds.Add(rootPageId);
+
+                        newRoot.SerializeTo(buffer);
+                        await _pageIO.WritePageAsync(newRootPageId, buffer, null, cancellationToken).ConfigureAwait(false);
+
+                        await SplitChildAsync(newRootPageId, 0, rootPageId, cancellationToken).ConfigureAwait(false);
+                        _rootPageId = newRootPageId;
+
+                        _pageLockManager.ReleaseWriteLock(rootPageId);
+                        heldLocks.Push(newRootPageId);
+
+                        await _pageIO.ReadPageAsync(newRootPageId, buffer, null, cancellationToken).ConfigureAwait(false);
+                        await InsertNonFullAsync(newRootPageId, buffer, childBuffer, docId, location, heldLocks, txId, cancellationToken).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        BTreeNodePool.Return(root);
+                    }
+                }
+                else
+                {
+                    // Another thread split the root already, proceed normally
+                    heldLocks.Push(rootPageId);
+                    await InsertNonFullAsync(rootPageId, buffer, childBuffer, docId, location, heldLocks, txId, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                _rootLock.ExitWriteLock();
+                heldLocks.ReleaseAll();
+                BufferPool.Return(buffer);
+                BufferPool.Return(childBuffer);
+                BTreeNodePool.Return(newRoot);
+            }
         }
     }
 
     public async Task<bool> DeleteAsync(int docId, ulong txId = 0, CancellationToken cancellationToken = default)
     {
-        await _rootLock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
+        await _rootLock.EnterReadLockAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             int rootPageId = _rootPageId;
@@ -1913,7 +1982,7 @@ internal class BTree
         }
         finally
         {
-            _rootLock.ExitWriteLock();
+            _rootLock.ExitReadLock();
         }
     }
 

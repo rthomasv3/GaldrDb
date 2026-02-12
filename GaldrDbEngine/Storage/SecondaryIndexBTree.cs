@@ -189,8 +189,9 @@ internal class SecondaryIndexBTree
         byte[] buffer = BufferPool.Rent(_pageSize);
         byte[] childBuffer = BufferPool.Rent(_pageSize);
         LockStack heldLocks = new LockStack(_pageLockManager, true);
+        bool needsRootSplit = false;
 
-        _rootLock.EnterWriteLock();
+        _rootLock.EnterReadLock();
         try
         {
             int rootPageId = _rootPageId;
@@ -199,42 +200,79 @@ internal class SecondaryIndexBTree
 
             if (IsNodeLogicallyFull(buffer, rootPageId))
             {
-                SecondaryIndexNode newRoot = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Internal);
-                try
-                {
-                    int newRootPageId = _pageManager.AllocatePage();
-                    _pageLockManager.AcquireWriteLock(newRootPageId);
-                    newRoot.ChildPageIds.Add(rootPageId);
-
-                    newRoot.SerializeTo(buffer);
-                    _pageIO.WritePage(newRootPageId, buffer);
-
-                    SplitChild(newRootPageId, 0, rootPageId);
-                    _rootPageId = newRootPageId;
-
-                    _pageLockManager.ReleaseWriteLock(rootPageId);
-                    heldLocks.Push(newRootPageId);
-
-                    _pageIO.ReadPage(newRootPageId, buffer);
-                    InsertNonFull(newRootPageId, buffer, childBuffer, key, location, heldLocks, txId);
-                }
-                finally
-                {
-                    SecondaryIndexNodePool.Return(newRoot);
-                }
+                // Root is full - release page lock, will retry under write lock
+                _pageLockManager.ReleaseWriteLock(rootPageId);
+                needsRootSplit = true;
             }
             else
             {
+                // Root not full, proceed under read lock
                 heldLocks.Push(rootPageId);
                 InsertNonFull(rootPageId, buffer, childBuffer, key, location, heldLocks, txId);
             }
         }
         finally
         {
-            _rootLock.ExitWriteLock();
-            heldLocks.ReleaseAll();
-            BufferPool.Return(buffer);
-            BufferPool.Return(childBuffer);
+            _rootLock.ExitReadLock();
+            if (!needsRootSplit)
+            {
+                heldLocks.ReleaseAll();
+                BufferPool.Return(buffer);
+                BufferPool.Return(childBuffer);
+            }
+        }
+
+        if (needsRootSplit)
+        {
+            // Root split needed, acquire write lock
+            _rootLock.EnterWriteLock();
+            try
+            {
+                int rootPageId = _rootPageId;
+                _pageLockManager.AcquireWriteLock(rootPageId);
+                _pageIO.ReadPage(rootPageId, buffer);
+
+                if (IsNodeLogicallyFull(buffer, rootPageId))
+                {
+                    // Still full - perform root split
+                    SecondaryIndexNode newRoot = SecondaryIndexNodePool.Rent(_usablePageSize, _maxKeys, BTreeNodeType.Internal);
+                    try
+                    {
+                        int newRootPageId = _pageManager.AllocatePage();
+                        _pageLockManager.AcquireWriteLock(newRootPageId);
+                        newRoot.ChildPageIds.Add(rootPageId);
+
+                        newRoot.SerializeTo(buffer);
+                        _pageIO.WritePage(newRootPageId, buffer);
+
+                        SplitChild(newRootPageId, 0, rootPageId);
+                        _rootPageId = newRootPageId;
+
+                        _pageLockManager.ReleaseWriteLock(rootPageId);
+                        heldLocks.Push(newRootPageId);
+
+                        _pageIO.ReadPage(newRootPageId, buffer);
+                        InsertNonFull(newRootPageId, buffer, childBuffer, key, location, heldLocks, txId);
+                    }
+                    finally
+                    {
+                        SecondaryIndexNodePool.Return(newRoot);
+                    }
+                }
+                else
+                {
+                    // Another thread split the root already, proceed normally
+                    heldLocks.Push(rootPageId);
+                    InsertNonFull(rootPageId, buffer, childBuffer, key, location, heldLocks, txId);
+                }
+            }
+            finally
+            {
+                _rootLock.ExitWriteLock();
+                heldLocks.ReleaseAll();
+                BufferPool.Return(buffer);
+                BufferPool.Return(childBuffer);
+            }
         }
     }
 
@@ -351,7 +389,7 @@ internal class SecondaryIndexBTree
 
     public bool Delete(byte[] key, ulong txId = 0)
     {
-        _rootLock.EnterWriteLock();
+        _rootLock.EnterReadLock();
         try
         {
             int rootPageId = _rootPageId;
@@ -360,7 +398,7 @@ internal class SecondaryIndexBTree
         }
         finally
         {
-            _rootLock.ExitWriteLock();
+            _rootLock.ExitReadLock();
         }
     }
 
