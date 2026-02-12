@@ -33,10 +33,18 @@ jobs:
         dotnet-version: '10.0.x'
 
     - name: Restore dependencies
-      run: dotnet restore
+      run: |
+        dotnet restore GaldrDbEngine/GaldrDbEngine.csproj
+        dotnet restore GaldrDbAspNetCore/GaldrDbAspNetCore.csproj
+        dotnet restore Tests/GaldrDb.UnitTests/GaldrDb.UnitTests.csproj
+        dotnet restore Tests/GaldrDb.SimulationTests/GaldrDb.SimulationTests.csproj
 
     - name: Build
-      run: dotnet build -c Release --no-restore
+      run: |
+        dotnet build GaldrDbEngine/GaldrDbEngine.csproj -c Release --no-restore
+        dotnet build GaldrDbAspNetCore/GaldrDbAspNetCore.csproj -c Release --no-restore
+        dotnet build Tests/GaldrDb.UnitTests/GaldrDb.UnitTests.csproj -c Release --no-restore
+        dotnet build Tests/GaldrDb.SimulationTests/GaldrDb.SimulationTests.csproj -c Release --no-restore
 
     - name: Test
       run: dotnet test -c Release --no-build --verbosity normal
